@@ -1,0 +1,1992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CANA QC Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --blue-50:#eff6ff; --blue-100:#dbeafe; --blue-300:#93c5fd; --blue-600:#2563eb; --blue-700:#1d4ed8;
+    --purple-50:#f5f3ff; --purple-100:#ede9fe; --purple-300:#c4b5fd; --purple-600:#7c3aed; --purple-700:#6d28d9;
+    --grey-bg:#f8fafc; --grey-100:#f1f5f9; --grey-border:#e2e8f0; --grey-dark:#475569;
+    --ink:#0f172a; --muted:#64748b; --line:#e6ebf1;
+    --pass:#16a34a; --pass-bg:#ecfdf3; --fail:#dc2626; --fail-bg:#fef2f2; --cond:#d97706; --cond-bg:#fffbeb;
+    --bg:#f4f6fb; --card:#ffffff;
+    --shadow-sm:0 1px 2px rgba(15,23,42,.06), 0 1px 1px rgba(15,23,42,.04);
+    --shadow-md:0 4px 14px rgba(15,23,42,.07), 0 2px 4px rgba(15,23,42,.04);
+    --shadow-lg:0 20px 45px rgba(15,23,42,.18);
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:'Inter','Sarabun',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:
+    radial-gradient(1200px 500px at 100% -10%, #eef2ff 0%, transparent 60%),
+    radial-gradient(900px 400px at -10% 0%, #f0fdf4 0%, transparent 55%),
+    var(--bg);
+    color:var(--ink); -webkit-font-smoothing:antialiased;}
+
+  header{background:linear-gradient(135deg,#14532d 0%,#166534 55%,#15803d 100%);padding:18px 24px;position:sticky;top:0;z-index:20;box-shadow:0 6px 20px rgba(20,83,45,.28);}
+  .titlebar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;}
+  .brand{display:flex;align-items:center;gap:12px;}
+  .titlebar h1{font-size:19px;margin:0;color:#fff;font-weight:700;letter-spacing:-.01em;}
+  .titlebar h1 span{display:block;font-size:12px;color:rgba(255,255,255,.75);font-weight:400;margin-top:3px;}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+  .toolbar button{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.22);backdrop-filter:blur(4px);}
+  .toolbar button:hover{background:rgba(255,255,255,.22);transform:translateY(-1px);}
+  .toolbar button.primary{background:#fff;color:#14532d;border-color:#fff;font-weight:700;}
+  .toolbar button.primary:hover{background:#ecfdf5;}
+
+  button{cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:8px 14px;border-radius:9px;font-size:13px;font-weight:600;font-family:inherit;transition:all .15s ease;box-shadow:var(--shadow-sm);}
+  button:hover{background:#f8fafc;transform:translateY(-1px);box-shadow:var(--shadow-md);}
+  button:active{transform:translateY(0);}
+  button.primary{background:linear-gradient(135deg,var(--blue-600),var(--blue-700));color:#fff;border-color:var(--blue-700);}
+  button.primary:hover{background:linear-gradient(135deg,#1d4ed8,#1e3a8a);}
+  button.purple{background:linear-gradient(135deg,var(--purple-600),var(--purple-700));color:#fff;border-color:var(--purple-700);}
+  button.purple:hover{background:linear-gradient(135deg,#6d28d9,#581c87);}
+  button.danger{color:var(--fail);border-color:#fecaca;background:#fff;}
+  button.danger:hover{background:var(--fail-bg);}
+  button.small{padding:5px 10px;font-size:11.5px;border-radius:7px;}
+
+  nav.tabs{display:flex;gap:6px;padding:10px 24px;background:var(--card);border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:64px;z-index:19;box-shadow:var(--shadow-sm);}
+  nav.tabs button{border:1px solid transparent;border-radius:100px;background:transparent;padding:8px 16px;white-space:nowrap;color:var(--muted);box-shadow:none;font-weight:600;}
+  nav.tabs button:hover{background:var(--grey-100);transform:none;box-shadow:none;}
+  nav.tabs button.active{color:#fff;background:linear-gradient(135deg,#15803d,#166534);border-color:transparent;box-shadow:0 4px 12px rgba(21,128,61,.28);}
+
+  main{padding:22px 24px 70px;max-width:1600px;margin:0 auto;}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow-sm);}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:center;}
+  .legend .dot{display:inline-block;width:11px;height:11px;border-radius:4px;margin-right:6px;vertical-align:-1.5px;}
+  .row-actions{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:14px;}
+  .search-box{padding:9px 12px;border:1px solid var(--line);border-radius:9px;font-size:13px;min-width:220px;background:var(--card);box-shadow:var(--shadow-sm);}
+  .search-box:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);font-weight:500;}
+  label.chk input{accent-color:var(--blue-600);}
+
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;}
+  .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);background:var(--card);}
+  th,td{padding:9px 11px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line);border-right:1px solid rgba(226,232,240,.6);}
+  thead th{position:sticky;top:0;background:var(--grey-100);z-index:5;font-weight:700;color:var(--ink);font-size:11.5px;}
+  thead th small{font-weight:400;opacity:.7;}
+  thead tr.grp th{background:#eef1f7;color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--line);padding:7px 11px;}
+  th.blue,td.blue-col{background:var(--blue-50);}
+  th.purple,td.purple-col{background:var(--purple-50);}
+  th.grey,td.grey-col{background:var(--grey-bg);color:var(--grey-dark);}
+  tbody tr{transition:background .12s;}
+  tbody tr:hover td{filter:brightness(0.97);}
+  tbody tr.pending td.flag{border-left:3px solid var(--cond);}
+  tbody tr:last-child td{border-bottom:none;}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:700;}
+  .badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .badge.pass{background:var(--pass-bg);color:var(--pass);}
+  .badge.fail{background:var(--fail-bg);color:var(--fail);}
+  .badge.cond{background:var(--cond-bg);color:var(--cond);}
+  .badge.pending{background:var(--grey-100);color:var(--muted);}
+  .empty-state{padding:56px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
+  .empty-state b{color:var(--ink);}
+
+  /* modal */
+  @keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
+  .overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);backdrop-filter:blur(2px);display:flex;align-items:flex-start;justify-content:center;padding:5vh 16px;z-index:50;overflow-y:auto;}
+  .modal{background:#fff;border-radius:18px;width:100%;max-width:640px;padding:26px;box-shadow:var(--shadow-lg);animation:modalIn .18s ease-out;}
+  .modal h2{margin:0 0 4px;font-size:18px;font-weight:700;letter-spacing:-.01em;}
+  .modal .sub{font-size:12.5px;color:var(--muted);margin-bottom:16px;}
+  .modal .ctx{background:linear-gradient(135deg,var(--grey-bg),var(--grey-100));border:1px solid var(--grey-border);border-radius:10px;padding:11px 13px;font-size:12.5px;color:var(--grey-dark);margin-bottom:16px;}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px;}
+  .form-grid .full{grid-column:1/-1;}
+  .field label{display:block;font-size:11.5px;font-weight:700;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.02em;}
+  .field label span{text-transform:none;}
+  .field input,.field select,.field textarea{width:100%;padding:9px 11px;border:1.5px solid var(--line);border-radius:9px;font-size:13.5px;font-family:inherit;transition:border-color .15s,box-shadow .15s;background:#fbfcfe;}
+  .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);background:#fff;}
+  .field textarea{resize:vertical;min-height:38px;}
+  .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px;}
+  @media (max-width:560px){.form-grid{grid-template-columns:1fr;}}
+
+  /* dashboard */
+  .dash-filter{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
+  .dash-filter input{padding:9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;width:170px;background:#fbfcfe;}
+  .dash-filter input:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);}
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:18px;}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 16px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;}
+  .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--blue-600),var(--purple-600));}
+  .kpi .v{font-size:23px;font-weight:800;letter-spacing:-.02em;}
+  .kpi .l{font-size:11.5px;color:var(--muted);margin-top:3px;font-weight:500;}
+  tfoot td{font-weight:800;background:#eef1f7;border-top:2px solid var(--line);}
+  .helpbox{font-size:13px;line-height:1.7;color:var(--ink);}
+  .helpbox h3{font-size:13.5px;margin:14px 0 4px;color:var(--blue-700);}
+  .helpbox h3:first-child{margin-top:0;}
+  details summary{cursor:pointer;font-weight:700;font-size:13px;color:var(--blue-700);padding:2px 0;list-style:none;}
+  details summary::-webkit-details-marker{display:none;}
+  details summary::before{content:'▸ ';display:inline-block;transition:transform .15s;}
+  details[open] summary::before{transform:rotate(90deg);}
+  input[type=file]{display:none;}
+  .bi{font-weight:400;opacity:.75;font-size:.92em;}
+  .toolbar button.reconnect{background:#fbbf24;color:#78350f;border-color:#f59e0b;font-weight:700;animation:pulseGlow 1.6s ease-in-out infinite;}
+  @keyframes pulseGlow{0%,100%{box-shadow:0 0 0 0 rgba(251,191,36,.5);}50%{box-shadow:0 0 0 6px rgba(251,191,36,0);}}
+  select.dash-select{padding:9px 34px 9px 12px;border:1.5px solid var(--line);border-radius:9px;font-size:13px;width:200px;background:#fbfcfe;font-family:inherit;font-weight:600;color:var(--ink);appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5'><polyline points='6 9 12 15 18 9'/></svg>");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer;}
+  select.dash-select:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);}
+
+  /* header extras */
+  .conn-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:100px;font-size:11.5px;font-weight:700;background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.22);}
+  .conn-pill.ok::before,.conn-pill.warn::before,.conn-pill.off::before{content:'';width:7px;height:7px;border-radius:50%;}
+  .conn-pill.ok::before{background:#4ade80;}
+  .conn-pill.warn::before{background:#fbbf24;}
+  .conn-pill.off::before{background:#94a3b8;}
+  .conn-pill.sync::before{background:#4ade80;animation:pulseDot 2s ease-in-out infinite;}
+  @keyframes pulseDot{0%,100%{opacity:1;}50%{opacity:.4;}}
+  .sync-time{font-size:10px;opacity:.85;margin-left:4px;}
+  .more-menu{position:relative;}
+  .more-menu .dropdown{display:none;position:absolute;right:0;top:calc(100% + 6px);min-width:210px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);padding:6px;z-index:30;}
+  .more-menu.open .dropdown{display:block;}
+  .more-menu .dropdown button{display:block;width:100%;text-align:left;background:#fff;color:var(--ink);border:none;box-shadow:none;border-radius:8px;}
+  .more-menu .dropdown button:hover{background:var(--grey-100);transform:none;}
+
+  /* tabs badge */
+  nav.tabs button .tab-badge{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;margin-left:6px;border-radius:100px;font-size:10px;font-weight:800;background:var(--cond);color:#fff;}
+  nav.tabs button.active .tab-badge{background:rgba(255,255,255,.25);}
+
+  /* pending banner */
+  .pending-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;border-radius:var(--radius);background:linear-gradient(135deg,var(--cond-bg),#fff7ed);border:1px solid #fde68a;margin-bottom:16px;font-size:13px;}
+  .pending-banner b{color:#92400e;}
+
+  /* filters */
+  .filter-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
+  .filter-row input,.filter-row select{padding:8px 11px;border:1px solid var(--line);border-radius:9px;font-size:12.5px;background:var(--card);font-family:inherit;}
+  .filter-row input:focus,.filter-row select:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);}
+  .view-toggle{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;}
+  .view-toggle button{border:none;border-radius:0;box-shadow:none;padding:7px 12px;font-size:12px;background:var(--card);}
+  .view-toggle button.active{background:var(--blue-600);color:#fff;}
+
+  /* compact table */
+  .compact-table th.sticky,.compact-table td.sticky{position:sticky;left:0;z-index:4;background:inherit;}
+  .compact-table td.sticky{background:var(--card);}
+  .compact-table tr.pending td.sticky{border-left:3px solid var(--cond);}
+  .compact-table th.sticky{z-index:6;background:var(--grey-100);}
+  .batch-id{font-family:ui-monospace,monospace;font-size:10.5px;color:var(--muted);font-weight:600;}
+  .diff-warn{color:var(--cond);font-weight:700;background:var(--cond-bg);}
+  .diff-bad{color:var(--fail);font-weight:800;background:var(--fail-bg);}
+  .status-chip{display:inline-flex;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:700;background:var(--grey-100);color:var(--muted);}
+  .status-chip.delivered{background:var(--blue-100);color:var(--blue-700);}
+  .status-chip.pending{background:var(--cond-bg);color:var(--cond);}
+  .status-chip.complete{background:var(--pass-bg);color:var(--pass);}
+  .cond-badge{font-size:10.5px;padding:2px 8px;border-radius:100px;font-weight:700;}
+  .cond-badge.good{background:var(--pass-bg);color:var(--pass);}
+  .cond-badge.minor{background:var(--cond-bg);color:var(--cond);}
+  .cond-badge.damaged{background:var(--fail-bg);color:var(--fail);}
+  .expand-btn{background:none;border:none;box-shadow:none;padding:4px 8px;font-size:14px;color:var(--muted);}
+  .expand-btn:hover{background:var(--grey-100);transform:none;}
+  tr.detail-row td{background:#fafbfc;padding:14px 16px;border-bottom:1px solid var(--line);}
+  .detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;font-size:12px;}
+  .detail-section h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+  .detail-section.blue h4{color:var(--blue-700);}
+  .detail-section.purple h4{color:var(--purple-700);}
+  .detail-section.grey h4{color:var(--grey-dark);}
+  .detail-item{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px dashed rgba(226,232,240,.8);}
+  .detail-item span:first-child{color:var(--muted);}
+  .action-group{display:flex;gap:4px;flex-wrap:wrap;}
+
+  /* mobile cards */
+  .card-list{display:none;flex-direction:column;gap:12px;}
+  .batch-card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;background:var(--card);box-shadow:var(--shadow-sm);}
+  .batch-card.pending{border-left:4px solid var(--cond);}
+  .batch-card .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;}
+  .batch-card .card-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:10px;}
+  .batch-card .card-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+  .batch-card .stat{background:var(--grey-bg);border-radius:8px;padding:8px;text-align:center;}
+  .batch-card .stat .n{font-size:14px;font-weight:800;}
+  .batch-card .stat .t{font-size:10px;color:var(--muted);}
+
+  /* modal extras */
+  .live-preview{background:linear-gradient(135deg,var(--grey-bg),#fff);border:1px solid var(--grey-border);border-radius:12px;padding:14px;margin:14px 0;}
+  .live-preview h4{margin:0 0 10px;font-size:12px;color:var(--muted);text-transform:uppercase;}
+  .preview-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .preview-item{text-align:center;padding:8px;background:#fff;border-radius:8px;border:1px solid var(--line);}
+  .preview-item .pv{font-size:16px;font-weight:800;}
+  .preview-item .pl{font-size:10px;color:var(--muted);}
+  .preview-item.warn .pv{color:var(--cond);}
+  .preview-item.bad .pv{color:var(--fail);}
+  .field-with-btn{display:flex;gap:6px;align-items:flex-end;}
+  .field-with-btn .field{flex:1;}
+
+  /* dashboard charts */
+  .chart-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+  .chart-box{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-sm);}
+  .chart-box h3{margin:0 0 14px;font-size:13px;font-weight:700;}
+  .bar-chart{display:flex;flex-direction:column;gap:8px;}
+  .bar-row{display:flex;align-items:center;gap:10px;font-size:12px;}
+  .bar-row .lbl{width:90px;flex-shrink:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .bar-row .track{flex:1;height:22px;background:var(--grey-100);border-radius:6px;overflow:hidden;}
+  .bar-row .fill{height:100%;border-radius:6px;background:linear-gradient(90deg,var(--blue-600),var(--purple-600));min-width:2px;transition:width .3s;}
+  .bar-row .val{width:52px;text-align:right;font-weight:700;font-size:11.5px;}
+  .stacked-bar{display:flex;height:28px;border-radius:8px;overflow:hidden;margin-bottom:10px;}
+  .stacked-bar .seg{height:100%;min-width:2px;}
+  .stacked-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;}
+  .stacked-legend span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;}
+  tr.clickable{cursor:pointer;}
+  tr.clickable:hover td{background:var(--blue-50)!important;}
+
+  /* farm sub-tabs */
+  .farm-subtabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;}
+  .farm-subtabs button{border:1px solid var(--line);border-radius:100px;background:var(--card);padding:8px 16px;font-size:12.5px;font-weight:600;color:var(--muted);box-shadow:var(--shadow-sm);}
+  .farm-subtabs button:hover{background:var(--grey-100);transform:none;}
+  .farm-subtabs button.active{color:#fff;background:linear-gradient(135deg,#15803d,#166534);border-color:transparent;box-shadow:0 4px 12px rgba(21,128,61,.22);}
+
+  /* documents */
+  .doc-toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:16px;}
+  .doc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+  .doc-card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;background:var(--card);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:10px;transition:box-shadow .15s,border-color .15s;}
+  .doc-card:hover{box-shadow:var(--shadow-md);border-color:var(--blue-300);}
+  .doc-card-top{display:flex;gap:12px;align-items:flex-start;}
+  .doc-icon{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;background:var(--grey-100);}
+  .doc-icon.pdf{background:#fef2f2;}
+  .doc-icon.img{background:#eff6ff;}
+  .doc-icon.xls{background:#ecfdf3;}
+  .doc-icon.link{background:var(--purple-50);}
+  .doc-title{font-size:14px;font-weight:700;margin:0;line-height:1.3;}
+  .doc-meta{font-size:11.5px;color:var(--muted);line-height:1.5;}
+  .doc-cat{display:inline-flex;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:700;background:var(--blue-100);color:var(--blue-700);}
+  .doc-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto;}
+  .doc-notes{font-size:12px;color:var(--grey-dark);background:var(--grey-bg);border-radius:8px;padding:8px 10px;line-height:1.4;}
+  .upload-hint{font-size:12px;color:var(--muted);margin-top:8px;}
+
+  @media (max-width:900px){
+    .chart-row{grid-template-columns:1fr;}
+    .preview-grid{grid-template-columns:repeat(2,1fr);}
+    .desktop-table{display:none!important;}
+    .card-list{display:flex!important;}
+    nav.tabs{top:64px;}
+  }
+  @media (max-width:640px){
+    .toolbar .hide-sm{display:none;}
+    .titlebar h1 span{font-size:11px;}
+    .preview-grid{grid-template-columns:1fr 1fr;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titlebar">
+    <div class="brand">
+      <h1>CANA QC Tracker <span>บันทึก QC — one row per batch, blue = manager, purple = QC staff</span></h1>
+    </div>
+    <div class="toolbar">
+      <span class="conn-pill off" id="connPill">Not linked</span>
+      <button id="btnLinkSheet" class="primary" title="Connect to shared Google Sheet for real-time team sync">📗 Google Sheet <span class="bi">/ เชื่อมชีต</span></button>
+      <button id="btnReconnect" style="display:none;" title="Re-grant access to the previously linked file"></button>
+      <button id="btnSaveFile" title="Save now">💾 Save <span class="bi">/ บันทึก</span></button>
+      <button id="btnReload" title="Pull latest data now">🔄 Reload</button>
+      <button id="btnOpenSheet" style="display:none;" class="hide-sm" title="Open Google Sheet in browser">↗ Open Sheet</button>
+      <div class="more-menu" id="moreMenu">
+        <button id="btnMore" type="button">⋯ More</button>
+        <div class="dropdown">
+          <button id="btnOpenFileMob" type="button">🔗 Link Excel File</button>
+          <button id="btnSetupGuide" type="button">📖 Google Sheet Setup</button>
+          <button id="btnExportJSON" type="button">⬇ Export JSON</button>
+          <button id="btnImportJSON" type="button">⬆ Import JSON</button>
+          <button id="btnExportExcel" type="button">📊 Export Excel Copy</button>
+        </div>
+      </div>
+      <input type="file" id="fileImportInput" accept="application/json">
+      <input type="file" id="docUploadInput" multiple accept="*/*" style="display:none">
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" id="tabsNav"></nav>
+
+<main id="mainArea"></main>
+
+<div id="modalRoot"></div>
+
+<script>
+/* ============ DATA MODEL ============ */
+const FARMS = ["Kenny","BB Farm","VT Farm","Extra Cannabis","ZaZa","Yang","Cana"];
+
+const BLUE_COLS = [
+  {key:'date', label:'Date', labelTh:'วันที่รับสินค้า', type:'date'},
+  {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
+  {key:'bigsCount', label:'Bigs (count)', labelTh:'ดอกใหญ่ (จำนวน)', type:'number'},
+  {key:'popsCount', label:'Pops (count)', labelTh:'ดอกเล็ก (จำนวน)', type:'number'},
+  {key:'grossWt', label:'Gross Wt (g)', labelTh:'น้ำหนักรวม (กรัม)', type:'number'},
+  {key:'condition', label:'Condition', labelTh:'สภาพสินค้า', type:'select', options:['Good / ดี','Minor Issues / มีปัญหาเล็กน้อย','Damaged / เสียหาย']},
+  {key:'invoice', label:'Invoice', labelTh:'ใบเสร็จ', type:'text'},
+  {key:'receivedBy', label:'Received by', labelTh:'รับโดย', type:'text'},
+  {key:'notes', label:'Notes', labelTh:'หมายเหตุการรับ', type:'textarea'},
+];
+
+const PURPLE_COLS = [
+  {key:'qcStart', label:'QC Start', labelTh:'เวลาเริ่ม QC', type:'date'},
+  {key:'qcEnd', label:'QC End', labelTh:'เวลาสิ้นสุด QC', type:'date'},
+  {key:'startWt', label:'Start Wt (g)', labelTh:'น้ำหนักก่อน QC (กรัม)', type:'number'},
+  {key:'bigsG', label:'Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
+  {key:'popsG', label:'Pops (g)', labelTh:'ดอกเล็ก (กรัม)', type:'number'},
+  {key:'scrapsG', label:'Scraps (g)', labelTh:'เศษดอก/ทริม (กรัม)', type:'number'},
+  {key:'seedsG', label:'Seeds (g)', labelTh:'เมล็ด (กรัม)', type:'number'},
+  {key:'moldG', label:'Mold (g)', labelTh:'เชื้อรา (กรัม)', type:'number'},
+  {key:'wasteG', label:'Waste (g)', labelTh:'เศษเหลือ (กรัม)', type:'number'},
+  {key:'passFail', label:'Pass/Fail', labelTh:'ผ่าน/ไม่ผ่าน', type:'select', options:['Pass / ผ่าน','Fail / ไม่ผ่าน','Conditional Pass / ผ่านแบบมีเงื่อนไข']},
+  {key:'qcBy', label:'QC by', labelTh:'QC โดย', type:'text'},
+];
+
+const GREY_COLS = [
+  {key:'totalFlower', label:'Total Flower (g)', labelTh:'ดอกรวม (กรัม)'},
+  {key:'totalOut', label:'Total Out (g)', labelTh:'รวมออกทั้งหมด (กรัม)'},
+  {key:'diff', label:'Diff (g)', labelTh:'ผลต่าง (กรัม)'},
+  {key:'yieldPct', label:'Yield %', labelTh:'เปอร์เซ็นต์ผลผลิต'},
+  {key:'month', label:'Month', labelTh:'(helper)'},
+];
+
+const STORAGE_KEY = 'cana_qc_tracker_v1';
+const APPS_SCRIPT_URL_KEY = 'cana_qc_apps_script_url';
+const SHEET_VIEW_URL_KEY = 'cana_qc_sheet_view_url';
+const SHEET_POLL_MS = 8000;
+
+function defaultState(){
+  const farms = {};
+  FARMS.forEach(f=>farms[f]=[]);
+  // seed with the existing BB Farm records from CANA QC Tracker v4.xlsx so nothing is lost
+  farms['BB Farm'] = [
+    {id:uid(), date:'2026-07-10', strain:'MAC 1', bigsCount:'', popsCount:'', grossWt:'50000', condition:'Minor Issues / มีปัญหาเล็กน้อย', invoice:'', receivedBy:'May,Montry', notes:'',
+     qcStart:'2026-07-11', qcEnd:'2026-07-13', startWt:'50000', bigsG:'', popsG:'', scrapsG:'0.87', seedsG:'5', moldG:'0.77', wasteG:'', passFail:'Conditional Pass / ผ่านแบบมีเงื่อนไข', qcBy:'CANA team'},
+    {id:uid(), date:'', strain:'', bigsCount:'', popsCount:'', grossWt:'10000', condition:'Minor Issues / มีปัญหาเล็กน้อย', invoice:'', receivedBy:'', notes:'',
+     qcStart:'', qcEnd:'', startWt:'', bigsG:'', popsG:'', scrapsG:'', seedsG:'0', moldG:'50', wasteG:'', passFail:'Conditional Pass / ผ่านแบบมีเงื่อนไข', qcBy:'CANA team'},
+    {id:uid(), date:'', strain:'', bigsCount:'', popsCount:'', grossWt:'8000', condition:'', invoice:'', receivedBy:'', notes:'',
+     qcStart:'', qcEnd:'', startWt:'', bigsG:'', popsG:'', scrapsG:'', seedsG:'', moldG:'', wasteG:'', passFail:'', qcBy:''},
+  ];
+  const documents = {};
+  FARMS.forEach(f=>documents[f]=[]);
+  return {farms, documents};
+}
+
+const DOCUMENT_CATEGORIES = ['Invoice / ใบเสร็จ','COA / Lab Report / ใบรายงานแล็บ','Photos / รูปภาพ','Contract / สัญญา','QC Report / รายงาน QC','Other / อื่นๆ'];
+const MAX_DOC_BYTES = 8 * 1024 * 1024;
+
+function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
+
+/* ============ STATE ============ */
+let state = null;
+let currentFarm = FARMS[0];
+let currentView = 'farm'; // 'farm' | 'dashboard'
+let currentFarmTab = 'qc'; // 'qc' | 'documents'
+let docCategoryFilter = '';
+let docSearchText = '';
+let fileHandle = null;
+let fileType = 'xlsx'; // 'xlsx' | 'json' — format of the currently linked file
+let dashMonth = '';
+let pendingOnly = false;
+let searchText = '';
+let viewMode = 'compact'; // 'compact' | 'full'
+let filterStatus = '';
+let filterDateFrom = '';
+let filterDateTo = '';
+let farmMonthFilter = '';
+let expandedRows = {};
+let modalDirty = false;
+let appsScriptUrl = localStorage.getItem(APPS_SCRIPT_URL_KEY) || '';
+let sheetViewUrl = localStorage.getItem(SHEET_VIEW_URL_KEY) || '';
+let sheetPollTimer = null;
+let sheetSaveTimer = null;
+let sheetSaveInFlight = false;
+let sheetSaveQueued = false;
+let localDirty = false;
+let lastRemoteJson = '';
+let lastSyncTime = '';
+let sheetSyncActive = false;
+const ALL_COLS = [...BLUE_COLS, ...PURPLE_COLS];
+const XLSX_HEADER = ALL_COLS.map(c=>c.label).concat(['Total Flower (g)','Total Out (g)','Diff (g)','Yield %','Month']);
+
+/* ============ COMPUTE ============ */
+function num(v){
+  if(v===''||v===undefined||v===null) return null;
+  const n = Number(v);
+  return isNaN(n) ? null : n;
+}
+
+function computeRow(rec){
+  const bigsG=num(rec.bigsG), popsG=num(rec.popsG), scrapsG=num(rec.scrapsG),
+        seedsG=num(rec.seedsG), moldG=num(rec.moldG), wasteG=num(rec.wasteG), startWt=num(rec.startWt);
+  let totalFlower=null, totalOut=null, diff=null, yieldPct=null;
+  if(bigsG!==null){
+    totalFlower = bigsG + (popsG||0);
+    totalOut = bigsG + (popsG||0) + (scrapsG||0) + (seedsG||0) + (moldG||0) + (wasteG||0);
+  }
+  if(startWt!==null && totalOut!==null){ diff = startWt - totalOut; }
+  if(startWt!==null && startWt!==0 && totalFlower!==null){ yieldPct = totalFlower/startWt; }
+  const month = rec.date ? formatMonth(rec.date) : '';
+  return {totalFlower, totalOut, diff, yieldPct, month};
+}
+
+function formatMonth(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  if(isNaN(d.getTime())) return '';
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()]+' '+d.getFullYear();
+}
+
+function isPending(rec){
+  // considered pending QC if manager has delivered (has a date or grossWt) but QC section is empty
+  const hasDelivery = rec.date || rec.strain || rec.grossWt;
+  const hasQC = rec.qcBy || rec.passFail || rec.bigsG || rec.startWt;
+  return !!hasDelivery && !hasQC;
+}
+
+function fmtNum(v, dec){
+  if(v===null||v===undefined||v==='') return '';
+  const n = Number(v);
+  if(isNaN(n)) return '';
+  return n.toLocaleString(undefined,{maximumFractionDigits: dec===undefined?2:dec});
+}
+function fmtPct(v){
+  if(v===null||v===undefined||v==='') return '';
+  return (Number(v)*100).toFixed(1)+'%';
+}
+function esc(s){
+  if(s===undefined||s===null) return '';
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function farmCode(farm){
+  const codes = {'BB Farm':'BB','VT Farm':'VT','Extra Cannabis':'EC','Kenny':'KN','ZaZa':'ZZ','Yang':'YG','Cana':'CA'};
+  return codes[farm] || farm.slice(0,2).toUpperCase();
+}
+function getBatchId(rec, farm){
+  const code = farmCode(farm);
+  const d = rec.date ? rec.date.replace(/-/g,'').slice(2) : '000000';
+  const idx = (state.farms[farm]||[]).indexOf(rec) + 1;
+  return code + '-' + d + '-' + String(idx).padStart(3,'0');
+}
+function countPendingFarm(farm){
+  return (state.farms[farm]||[]).filter(isPending).length;
+}
+function countPendingAll(){
+  return FARMS.reduce((n,f)=> n + countPendingFarm(f), 0);
+}
+function getRowStatus(rec){
+  if(isPending(rec)) return {key:'pending', label:'Pending QC / รอ QC'};
+  if(rec.passFail || rec.qcBy || rec.bigsG) return {key:'complete', label:'QC Complete / เสร็จแล้ว'};
+  if(rec.date || rec.grossWt) return {key:'delivered', label:'Delivered / รับแล้ว'};
+  return {key:'delivered', label:'Delivered / รับแล้ว'};
+}
+function passFailBadgeClass(rec){
+  const pf = rec.passFail||'';
+  if(pf.startsWith('Pass')) return 'pass';
+  if(pf.startsWith('Fail')) return 'fail';
+  if(pf.startsWith('Conditional')) return 'cond';
+  return '';
+}
+function conditionBadge(rec){
+  const c = rec.condition||'';
+  if(c.startsWith('Good')) return {cls:'good', text:c};
+  if(c.startsWith('Minor')) return {cls:'minor', text:c};
+  if(c.startsWith('Damaged')) return {cls:'damaged', text:c};
+  return null;
+}
+function diffClass(diff){
+  if(diff===null||diff===undefined||diff==='') return '';
+  const n = Math.abs(Number(diff));
+  if(isNaN(n)) return '';
+  if(n > 50) return 'diff-bad';
+  if(n > 5) return 'diff-warn';
+  return '';
+}
+function matchesRecordFilters(r){
+  if(pendingOnly && !isPending(r)) return false;
+  if(filterStatus === 'pending' && !isPending(r)) return false;
+  if(filterStatus === 'pass' && !(r.passFail||'').startsWith('Pass')) return false;
+  if(filterStatus === 'fail' && !(r.passFail||'').startsWith('Fail')) return false;
+  if(filterStatus === 'cond' && !(r.passFail||'').startsWith('Conditional')) return false;
+  if(farmMonthFilter && (r.date?formatMonth(r.date):'') !== farmMonthFilter) return false;
+  if(filterDateFrom && (r.date||'') < filterDateFrom) return false;
+  if(filterDateTo && (r.date||'') > filterDateTo) return false;
+  if(searchText){
+    const hay = [r.strain,r.invoice,r.receivedBy,r.notes,r.qcBy,r.passFail,r.condition,getBatchId(r,currentFarm)].join(' ').toLowerCase();
+    if(!hay.includes(searchText.toLowerCase())) return false;
+  }
+  return true;
+}
+function sortRecords(records){
+  return records.slice().sort((a,b)=>{
+    const ap = isPending(a)?1:0, bp = isPending(b)?1:0;
+    if(ap !== bp) return bp - ap;
+    return (b.date||'').localeCompare(a.date||'');
+  });
+}
+function updateConnPill(){
+  const pill = document.getElementById('connPill');
+  if(!pill) return;
+  if(appsScriptUrl && sheetSyncActive){
+    pill.className = 'conn-pill ok sync';
+    pill.innerHTML = 'Google Sheet Live ✓' + (lastSyncTime ? '<span class="sync-time">' + esc(lastSyncTime) + '</span>' : '');
+  } else if(appsScriptUrl){
+    pill.className = 'conn-pill warn';
+    pill.textContent = 'Sheet linked (paused) / หยุดชั่วคราว';
+  } else if(fileHandlePending){
+    pill.className = 'conn-pill warn';
+    pill.textContent = 'Reconnect needed / ต้องเชื่อมใหม่';
+  } else if(fileHandle){
+    pill.className = 'conn-pill ok';
+    pill.textContent = 'Excel linked ✓';
+  } else {
+    pill.className = 'conn-pill off';
+    pill.textContent = 'Not linked / ยังไม่เชื่อม';
+  }
+  const openBtn = document.getElementById('btnOpenSheet');
+  if(openBtn) openBtn.style.display = appsScriptUrl ? '' : 'none';
+}
+function toggleMoreMenu(open){
+  const menu = document.getElementById('moreMenu');
+  if(!menu) return;
+  menu.classList.toggle('open', open !== undefined ? open : !menu.classList.contains('open'));
+}
+function ensureStateShape(){
+  if(!state.farms) state.farms = {};
+  if(!state.documents) state.documents = {};
+  FARMS.forEach(f=>{
+    if(!state.farms[f]) state.farms[f] = [];
+    if(!state.documents[f]) state.documents[f] = [];
+  });
+}
+function formatFileSize(bytes){
+  if(!bytes) return '0 B';
+  if(bytes < 1024) return bytes + ' B';
+  if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/(1024*1024)).toFixed(1) + ' MB';
+}
+function docFileIcon(doc){
+  const m = (doc.mimeType||'').toLowerCase();
+  const n = (doc.fileName||doc.title||'').toLowerCase();
+  if(doc.url && !doc.data) return {cls:'link', icon:'🔗'};
+  if(m.includes('pdf') || n.endsWith('.pdf')) return {cls:'pdf', icon:'📄'};
+  if(m.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp)$/.test(n)) return {cls:'img', icon:'🖼️'};
+  if(m.includes('sheet') || m.includes('excel') || /\.(xlsx?|csv)$/.test(n)) return {cls:'xls', icon:'📊'};
+  return {cls:'', icon:'📎'};
+}
+function farmSubtabsHtml(){
+  const docCount = (state.documents[currentFarm]||[]).length;
+  return `<div class="farm-subtabs">
+    <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
+    <button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>
+  </div>`;
+}
+function bindFarmSubtabs(root){
+  const qc = root.querySelector('#btnFarmQc');
+  const docs = root.querySelector('#btnFarmDocs');
+  if(qc) qc.onclick = ()=>{ currentFarmTab='qc'; render(); };
+  if(docs) docs.onclick = ()=>{ currentFarmTab='documents'; render(); };
+}
+function renderYieldChart(perFarm){
+  const rows = perFarm.filter(r=>r.batches > 0 && r.avgYield !== null);
+  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;">No yield data for this month.</div>';
+  const max = Math.max(...rows.map(r=>r.avgYield), 0.01);
+  return '<div class="bar-chart">' + rows.map(r=>{
+    const pct = Math.round(r.avgYield / max * 100);
+    return `<div class="bar-row"><span class="lbl" title="${esc(r.farm)}">${esc(r.farm)}</span><div class="track"><div class="fill" style="width:${pct}%"></div></div><span class="val">${fmtPct(r.avgYield)}</span></div>`;
+  }).join('') + '</div>';
+}
+function renderMoldChart(perFarm){
+  const rows = perFarm.filter(r=>r.totalMold > 0);
+  if(!rows.length) return '<div style="color:var(--muted);font-size:12px;">No mold recorded this month.</div>';
+  const max = Math.max(...rows.map(r=>r.totalMold), 1);
+  return '<div class="bar-chart">' + rows.map(r=>{
+    const pct = Math.round(r.totalMold / max * 100);
+    return `<div class="bar-row"><span class="lbl" title="${esc(r.farm)}">${esc(r.farm)}</span><div class="track"><div class="fill" style="width:${pct}%;background:linear-gradient(90deg,#f59e0b,#dc2626)"></div></div><span class="val">${fmtNum(r.totalMold)} g</span></div>`;
+  }).join('') + '</div>';
+}
+function renderPassFailChart(total){
+  const pass = total.pass, fail = total.fail, cond = total.cond;
+  const sum = pass + fail + cond;
+  if(!sum) return '<div style="color:var(--muted);font-size:12px;">No QC results for this month.</div>';
+  const pW = (pass/sum*100).toFixed(1), fW = (fail/sum*100).toFixed(1), cW = (cond/sum*100).toFixed(1);
+  return `<div class="stacked-bar">
+    ${pass ? `<div class="seg" style="width:${pW}%;background:var(--pass)" title="Pass: ${pass}"></div>` : ''}
+    ${cond ? `<div class="seg" style="width:${cW}%;background:var(--cond)" title="Conditional: ${cond}"></div>` : ''}
+    ${fail ? `<div class="seg" style="width:${fW}%;background:var(--fail)" title="Fail: ${fail}"></div>` : ''}
+  </div>
+  <div class="stacked-legend">
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--pass);vertical-align:-1px;"></i>Pass ${pass}</span>
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--cond);vertical-align:-1px;"></i>Conditional ${cond}</span>
+    <span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--fail);vertical-align:-1px;"></i>Fail ${fail}</span>
+  </div>`;
+}
+function goToFarmMonth(farm, month){
+  currentView = 'farm';
+  currentFarmTab = 'qc';
+  currentFarm = farm;
+  farmMonthFilter = month;
+  render();
+}
+function downloadDocument(doc){
+  if(doc.data){
+    const mime = doc.mimeType || 'application/octet-stream';
+    const blob = b64ToBlob(doc.data, mime);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = doc.fileName || doc.title || 'document';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+  } else if(doc.url){
+    window.open(doc.url, '_blank', 'noopener');
+  }
+}
+function openDocument(doc){
+  if(doc.data){
+    const mime = doc.mimeType || 'application/octet-stream';
+    const blob = b64ToBlob(doc.data, mime);
+    window.open(URL.createObjectURL(blob), '_blank');
+  } else if(doc.url){
+    window.open(doc.url, '_blank', 'noopener');
+  }
+}
+function b64ToBlob(b64, mime){
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], {type:mime});
+}
+function readFileAsBase64(file){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const result = reader.result;
+      const b64 = typeof result === 'string' && result.includes(',') ? result.split(',')[1] : '';
+      resolve(b64);
+    };
+    reader.onerror = ()=>reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+function matchesDocFilters(doc){
+  if(docCategoryFilter && doc.category !== docCategoryFilter) return false;
+  if(docSearchText){
+    const hay = [doc.title,doc.fileName,doc.notes,doc.category,doc.uploadedBy].join(' ').toLowerCase();
+    if(!hay.includes(docSearchText.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/* ============ GOOGLE SHEETS SYNC (via Apps Script) ============ */
+function stateFingerprint(){
+  return JSON.stringify(state.farms);
+}
+function debouncedPushToSheet(){
+  clearTimeout(sheetSaveTimer);
+  sheetSaveTimer = setTimeout(pushToGoogleSheet, 800);
+}
+async function callAppsScript(payload){
+  if(!appsScriptUrl) throw new Error('No Apps Script URL configured');
+  const res = await fetch(appsScriptUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch(e){ throw new Error('Invalid response from Google Sheet backend'); }
+}
+async function pullFromGoogleSheet(silent){
+  if(!appsScriptUrl) return;
+  const modalOpen = document.getElementById('modalRoot').innerHTML.trim() !== '';
+  if(modalOpen || modalDirty) return;
+  if(localDirty || sheetSaveInFlight) return;
+  try{
+    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
+    const res = await fetch(url);
+    const data = await res.json();
+    if(!data.ok || !data.farms) throw new Error(data.error || 'Read failed');
+    const fp = JSON.stringify(data.farms);
+    if(fp === lastRemoteJson) return;
+    const preservedDocs = state.documents;
+    state.farms = data.farms;
+    state.documents = preservedDocs;
+    ensureStateShape();
+    lastRemoteJson = fp;
+    saveLocal();
+    render();
+    lastSyncTime = new Date().toLocaleTimeString();
+    updateConnPill();
+    if(!silent) alert('Reloaded from Google Sheet.\nโหลดข้อมูลจาก Google Sheet แล้ว');
+  }catch(e){
+    console.warn('sheet pull failed', e);
+    if(!silent) alert('Could not reload Google Sheet. Check your Web App URL and permissions.\nไม่สามารถโหลด Google Sheet ได้');
+  }
+}
+async function pushToGoogleSheet(){
+  if(!appsScriptUrl) return;
+  if(sheetSaveInFlight){ sheetSaveQueued = true; return; }
+  sheetSaveInFlight = true;
+  try{
+    const payload = { action: 'write', state: { farms: state.farms } };
+    const data = await callAppsScript(payload);
+    if(!data.ok) throw new Error(data.error || 'Write failed');
+    localDirty = false;
+    lastRemoteJson = stateFingerprint();
+    lastSyncTime = new Date().toLocaleTimeString();
+    updateConnPill();
+  }catch(e){
+    console.warn('sheet push failed', e);
+    alert('Could not save to Google Sheet. Try Reload, then Save again.\nไม่สามารถบันทึกลง Google Sheet ได้');
+  }finally{
+    sheetSaveInFlight = false;
+    if(sheetSaveQueued){ sheetSaveQueued = false; pushToGoogleSheet(); }
+  }
+}
+function startSheetPolling(){
+  stopSheetPolling();
+  if(!appsScriptUrl) return;
+  sheetSyncActive = true;
+  updateConnPill();
+  sheetPollTimer = setInterval(()=> pullFromGoogleSheet(true), SHEET_POLL_MS);
+}
+function stopSheetPolling(){
+  sheetSyncActive = false;
+  if(sheetPollTimer){ clearInterval(sheetPollTimer); sheetPollTimer = null; }
+}
+function openSheetSetupGuide(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>📗 Google Sheet Setup — Real-time team sync</h2>
+      <div class="sub">ทีมทุกคนดูข้อมูลเดียวกันแบบ real-time ผ่าน Google Sheet</div>
+      <div class="helpbox">
+        <h3>Step 1 — Google Sheet / สร้าง Google Sheet</h3>
+        <b>Option A (recommended):</b> Upload <b>CANA QC Tracker v4.xlsx</b> to Google Drive → Open with Google Sheets<br>
+        <b>Option B:</b> Create blank sheet at sheets.google.com named <b>"CANA QC Tracker"</b><br>
+        อัปโหลดไฟล์ v4.xlsx ไป Google Drive แล้วเปิดด้วย Google Sheets (แนะนำ)
+        <h3>Step 2 — Install backend script / ติดตั้งสคริปต์</h3>
+        In the sheet: <b>Extensions → Apps Script</b><br>
+        Copy all code from <b>CANA_QC_GoogleAppsScript.gs</b> (in same folder as this app)<br>
+        Change <code>SPREADSHEET_ID</code> to your Sheet ID (from the URL)<br>
+        If you used v4.xlsx: click <b>Run → migrateV4Sheets</b> (keeps your data, cleans format)<br>
+        If new blank sheet: click <b>Run → setupSheets</b><br>
+        <h3>Step 3 — Deploy web app / Deploy</h3>
+        <b>Deploy → New deployment → Web app</b><br>
+        Execute as: <b>Me</b> · Who has access: <b>Anyone with Google account</b> (or your organisation)<br>
+        Copy the <b>Web App URL</b> (ends with /exec)
+        <h3>Step 4 — Deploy app on Vercel / Deploy แอป</h3>
+        Push this folder to GitHub → import on <b>vercel.com</b> → team opens your Vercel link<br>
+        Edit <code>config.json</code> with your Web App URL — team auto-connects, no paste needed<br>
+        อัปโหลดโปรเจกต์ขึ้น Vercel แล้วแชร์ลิงก์ให้ทีม
+        <h3>Step 5 — Share with team / แชร์ให้ทีม</h3>
+        Share the Google Sheet with all staff as <b>Editor</b><br>
+        Each staff member: open this app → click <b>Google Sheet</b> → paste the Web App URL<br>
+        <h3>Step 6 — Real-time sync / ซิงค์อัตโนมัติ</h3>
+        App auto-syncs every <b>${SHEET_POLL_MS/1000} seconds</b>. Status shows <b>Google Sheet Live ✓</b><br>
+        แอปซิงค์อัตโนมัติทุก ${SHEET_POLL_MS/1000} วินาที — ทุกคนเห็นข้อมูลเดียวกัน<br>
+        <b>Note:</b> Documents tab stays in browser only. QC data goes to Google Sheet.
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="cancelBtn">Close / ปิด</button>
+        <button type="button" class="primary" id="btnGuideLink">Connect now / เชื่อมตอนนี้</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('mousedown', (e)=>{ if(e.target.id==='overlay') closeModal(); });
+  document.getElementById('btnGuideLink').onclick = ()=>{ closeModal(); openLinkSheetModal(); };
+}
+function openLinkSheetModal(){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h2>📗 Connect Google Sheet / เชื่อม Google Sheet</h2>
+      <div class="sub">Paste the Web App URL from Apps Script deployment</div>
+      <form id="linkSheetForm">
+        <div class="form-grid">
+          <div class="field full">
+            <label>Web App URL <span>URL จาก Deploy → Web app</span></label>
+            <input type="url" name="url" value="${esc(appsScriptUrl)}" placeholder="https://script.google.com/macros/s/...../exec" required>
+          </div>
+          <div class="field full">
+            <label>Google Sheet URL <span>ลิงก์เปิดชีต (ไม่บังคับ)</span></label>
+            <input type="url" name="sheetUrl" value="${esc(sheetViewUrl)}" placeholder="https://docs.google.com/spreadsheets/d/...../edit">
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:12px 0 0;">First time? Click <b>More → Google Sheet Setup</b> for full instructions.<br>ครั้งแรก? กด More → Google Sheet Setup เพื่อดูวิธีตั้งค่า</p>
+        <div class="modal-actions">
+          <button type="button" id="cancelBtn">Cancel / ยกเลิก</button>
+          <button type="submit" class="primary">Connect / เชื่อมต่อ</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  document.getElementById('cancelBtn').onclick = closeModal;
+  document.getElementById('overlay').addEventListener('mousedown', (e)=>{ if(e.target.id==='overlay') closeModal(); });
+  document.getElementById('linkSheetForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const url = new FormData(e.target).get('url').trim();
+    if(!url.includes('script.google.com')){ alert('Please paste a valid Apps Script Web App URL.\nกรุณาใส่ URL ที่ถูกต้อง'); return; }
+    appsScriptUrl = url.split('#')[0];
+    sheetViewUrl = (new FormData(e.target).get('sheetUrl') || '').trim();
+    localStorage.setItem(APPS_SCRIPT_URL_KEY, appsScriptUrl);
+    if(sheetViewUrl) localStorage.setItem(SHEET_VIEW_URL_KEY, sheetViewUrl);
+    closeModal();
+    try{
+      await pullFromGoogleSheet(true);
+      lastRemoteJson = stateFingerprint();
+      localDirty = false;
+      startSheetPolling();
+      updateConnPill();
+      alert('Connected! Data syncs every ' + (SHEET_POLL_MS/1000) + ' seconds. All team members can use the same Web App URL.\nเชื่อมต่อแล้ว! ข้อมูลซิงค์อัตโนมัติทุก ' + (SHEET_POLL_MS/1000) + ' วินาที');
+    }catch(err){
+      alert('Connection failed. Check the URL and that the script is deployed.\nเชื่อมต่อไม่สำเร็จ');
+    }
+  };
+}
+function openGoogleSheetInBrowser(){
+  const url = sheetViewUrl || localStorage.getItem(SHEET_VIEW_URL_KEY);
+  if(url) window.open(url, '_blank', 'noopener');
+  else alert('Add your Google Sheet URL when connecting (optional field), or open it from Google Drive.\nใส่ URL ของ Google Sheet ตอนเชื่อมต่อ หรือเปิดจาก Google Drive');
+}
+
+/* ============ PERSISTENCE ============ */
+function saveLocal(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  document.getElementById('lastSavedTag') && (document.getElementById('lastSavedTag').textContent = 'Saved locally ' + new Date().toLocaleTimeString());
+}
+function loadLocal(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){ console.warn('local load failed', e); }
+  return null;
+}
+function onDataChanged(){
+  saveLocal();
+  localDirty = true;
+  if(appsScriptUrl){ debouncedPushToSheet(); }
+  if(fileHandle){ debouncedSaveToFile(); }
+}
+let saveFileTimer=null;
+function debouncedSaveToFile(){
+  clearTimeout(saveFileTimer);
+  saveFileTimer = setTimeout(saveDataFile, 700);
+}
+
+/* ---- remember the linked file across sessions (IndexedDB) so staff don't have to re-link every time ---- */
+const IDB_NAME = 'cana_qc_handle_db', IDB_STORE = 'handles', IDB_KEY = 'linkedFile';
+function idbOpen(){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+async function idbSetHandle(handle){
+  try{
+    const db = await idbOpen();
+    await new Promise((res,rej)=>{
+      const tx = db.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+    });
+  }catch(e){ console.warn('idb set failed', e); }
+}
+async function idbGetHandle(){
+  try{
+    const db = await idbOpen();
+    return await new Promise((res,rej)=>{
+      const tx = db.transaction(IDB_STORE,'readonly');
+      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+      req.onsuccess = ()=>res(req.result||null);
+      req.onerror = ()=>rej(req.error);
+    });
+  }catch(e){ return null; }
+}
+
+let fileHandlePending = null;
+async function tryAutoReconnect(){
+  if(!window.showOpenFilePicker || !('indexedDB' in window)) return;
+  const handle = await idbGetHandle();
+  if(!handle) return;
+  try{
+    const perm = await handle.queryPermission({mode:'readwrite'});
+    if(perm === 'granted'){
+      fileHandle = handle;
+      fileType = handle.name.toLowerCase().endsWith('.json') ? 'json' : 'xlsx';
+      await reloadFromFile(true);
+      updateStatusLine('Linked to: ' + handle.name);
+    } else if(perm === 'prompt'){
+      fileHandlePending = handle;
+      const btn = document.getElementById('btnReconnect');
+      btn.textContent = '🔌 Reconnect: ' + handle.name;
+      btn.className = 'reconnect';
+      btn.style.display = '';
+    }
+  }catch(e){ console.warn('auto reconnect failed', e); }
+}
+async function reconnectFile(){
+  if(!fileHandlePending) return;
+  try{
+    const perm = await fileHandlePending.requestPermission({mode:'readwrite'});
+    if(perm === 'granted'){
+      fileHandle = fileHandlePending;
+      fileType = fileHandle.name.toLowerCase().endsWith('.json') ? 'json' : 'xlsx';
+      fileHandlePending = null;
+      document.getElementById('btnReconnect').style.display = 'none';
+      await reloadFromFile(true);
+      updateStatusLine('Linked to: ' + fileHandle.name);
+    }
+  }catch(e){ console.warn(e); }
+}
+
+/* ---- pull the latest data your teammates saved ---- */
+async function reloadFromFile(silent){
+  if(!fileHandle) return;
+  const modalOpen = document.getElementById('modalRoot').innerHTML.trim() !== '';
+  if(modalOpen) return; // don't yank data out from under someone mid-edit
+  try{
+    const file = await fileHandle.getFile();
+    const name = file.name.toLowerCase();
+    if(name.endsWith('.json')){
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if(parsed && parsed.farms) state = parsed;
+    } else {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array', cellDates:true});
+      state = parseWorkbookToState(wb);
+    }
+    ensureStateShape();
+    saveLocal();
+    render();
+    if(!silent) updateStatusLine('Reloaded latest from: ' + fileHandle.name + ' — ' + new Date().toLocaleTimeString());
+  }catch(e){
+    console.warn('reload failed', e);
+    if(!silent) alert('Could not reload the file. It may have been moved, renamed, or you may need to relink.\nไม่สามารถโหลดไฟล์ได้ อาจถูกย้าย/เปลี่ยนชื่อ หรือต้องเชื่อมไฟล์ใหม่');
+  }
+}
+
+async function openDataFile(){
+  if(!window.showOpenFilePicker){
+    alert('Your browser doesn\'t support linking directly to a file (this works in Chrome/Edge). Please use Export JSON / Import JSON instead to pass data between devices.');
+    return;
+  }
+  try{
+    const [handle] = await window.showOpenFilePicker({types:[
+      {description:'CANA QC Tracker (Excel)', accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}},
+      {description:'QC Tracker Data (legacy JSON)', accept:{'application/json':['.json']}}
+    ]});
+    fileHandle = handle;
+    const file = await handle.getFile();
+    const name = file.name.toLowerCase();
+    if(name.endsWith('.json')){
+      fileType = 'json';
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if(parsed && parsed.farms) state = parsed;
+    } else {
+      fileType = 'xlsx';
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, {type:'array', cellDates:true});
+      state = parseWorkbookToState(wb);
+    }
+    ensureStateShape();
+    saveLocal();
+    render();
+    updateStatusLine('Linked to: ' + handle.name);
+    idbSetHandle(handle);
+  }catch(e){
+    if(e.name !== 'AbortError') console.warn(e);
+  }
+}
+let saveInFlight = false;
+let saveQueuedAgain = false;
+async function saveDataFile(){
+  if(!fileHandle){ return saveDataFileAs(); }
+  // Never allow two createWritable() streams on the same handle at once — that's how the
+  // linked file gets corrupted (a second save truncating the file while the first is mid-write).
+  if(saveInFlight){ saveQueuedAgain = true; return; }
+  saveInFlight = true;
+  try{
+    const writable = await fileHandle.createWritable();
+    if(fileType === 'json'){
+      await writable.write(JSON.stringify(state, null, 2));
+    } else {
+      const wb = buildWorkbook();
+      const wbout = XLSX.write(wb, {bookType:'xlsx', type:'array'});
+      // Guarantee a proper binary buffer is written regardless of what shape SheetJS returns.
+      const bytes = new Uint8Array(wbout);
+      if(bytes.length < 100) throw new Error('Generated Excel file looked empty/corrupt (' + bytes.length + ' bytes) — save aborted to avoid overwriting your data with a bad file.');
+      await writable.write(bytes);
+    }
+    await writable.close();
+    updateStatusLine('Linked to: ' + fileHandle.name + ' — saved ' + new Date().toLocaleTimeString());
+  }catch(e){
+    console.warn('save to file failed', e);
+    updateStatusLine('⚠️ Save failed — ' + (e && e.message ? e.message : 'unknown error') + '. Try Save again, or re-link the file.');
+    alert('Could not save to the linked file. Please click Save again, or use Link Excel File to reconnect.\nไม่สามารถบันทึกลงไฟล์ที่เชื่อมไว้ได้ กรุณากด Save อีกครั้ง หรือเชื่อมไฟล์ใหม่');
+  }finally{
+    saveInFlight = false;
+    if(saveQueuedAgain){ saveQueuedAgain = false; saveDataFile(); }
+  }
+}
+async function saveDataFileAs(){
+  if(!window.showSaveFilePicker){
+    alert('Your browser doesn\'t support saving directly to a file (this works in Chrome/Edge). Please use Export to Excel or Export JSON instead.');
+    return;
+  }
+  try{
+    const handle = await window.showSaveFilePicker({suggestedName:'Cana QC tracker.xlsx', types:[
+      {description:'CANA QC Tracker (Excel)', accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}
+    ]});
+    fileHandle = handle;
+    fileType = 'xlsx';
+    await saveDataFile();
+    idbSetHandle(handle);
+  }catch(e){ if(e.name!=='AbortError') console.warn(e); }
+}
+function updateStatusLine(msg){
+  updateConnPill();
+}
+
+function exportJSON(){
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cana-qc-data.json';
+  a.click();
+}
+function importJSONFile(evt){
+  const file = evt.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed.farms) throw new Error('bad format');
+      state = parsed;
+      fileHandle = null;
+      ensureStateShape();
+      saveLocal();
+      render();
+      updateStatusLine('Loaded from imported file: ' + file.name);
+    }catch(e){ alert('Could not read that file — is it a CANA QC Tracker JSON export?'); }
+  };
+  reader.readAsText(file);
+  evt.target.value = '';
+}
+
+/* ============ EXCEL READ/WRITE ============ */
+function excelDateToISO(v){
+  if(Object.prototype.toString.call(v)==='[object Date]' && !isNaN(v.getTime())){
+    return v.getUTCFullYear()+'-'+String(v.getUTCMonth()+1).padStart(2,'0')+'-'+String(v.getUTCDate()).padStart(2,'0');
+  }
+  if(typeof v === 'number' && isFinite(v)){
+    const utcDays = Math.floor(v - 25569);
+    const d = new Date(utcDays*86400*1000);
+    return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+  }
+  if(typeof v === 'string'){
+    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
+    if(m) return m[1];
+    const d = new Date(v);
+    if(!isNaN(d.getTime())) return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  }
+  return '';
+}
+
+function numOrBlank(v){
+  if(v===''||v===undefined||v===null) return '';
+  const n = Number(v);
+  return isNaN(n) ? '' : n;
+}
+
+function buildWorkbook(){
+  const wb = XLSX.utils.book_new();
+  FARMS.forEach(farm=>{
+    const rows = [XLSX_HEADER];
+    (state.farms[farm]||[]).forEach(rec=>{
+      const c = computeRow(rec);
+      rows.push([
+        rec.date||'', rec.strain||'', numOrBlank(rec.bigsCount), numOrBlank(rec.popsCount), numOrBlank(rec.grossWt), rec.condition||'', rec.invoice||'', rec.receivedBy||'', rec.notes||'',
+        rec.qcStart||'', rec.qcEnd||'', numOrBlank(rec.startWt), numOrBlank(rec.bigsG), numOrBlank(rec.popsG), numOrBlank(rec.scrapsG), numOrBlank(rec.seedsG), numOrBlank(rec.moldG), numOrBlank(rec.wasteG), rec.passFail||'', rec.qcBy||'',
+        c.totalFlower===null?'':c.totalFlower, c.totalOut===null?'':c.totalOut, c.diff===null?'':c.diff, c.yieldPct===null?'':Number((c.yieldPct*100).toFixed(2)), c.month||''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, farm.slice(0,31));
+  });
+
+  // Dashboard sheet for currently selected month
+  const month = dashMonth || currentMonthLabel();
+  const dashHeader = ['Farm','Batches','Total Start (g)','Total Bigs (g)','Total Pops (g)','Total Flower (g)','Avg Yield %','Total Mold (g)','Pass','Fail','Conditional'];
+  const dashRows = [ ['Filter Month:', month], [], dashHeader ];
+  const summary = computeDashboard(month);
+  summary.perFarm.forEach(r=>{
+    dashRows.push([r.farm, r.batches, r.totalStart, r.totalBigs, r.totalPops, r.totalFlower, r.avgYield===null?'':Number((r.avgYield*100).toFixed(2)), r.totalMold, r.pass, r.fail, r.cond]);
+  });
+  dashRows.push(['TOTAL', summary.total.batches, summary.total.totalStart, summary.total.totalBigs, summary.total.totalPops, summary.total.totalFlower, summary.total.avgYield===null?'':Number((summary.total.avgYield*100).toFixed(2)), summary.total.totalMold, summary.total.pass, summary.total.fail, summary.total.cond]);
+  const dashWs = XLSX.utils.aoa_to_sheet(dashRows);
+  XLSX.utils.book_append_sheet(wb, dashWs, 'Dashboard');
+
+  return wb;
+}
+
+function parseWorkbookToState(wb){
+  const farms = {};
+  FARMS.forEach(farm=>{
+    farms[farm] = [];
+    const ws = wb.Sheets[farm];
+    if(!ws) return;
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:''});
+    for(let i=1;i<rows.length;i++){
+      const r = rows[i];
+      if(!r || r.length===0) continue;
+      const isEmpty = ALL_COLS.every((c,idx)=>{ const v=r[idx]; return v===''||v===undefined||v===null; });
+      if(isEmpty) continue;
+      const rec = {id:uid()};
+      ALL_COLS.forEach((c,idx)=>{
+        let v = r[idx];
+        if(v===undefined||v===null) v='';
+        rec[c.key] = c.type==='date' ? (v===''?'':excelDateToISO(v)) : String(v);
+      });
+      farms[farm].push(rec);
+    }
+  });
+  const preservedDocs = (state && state.documents) ? state.documents : Object.fromEntries(FARMS.map(f=>[f,[]]));
+  return {farms, documents: preservedDocs};
+}
+
+function exportExcel(){
+  const wb = buildWorkbook();
+  XLSX.writeFile(wb, 'CANA_QC_Tracker_export.xlsx');
+}
+
+/* ============ DASHBOARD COMPUTE ============ */
+function allMonths(){
+  const set = new Set();
+  FARMS.forEach(f=>(state.farms[f]||[]).forEach(r=>{ const m = r.date?formatMonth(r.date):''; if(m) set.add(m); }));
+  return Array.from(set).sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+}
+function currentMonthLabel(){
+  const d = new Date();
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()]+' '+d.getFullYear();
+}
+function computeDashboard(month){
+  const perFarm = FARMS.map(farm=>{
+    const recs = (state.farms[farm]||[]).filter(r => (r.date?formatMonth(r.date):'') === month);
+    let totalStart=0, totalBigs=0, totalPops=0, totalMold=0, pass=0, fail=0, cond=0;
+    recs.forEach(r=>{
+      totalStart += num(r.startWt)||0;
+      totalBigs += num(r.bigsG)||0;
+      totalPops += num(r.popsG)||0;
+      totalMold += num(r.moldG)||0;
+      if((r.passFail||'').startsWith('Pass')) pass++;
+      else if((r.passFail||'').startsWith('Fail')) fail++;
+      else if((r.passFail||'').startsWith('Conditional')) cond++;
+    });
+    const totalFlower = totalBigs+totalPops;
+    const avgYield = totalStart ? totalFlower/totalStart : null;
+    return {farm, batches:recs.length, totalStart, totalBigs, totalPops, totalFlower, avgYield, totalMold, pass, fail, cond};
+  });
+  const total = perFarm.reduce((acc,r)=>{
+    acc.batches+=r.batches; acc.totalStart+=r.totalStart; acc.totalBigs+=r.totalBigs; acc.totalPops+=r.totalPops;
+    acc.totalFlower+=r.totalFlower; acc.totalMold+=r.totalMold; acc.pass+=r.pass; acc.fail+=r.fail; acc.cond+=r.cond;
+    return acc;
+  }, {batches:0,totalStart:0,totalBigs:0,totalPops:0,totalFlower:0,totalMold:0,pass:0,fail:0,cond:0});
+  total.avgYield = total.totalStart ? total.totalFlower/total.totalStart : null;
+  return {perFarm, total};
+}
+
+/* ============ RENDER: SHELL ============ */
+function render(){
+  renderTabs();
+  if(currentView==='dashboard') renderDashboard();
+  else if(currentFarmTab==='documents') renderFarmDocuments();
+  else renderFarmView();
+}
+
+function renderTabs(){
+  const nav = document.getElementById('tabsNav');
+  nav.innerHTML = '';
+  const totalPending = countPendingAll();
+  if(totalPending > 0){
+    const banner = document.createElement('div');
+    banner.className = 'pending-banner';
+    banner.style.cssText = 'margin:0 24px 0;padding:10px 16px;border-radius:0;border-left:none;border-right:none;border-top:none;';
+    banner.innerHTML = '<span>⚠️ <b>' + totalPending + ' batch(es) waiting for QC</b> across all farms / <span class="bi">มี ' + totalPending + ' รายการรอ QC ทุกฟาร์ม</span></span>';
+    nav.parentNode.insertBefore(banner, nav.nextSibling);
+    const old = document.getElementById('globalPendingBanner');
+    if(old) old.remove();
+    banner.id = 'globalPendingBanner';
+  } else {
+    const old = document.getElementById('globalPendingBanner');
+    if(old) old.remove();
+  }
+  FARMS.forEach(farm=>{
+    const pending = countPendingFarm(farm);
+    const b = document.createElement('button');
+    b.innerHTML = esc(farm) + (pending ? ' <span class="tab-badge">' + pending + '</span>' : '');
+    b.className = (currentView==='farm' && currentFarm===farm) ? 'active' : '';
+    b.onclick = () => { currentView='farm'; currentFarm=farm; render(); };
+    nav.appendChild(b);
+  });
+  const d = document.createElement('button');
+  d.textContent = '📊 Dashboard / แดชบอร์ด';
+  d.className = currentView==='dashboard' ? 'active' : '';
+  d.onclick = () => { currentView='dashboard'; render(); };
+  nav.appendChild(d);
+}
+
+/* ============ RENDER: FARM VIEW ============ */
+function renderFarmView(){
+  const main = document.getElementById('mainArea');
+  const records = (state.farms[currentFarm]||[]);
+  const filtered = sortRecords(records.filter(matchesRecordFilters));
+  const farmPending = countPendingFarm(currentFarm);
+
+  main.innerHTML = `
+    ${farmSubtabsHtml()}
+
+    <div class="panel">
+      <details>
+        <summary>ℹ️ How to use / วิธีใช้</summary>
+        <div class="helpbox">
+          <h3>Manager (blue 🔵)</h3>
+          On arrival, click <b>+ New Delivery</b> and fill the delivery info.<br>
+          เมื่อสินค้ามาถึง กดปุ่ม "+ New Delivery" แล้วกรอกข้อมูลการรับสินค้า
+          <h3>QC Staff (purple 🟣)</h3>
+          Same day, find the row (or use "Pending QC only") and click <b>Enter QC</b> to fill results. All weights in grams.<br>
+          วันเดียวกัน หาแถวที่รอ QC แล้วกดปุ่ม "Enter QC" เพื่อกรอกผล น้ำหนักทั้งหมดเป็นกรัม
+          <h3>Auto-calculated (grey)</h3>
+          Total Flower, Total Out, Diff, Yield % are calculated automatically — you never edit these.<br>
+          ดอกรวม, รวมออกทั้งหมด, ผลต่าง, เปอร์เซ็นต์ผลผลิต คำนวณอัตโนมัติ — ไม่ต้องแก้ไขเอง
+        </div>
+      </details>
+    </div>
+
+    ${farmPending ? `<div class="pending-banner"><span>⚠️ <b>${farmPending} batch(es) need QC</b> on ${esc(currentFarm)} / <span class="bi">มี ${farmPending} รายการรอ QC ที่ ${esc(currentFarm)}</span></span><button class="small" id="btnShowPending">Show pending only / แสดงรอ QC</button></div>` : ''}
+
+    <div class="panel">
+      <div class="legend">
+        <span><span class="dot" style="background:var(--blue-50);border:1px solid var(--blue-300)"></span>Manager fills on arrival / ผู้จัดการกรอก</span>
+        <span><span class="dot" style="background:var(--purple-50);border:1px solid var(--purple-300)"></span>QC staff fills same day / QC กรอกวันเดียวกัน</span>
+        <span><span class="dot" style="background:var(--grey-bg);border:1px solid var(--grey-border)"></span>Auto-calculated / คำนวณอัตโนมัติ</span>
+      </div>
+    </div>
+
+    <div class="row-actions">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="primary" id="btnNewDelivery">+ New Delivery <span class="bi">/ รับสินค้าใหม่</span></button>
+        <input class="search-box" id="searchBox" placeholder="Search strain, invoice, QC by…" value="${esc(searchText)}">
+        <label class="chk"><input type="checkbox" id="chkPending" ${pendingOnly?'checked':''}> Pending QC only</label>
+        <div class="view-toggle">
+          <button class="${viewMode==='compact'?'active':''}" id="btnViewCompact">Compact / กระทัดรัด</button>
+          <button class="${viewMode==='full'?'active':''}" id="btnViewFull">Full table / ตารางเต็ม</button>
+        </div>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);">${filtered.length} of ${records.length} record(s) — ${esc(currentFarm)}</div>
+    </div>
+
+    <div class="filter-row">
+      <label>Status: <select id="filterStatus">
+        <option value="">All / ทั้งหมด</option>
+        <option value="pending" ${filterStatus==='pending'?'selected':''}>Pending QC</option>
+        <option value="pass" ${filterStatus==='pass'?'selected':''}>Pass</option>
+        <option value="fail" ${filterStatus==='fail'?'selected':''}>Fail</option>
+        <option value="cond" ${filterStatus==='cond'?'selected':''}>Conditional</option>
+      </select></label>
+      <label>From: <input type="date" id="filterDateFrom" value="${esc(filterDateFrom)}"></label>
+      <label>To: <input type="date" id="filterDateTo" value="${esc(filterDateTo)}"></label>
+      ${farmMonthFilter ? `<span style="font-size:12px;color:var(--blue-700);font-weight:600;">Month: ${esc(farmMonthFilter)} <button class="small" id="btnClearMonth">✕</button></span>` : ''}
+    </div>
+
+    <div class="table-wrap desktop-table">
+      ${filtered.length ? (viewMode==='full' ? renderFullTable(filtered) : renderCompactTable(filtered)) : `<div class="empty-state">${records.length? 'No records match your filters.' : `<b>No records yet for ${esc(currentFarm)}.</b><br>Click "+ New Delivery" to add the first batch.`}</div>`}
+    </div>
+    <div class="card-list">
+      ${filtered.length ? renderCardList(filtered) : ''}
+    </div>
+  `;
+
+  bindFarmSubtabs(main);
+  document.getElementById('btnNewDelivery').onclick = () => openDeliveryModal(null);
+  document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; renderFarmView(); };
+  document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; renderFarmView(); };
+  document.getElementById('btnViewCompact').onclick = ()=>{ viewMode='compact'; renderFarmView(); };
+  document.getElementById('btnViewFull').onclick = ()=>{ viewMode='full'; renderFarmView(); };
+  document.getElementById('filterStatus').onchange = (e)=>{ filterStatus = e.target.value; renderFarmView(); };
+  document.getElementById('filterDateFrom').onchange = (e)=>{ filterDateFrom = e.target.value; renderFarmView(); };
+  document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; renderFarmView(); };
+  if(document.getElementById('btnShowPending')) document.getElementById('btnShowPending').onclick = ()=>{ pendingOnly=true; renderFarmView(); };
+  if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; renderFarmView(); };
+  bindRowActions(main);
+}
+
+/* ============ RENDER: FARM DOCUMENTS ============ */
+function renderFarmDocuments(){
+  const main = document.getElementById('mainArea');
+  const docs = (state.documents[currentFarm]||[]).filter(matchesDocFilters)
+    .slice().sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+
+  main.innerHTML = `
+    ${farmSubtabsHtml()}
+
+    <div class="panel">
+      <div class="helpbox" style="font-size:12.5px;color:var(--muted);">
+        Store invoices, COAs, photos, contracts and other files for <b>${esc(currentFarm)}</b>.
+        Uploaded files are saved with your data (JSON backup / linked JSON file). For Excel-linked teams, use <b>Export JSON</b> to back up documents too.
+        <br><span class="bi">เก็บใบเสร็จ ใบรายงานแล็บ รูปภาพ สัญญา และไฟล์อื่นๆ สำหรับ ${esc(currentFarm)} — ไฟล์จะถูกบันทึกพร้อมข้อมูล (สำรอง JSON)</span>
+      </div>
+    </div>
+
+    <div class="doc-toolbar">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <button class="primary" id="btnAddDoc">+ Add Document <span class="bi">/ เพิ่มเอกสาร</span></button>
+        <button id="btnUploadDoc">📎 Upload File <span class="bi">/ อัปโหลดไฟล์</span></button>
+        <input class="search-box" id="docSearchBox" placeholder="Search documents… / ค้นหาเอกสาร…" value="${esc(docSearchText)}">
+        <select id="docCategoryFilter">
+          <option value="">All categories / ทุกหมวด</option>
+          ${DOCUMENT_CATEGORIES.map(c=>`<option value="${esc(c)}" ${docCategoryFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
+        </select>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);">${docs.length} document(s) — ${esc(currentFarm)}</div>
+    </div>
+
+    ${docs.length ? `<div class="doc-grid">${docs.map(renderDocCard).join('')}</div>` : `
+      <div class="panel empty-state">
+        <b>No documents yet for ${esc(currentFarm)}. / ยังไม่มีเอกสาร</b><br>
+        Click <b>+ Add Document</b> to add a link or note, or <b>Upload File</b> to attach a file (max 8 MB).
+        <div class="upload-hint">Supported: PDF, images, Excel, Word, and other files · รองรับ PDF รูปภาพ Excel และไฟล์อื่นๆ</div>
+      </div>`}
+  `;
+
+  bindFarmSubtabs(main);
+  document.getElementById('btnAddDoc').onclick = ()=> openDocumentModal(null);
+  document.getElementById('btnUploadDoc').onclick = ()=> document.getElementById('docUploadInput').click();
+  document.getElementById('docSearchBox').oninput = (e)=>{ docSearchText = e.target.value; renderFarmDocuments(); };
+  document.getElementById('docCategoryFilter').onchange = (e)=>{ docCategoryFilter = e.target.value; renderFarmDocuments(); };
+  main.querySelectorAll('[data-edit-doc]').forEach(el=> el.onclick = ()=> openDocumentModal(el.dataset.editDoc));
+  main.querySelectorAll('[data-download-doc]').forEach(el=> el.onclick = ()=>{
+    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.downloadDoc);
+    if(doc) downloadDocument(doc);
+  });
+  main.querySelectorAll('[data-open-doc]').forEach(el=> el.onclick = ()=>{
+    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.openDoc);
+    if(doc) openDocument(doc);
+  });
+  main.querySelectorAll('[data-delete-doc]').forEach(el=> el.onclick = ()=> deleteDocument(el.dataset.deleteDoc));
+}
+
+function renderDocCard(doc){
+  const icon = docFileIcon(doc);
+  const hasFile = !!(doc.data || doc.url);
+  return `<div class="doc-card">
+    <div class="doc-card-top">
+      <div class="doc-icon ${icon.cls}">${icon.icon}</div>
+      <div style="min-width:0;flex:1;">
+        <p class="doc-title">${esc(doc.title || doc.fileName || 'Untitled')}</p>
+        <div class="doc-meta">
+          <span class="doc-cat">${esc((doc.category||'Other').split(' / ')[0])}</span><br>
+          ${doc.fileName ? esc(doc.fileName) + (doc.size ? ' · ' + formatFileSize(doc.size) : '') + '<br>' : ''}
+          ${doc.uploadedAt ? '📅 ' + esc(doc.uploadedAt) : ''}${doc.uploadedBy ? ' · 👤 ' + esc(doc.uploadedBy) : ''}
+        </div>
+      </div>
+    </div>
+    ${doc.notes ? `<div class="doc-notes">${esc(doc.notes)}</div>` : ''}
+    <div class="doc-actions">
+      ${hasFile ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
+      <button class="small" data-edit-doc="${doc.id}">Edit / แก้ไข</button>
+      <button class="small danger" data-delete-doc="${doc.id}">Delete / ลบ</button>
+    </div>
+  </div>`;
+}
+
+function openDocumentModal(id, prefill){
+  const doc = id ? state.documents[currentFarm].find(d=>d.id===id) : {
+    id:uid(), title:'', category:DOCUMENT_CATEGORIES[0], fileName:'', mimeType:'', size:0,
+    notes:'', uploadedBy:'', uploadedAt:new Date().toISOString().slice(0,10), url:'', data:''
+  };
+  if(prefill) Object.assign(doc, prefill);
+  const isNew = !id;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h2>${isNew?'+ Add Document / เพิ่มเอกสาร':'Edit Document / แก้ไขเอกสาร'} — ${esc(currentFarm)}</h2>
+      <div class="sub">Store a file attachment or external link (Google Drive, etc.) / แนบไฟล์หรือลิงก์ภายนอก</div>
+      <form id="docForm">
+        <div class="form-grid">
+          <div class="field full"><label>Title <span>ชื่อเอกสาร</span></label><input type="text" name="title" value="${esc(doc.title)}" required></div>
+          <div class="field"><label>Category <span>หมวดหมู่</span></label>
+            <select name="category">${DOCUMENT_CATEGORIES.map(c=>`<option value="${esc(c)}" ${doc.category===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label>Date <span>วันที่</span></label><input type="date" name="uploadedAt" value="${esc(doc.uploadedAt||'')}"></div>
+          <div class="field"><label>Uploaded by <span>อัปโหลดโดย</span></label><input type="text" name="uploadedBy" value="${esc(doc.uploadedBy)}"></div>
+          <div class="field full"><label>External URL <span>ลิงก์ภายนอก (ถ้ามี)</span></label><input type="url" name="url" value="${esc(doc.url)}" placeholder="https://drive.google.com/..."></div>
+          <div class="field full"><label>Notes <span>หมายเหตุ</span></label><textarea name="notes">${esc(doc.notes)}</textarea></div>
+          ${doc.fileName ? `<div class="field full"><label>Attached file <span>ไฟล์แนบ</span></label><div class="ctx">📎 ${esc(doc.fileName)}${doc.size?' · '+formatFileSize(doc.size):''} — upload a new file below to replace</div></div>` : ''}
+          <div class="field full"><label>Replace / attach file <span>แนบไฟล์ (สูงสุด 8 MB)</span></label><input type="file" name="file" id="docModalFile"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="cancelBtn">Cancel / ยกเลิก</button>
+          <button type="submit" class="primary">Save / บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const form = document.getElementById('docForm');
+  setupModalDirty(form);
+  document.getElementById('cancelBtn').onclick = tryCloseModal;
+  document.getElementById('overlay').addEventListener('mousedown', (e)=>{ if(e.target.id==='overlay') tryCloseModal(); });
+  form.onsubmit = async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(form);
+    const updated = {...doc,
+      title: fd.get('title') || '',
+      category: fd.get('category') || DOCUMENT_CATEGORIES[0],
+      uploadedAt: fd.get('uploadedAt') || '',
+      uploadedBy: fd.get('uploadedBy') || '',
+      url: fd.get('url') || '',
+      notes: fd.get('notes') || ''
+    };
+    const fileInput = document.getElementById('docModalFile');
+    const file = fileInput && fileInput.files[0];
+    if(file){
+      if(file.size > MAX_DOC_BYTES){
+        alert('File is too large (max 8 MB). Use an external URL instead.\nไฟล์ใหญ่เกินไป (สูงสุด 8 MB) ใช้ลิงก์ภายนอกแทน');
+        return;
+      }
+      updated.data = await readFileAsBase64(file);
+      updated.fileName = file.name;
+      updated.mimeType = file.type || 'application/octet-stream';
+      updated.size = file.size;
+      if(!updated.title) updated.title = file.name.replace(/\.[^.]+$/,'');
+    }
+    if(!updated.data && !updated.url && isNew){
+      alert('Please attach a file or enter an external URL.\nกรุณาแนบไฟล์หรือใส่ลิงก์ภายนอก');
+      return;
+    }
+    if(isNew) state.documents[currentFarm].push(updated);
+    else Object.assign(doc, updated);
+    onDataChanged();
+    closeModal();
+    renderFarmDocuments();
+  };
+}
+
+async function handleDocUploadInput(evt){
+  const files = Array.from(evt.target.files || []);
+  evt.target.value = '';
+  if(!files.length) return;
+  for(const file of files){
+    if(file.size > MAX_DOC_BYTES){
+      alert('Skipped "' + file.name + '" — too large (max 8 MB).\nข้ามไฟล์นี้ — ใหญ่เกิน 8 MB');
+      continue;
+    }
+    const data = await readFileAsBase64(file);
+    state.documents[currentFarm].push({
+      id: uid(),
+      title: file.name.replace(/\.[^.]+$/,''),
+      category: DOCUMENT_CATEGORIES[DOCUMENT_CATEGORIES.length - 1],
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      notes: '',
+      uploadedBy: '',
+      uploadedAt: new Date().toISOString().slice(0,10),
+      url: '',
+      data
+    });
+  }
+  onDataChanged();
+  currentFarmTab = 'documents';
+  render();
+}
+
+function deleteDocument(id){
+  const doc = state.documents[currentFarm].find(d=>d.id===id);
+  if(!doc) return;
+  const label = doc.title || doc.fileName || 'this document';
+  if(!confirm('Delete "' + label + '"? This cannot be undone.\nลบ "' + label + '" หรือไม่?')) return;
+  state.documents[currentFarm] = state.documents[currentFarm].filter(d=>d.id!==id);
+  onDataChanged();
+  renderFarmDocuments();
+}
+
+function bindRowActions(root){
+  root.querySelectorAll('[data-edit-delivery]').forEach(el=> el.onclick = (e)=>{ e.stopPropagation(); openDeliveryModal(el.dataset.editDelivery); });
+  root.querySelectorAll('[data-edit-qc]').forEach(el=> el.onclick = (e)=>{ e.stopPropagation(); openQCModal(el.dataset.editQc); });
+  root.querySelectorAll('[data-delete]').forEach(el=> el.onclick = (e)=>{ e.stopPropagation(); deleteRecord(el.dataset.delete); });
+  root.querySelectorAll('[data-expand]').forEach(el=> el.onclick = (e)=>{ e.stopPropagation(); expandedRows[el.dataset.expand] = !expandedRows[el.dataset.expand]; renderFarmView(); });
+}
+
+function renderDetailSection(cols, rec, computed, cls, title){
+  const items = cols.map(c=>{
+    let val = computed && computed[c.key] !== undefined ? computed[c.key] : rec[c.key];
+    if(c.key==='yieldPct') val = fmtPct(val);
+    else if(['totalFlower','totalOut','diff','grossWt','startWt','bigsG','popsG','scrapsG','seedsG','moldG','wasteG'].includes(c.key)) val = fmtNum(val);
+    return `<div class="detail-item"><span>${esc(c.label)}</span><b>${esc(val||'—')}</b></div>`;
+  }).join('');
+  return `<div class="detail-section ${cls}"><h4>${title}</h4>${items}</div>`;
+}
+
+function renderExpandedDetail(rec){
+  const c = computeRow(rec);
+  return `<tr class="detail-row"><td colspan="12">
+    <div class="detail-grid">
+      ${renderDetailSection(BLUE_COLS, rec, null, 'blue', '📦 Delivery / การรับ')}
+      ${renderDetailSection(PURPLE_COLS, rec, null, 'purple', '🧪 QC Results / ผล QC')}
+      ${renderDetailSection(GREY_COLS.filter(x=>x.key!=='month'), rec, c, 'grey', '📊 Calculated / คำนวณ')}
+    </div>
+  </td></tr>`;
+}
+
+function renderCompactTable(records){
+  let head = `<thead><tr>
+    <th></th>
+    <th class="sticky">Batch ID</th>
+    <th class="sticky">Date</th>
+    <th>Strain</th>
+    <th>Gross Wt</th>
+    <th>Condition</th>
+    <th>Status</th>
+    <th>Pass/Fail</th>
+    <th>Diff</th>
+    <th>Yield %</th>
+    <th>QC by</th>
+    <th>Actions</th>
+  </tr></thead>`;
+
+  let body = '<tbody>' + records.map(rec=>{
+    const c = computeRow(rec);
+    const pend = isPending(rec);
+    const status = getRowStatus(rec);
+    const badgeClass = passFailBadgeClass(rec);
+    const cond = conditionBadge(rec);
+    const bid = getBatchId(rec, currentFarm);
+    const expanded = expandedRows[rec.id];
+    return `<tr class="${pend?'pending':''}">
+      <td><button class="expand-btn" data-expand="${rec.id}" title="Expand details">${expanded?'▼':'▶'}</button></td>
+      <td class="sticky"><span class="batch-id">${esc(bid)}</span></td>
+      <td class="sticky flag">${esc(rec.date||'—')}</td>
+      <td><b>${esc(rec.strain||'—')}</b></td>
+      <td>${fmtNum(rec.grossWt)} g</td>
+      <td>${cond ? `<span class="cond-badge ${cond.cls}">${esc(cond.text.split(' / ')[0])}</span>` : '—'}</td>
+      <td><span class="status-chip ${status.key}">${esc(status.label.split(' / ')[0])}</span></td>
+      <td>${rec.passFail? `<span class="badge ${badgeClass}">${esc(rec.passFail.split(' / ')[0])}</span>` : (pend?'<span class="badge pending">Pending</span>':'—')}</td>
+      <td class="${diffClass(c.diff)}">${c.diff!==null?fmtNum(c.diff)+' g':'—'}</td>
+      <td>${fmtPct(c.yieldPct)||'—'}</td>
+      <td>${esc(rec.qcBy||'—')}</td>
+      <td><div class="action-group">
+        <button class="small" data-edit-delivery="${rec.id}">Edit</button>
+        <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
+        <button class="small danger" data-delete="${rec.id}">Del</button>
+      </div></td>
+    </tr>${expanded ? renderExpandedDetail(rec) : ''}`;
+  }).join('') + '</tbody>';
+
+  return `<table class="compact-table">${head}${body}</table>`;
+}
+
+function renderCardList(records){
+  return records.map(rec=>{
+    const c = computeRow(rec);
+    const pend = isPending(rec);
+    const badgeClass = passFailBadgeClass(rec);
+    const bid = getBatchId(rec, currentFarm);
+    return `<div class="batch-card ${pend?'pending':''}">
+      <div class="card-top">
+        <div><span class="batch-id">${esc(bid)}</span><br><b style="font-size:15px;">${esc(rec.strain||'No strain')}</b></div>
+        ${rec.passFail? `<span class="badge ${badgeClass}">${esc(rec.passFail.split(' / ')[0])}</span>` : (pend?'<span class="badge pending">Pending QC</span>':'')}
+      </div>
+      <div class="card-meta">
+        <span>📅 ${esc(rec.date||'—')}</span>
+        <span>⚖️ ${fmtNum(rec.grossWt)} g</span>
+        <span>👤 ${esc(rec.receivedBy||'—')}</span>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${fmtNum(c.totalFlower)||'—'}</div><div class="t">Flower g</div></div>
+        <div class="stat"><div class="n ${diffClass(c.diff)}">${c.diff!==null?fmtNum(c.diff):'—'}</div><div class="t">Diff g</div></div>
+        <div class="stat"><div class="n">${fmtPct(c.yieldPct)||'—'}</div><div class="t">Yield</div></div>
+      </div>
+      <div class="action-group">
+        <button class="small" data-edit-delivery="${rec.id}">Edit Delivery</button>
+        <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'Edit QC'}</button>
+        <button class="small danger" data-delete="${rec.id}">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderFullTable(records){
+  let head = `<thead>
+    <tr class="grp">
+      <th class="blue" colspan="${BLUE_COLS.length}">📦 SECTION 1 — GOODS RECEIVED (Manager) / การรับสินค้า (ผู้จัดการ)</th>
+      <th class="purple" colspan="${PURPLE_COLS.length}">🧪 SECTION 2 — QC RESULTS (QC Staff) / ผล QC (เจ้าหน้าที่ QC)</th>
+      <th class="grey" colspan="${GREY_COLS.length}">📊 AUTO CALC / คำนวณอัตโนมัติ</th>
+      <th colspan="1"></th>
+    </tr>
+    <tr>
+      ${BLUE_COLS.map(c=>`<th class="blue">${esc(c.label)}<br><small>${esc(c.labelTh)}</small></th>`).join('')}
+      ${PURPLE_COLS.map(c=>`<th class="purple">${esc(c.label)}<br><small>${esc(c.labelTh)}</small></th>`).join('')}
+      ${GREY_COLS.map(c=>`<th class="grey">${esc(c.label)}<br><small>${esc(c.labelTh)}</small></th>`).join('')}
+      <th>Actions<br><small>การดำเนินการ</small></th>
+    </tr>
+  </thead>`;
+
+  let body = '<tbody>' + records.map(rec=>{
+    const c = computeRow(rec);
+    const pend = isPending(rec);
+    const badgeClass = (rec.passFail||'').startsWith('Pass')?'pass':(rec.passFail||'').startsWith('Fail')?'fail':(rec.passFail||'').startsWith('Conditional')?'cond':'';
+    return `<tr class="${pend?'pending':''}">
+      <td class="blue-col flag">${esc(rec.date)}</td>
+      <td class="blue-col">${esc(rec.strain)}</td>
+      <td class="blue-col">${esc(rec.bigsCount)}</td>
+      <td class="blue-col">${esc(rec.popsCount)}</td>
+      <td class="blue-col">${fmtNum(rec.grossWt)}</td>
+      <td class="blue-col">${esc(rec.condition)}</td>
+      <td class="blue-col">${esc(rec.invoice)}</td>
+      <td class="blue-col">${esc(rec.receivedBy)}</td>
+      <td class="blue-col">${esc(rec.notes)}</td>
+      <td class="purple-col">${esc(rec.qcStart)}</td>
+      <td class="purple-col">${esc(rec.qcEnd)}</td>
+      <td class="purple-col">${fmtNum(rec.startWt)}</td>
+      <td class="purple-col">${fmtNum(rec.bigsG)}</td>
+      <td class="purple-col">${fmtNum(rec.popsG)}</td>
+      <td class="purple-col">${fmtNum(rec.scrapsG)}</td>
+      <td class="purple-col">${fmtNum(rec.seedsG)}</td>
+      <td class="purple-col">${fmtNum(rec.moldG)}</td>
+      <td class="purple-col">${fmtNum(rec.wasteG)}</td>
+      <td class="purple-col">${rec.passFail? `<span class="badge ${badgeClass}">${esc(rec.passFail)}</span>` : (pend?'<span class="badge pending">Pending / รอ QC</span>':'')}</td>
+      <td class="purple-col">${esc(rec.qcBy)}</td>
+      <td class="grey-col">${fmtNum(c.totalFlower)}</td>
+      <td class="grey-col">${fmtNum(c.totalOut)}</td>
+      <td class="grey-col ${diffClass(c.diff)}">${fmtNum(c.diff)}</td>
+      <td class="grey-col">${fmtPct(c.yieldPct)}</td>
+      <td class="grey-col" style="opacity:.5;font-size:11px;">${esc(c.month)}</td>
+      <td><div class="action-group">
+        <button class="small" data-edit-delivery="${rec.id}">Edit</button>
+        <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
+        <button class="small danger" data-delete="${rec.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('') + '</tbody>';
+
+  return `<table>${head}${body}</table>`;
+}
+
+/* ============ MODALS ============ */
+function setupModalDirty(form){
+  modalDirty = false;
+  form.addEventListener('input', ()=>{ modalDirty = true; });
+  form.addEventListener('change', ()=>{ modalDirty = true; });
+}
+function tryCloseModal(){
+  if(modalDirty && !confirm('Discard unsaved changes?\nยกเลิกการเปลี่ยนแปลงที่ยังไม่ได้บันทึก?')) return;
+  closeModal();
+}
+function openDeliveryModal(id){
+  const rec = id ? state.farms[currentFarm].find(r=>r.id===id) : {id:uid()};
+  const isNew = !id;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <h2>${isNew?'+ New Delivery / รับสินค้าใหม่':'Edit Delivery / แก้ไขการรับสินค้า'} — ${esc(currentFarm)}</h2>
+      <div class="sub">🔵 Manager fills this on arrival / ผู้จัดการกรอกเมื่อสินค้ามาถึง · Batch: <span class="batch-id">${esc(getBatchId(rec, currentFarm))}</span></div>
+      <form id="deliveryForm">
+        <div class="form-grid">
+          ${BLUE_COLS.map(c=>fieldHtml(c, rec[c.key])).join('')}
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="cancelBtn">Cancel / ยกเลิก</button>
+          <button type="submit" class="primary">Save / บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const form = document.getElementById('deliveryForm');
+  setupModalDirty(form);
+  document.getElementById('cancelBtn').onclick = tryCloseModal;
+  document.getElementById('overlay').addEventListener('mousedown', (e)=>{ if(e.target.id==='overlay') tryCloseModal(); });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const updated = {...rec};
+    BLUE_COLS.forEach(c=> updated[c.key] = fd.get(c.key) || '');
+    if(isNew){
+      PURPLE_COLS.forEach(c=> updated[c.key]='');
+      state.farms[currentFarm].push(updated);
+    } else {
+      Object.assign(rec, updated);
+    }
+    onDataChanged();
+    closeModal();
+    renderFarmView();
+  };
+}
+
+function updateQcPreview(form){
+  const data = {};
+  PURPLE_COLS.forEach(c=> data[c.key] = form.elements[c.key] ? form.elements[c.key].value : '');
+  const c = computeRow(data);
+  const set = (id, val, cls)=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.textContent = val;
+    el.parentElement.className = 'preview-item' + (cls ? ' '+cls : '');
+  };
+  set('pvFlower', c.totalFlower!==null ? fmtNum(c.totalFlower)+' g' : '—');
+  set('pvOut', c.totalOut!==null ? fmtNum(c.totalOut)+' g' : '—');
+  const dcls = diffClass(c.diff);
+  set('pvDiff', c.diff!==null ? fmtNum(c.diff)+' g' : '—', dcls==='diff-bad'?'bad':dcls==='diff-warn'?'warn':'');
+  set('pvYield', c.yieldPct!==null ? fmtPct(c.yieldPct) : '—');
+}
+
+function openQCModal(id){
+  const rec = state.farms[currentFarm].find(r=>r.id===id);
+  if(!rec) return;
+  const root = document.getElementById('modalRoot');
+  const purpleFields = PURPLE_COLS.map(c=>{
+    if(c.key === 'startWt'){
+      return `<div class="field-with-btn full">
+        <div class="field" style="flex:1">${fieldHtml(c, rec[c.key]).replace('<div class="field">','').replace(/<\/div>$/,'')}</div>
+        <button type="button" class="small" id="btnUseGross" style="margin-bottom:1px;">Use gross wt / ใช้น้ำหนักรวม</button>
+      </div>`;
+    }
+    return fieldHtml(c, rec[c.key]);
+  }).join('');
+
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:700px;">
+      <h2>QC Results / ผล QC — ${esc(currentFarm)}</h2>
+      <div class="sub">🟣 QC staff fills this same day · <span class="batch-id">${esc(getBatchId(rec, currentFarm))}</span></div>
+      <div class="ctx"><b>${esc(rec.strain||'(no strain)')}</b> · Received: ${esc(rec.date||'—')} · Gross Wt: ${fmtNum(rec.grossWt)} g · By: ${esc(rec.receivedBy||'—')}</div>
+      <form id="qcForm">
+        <div class="form-grid">${purpleFields}</div>
+        <div class="live-preview">
+          <h4>Live calculation / คำนวณสด</h4>
+          <div class="preview-grid">
+            <div class="preview-item"><div class="pv" id="pvFlower">—</div><div class="pl">Total Flower</div></div>
+            <div class="preview-item"><div class="pv" id="pvOut">—</div><div class="pl">Total Out</div></div>
+            <div class="preview-item"><div class="pv" id="pvDiff">—</div><div class="pl">Diff (g)</div></div>
+            <div class="preview-item"><div class="pv" id="pvYield">—</div><div class="pl">Yield %</div></div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="cancelBtn">Cancel / ยกเลิก</button>
+          <button type="submit" class="purple">Save QC Result / บันทึกผล QC</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const form = document.getElementById('qcForm');
+  setupModalDirty(form);
+  form.addEventListener('input', ()=> updateQcPreview(form));
+  updateQcPreview(form);
+  document.getElementById('btnUseGross').onclick = ()=>{
+    const inp = form.elements.startWt;
+    if(inp) { inp.value = rec.grossWt || ''; inp.dispatchEvent(new Event('input')); modalDirty = true; }
+  };
+  document.getElementById('cancelBtn').onclick = tryCloseModal;
+  document.getElementById('overlay').addEventListener('mousedown', (e)=>{ if(e.target.id==='overlay') tryCloseModal(); });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const passFail = fd.get('passFail') || '';
+    const qcBy = fd.get('qcBy') || '';
+    if(!passFail || !qcBy){
+      alert('Please fill Pass/Fail and QC by before saving.\nกรุณากรอก ผ่าน/ไม่ผ่าน และ QC โดย ก่อนบันทึก');
+      return;
+    }
+    PURPLE_COLS.forEach(c=> rec[c.key] = fd.get(c.key) || '');
+    onDataChanged();
+    closeModal();
+    renderFarmView();
+  };
+}
+
+function fieldHtml(c, value){
+  value = value===undefined||value===null ? '' : value;
+  const wide = c.type==='textarea' ? ' full' : '';
+  let input = '';
+  if(c.type==='select'){
+    input = `<select name="${c.key}"><option value=""></option>${c.options.map(o=>`<option value="${esc(o)}" ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  } else if(c.type==='textarea'){
+    input = `<textarea name="${c.key}">${esc(value)}</textarea>`;
+  } else if(c.type==='number'){
+    input = `<input type="number" step="any" name="${c.key}" value="${esc(value)}">`;
+  } else if(c.type==='date'){
+    input = `<input type="date" name="${c.key}" value="${esc(value)}">`;
+  } else {
+    input = `<input type="text" name="${c.key}" value="${esc(value)}">`;
+  }
+  return `<div class="field${wide}"><label>${esc(c.label)} <span style="font-weight:400;color:var(--muted)">${esc(c.labelTh)}</span></label>${input}</div>`;
+}
+
+function closeModal(){ modalDirty = false; document.getElementById('modalRoot').innerHTML = ''; }
+
+function deleteRecord(id){
+  const rec = state.farms[currentFarm].find(r=>r.id===id);
+  if(!rec) return;
+  const label = rec.strain || getBatchId(rec, currentFarm);
+  const typed = prompt('Type the strain name to confirm delete: "' + label + '"\nพิมพ์ชื่อสายพันธุ์เพื่อยืนยันการลบ: "' + label + '"');
+  if(typed === null) return;
+  if(typed.trim().toLowerCase() !== label.trim().toLowerCase()){
+    alert('Strain name did not match. Delete cancelled.\nชื่อไม่ตรงกัน ยกเลิกการลบ');
+    return;
+  }
+  state.farms[currentFarm] = state.farms[currentFarm].filter(r=>r.id!==id);
+  onDataChanged();
+  renderFarmView();
+}
+
+/* ============ DASHBOARD RENDER ============ */
+function renderDashboard(){
+  if(!dashMonth) dashMonth = currentMonthLabel();
+  const months = allMonths();
+  if(!months.includes(dashMonth)) months.push(dashMonth);
+  months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+  const summary = computeDashboard(dashMonth);
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="panel">
+      <div class="dash-filter">
+        <label style="font-size:13px;font-weight:600;">Filter Month <span class="bi">/ กรองเดือน</span>:</label>
+        <select id="monthInput" class="dash-select">
+          ${months.map(m=>`<option value="${esc(m)}" ${m===dashMonth?'selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+        <span style="font-size:12px;color:var(--muted);">Click a farm row to view its batches for this month / คลิกแถวฟาร์มเพื่อดูรายการของเดือนนั้น</span>
+      </div>
+      <div class="kpi-row">
+        <div class="kpi"><div class="v">${summary.total.batches}</div><div class="l">Total Batches <span class="bi">/ จำนวนรอบ</span></div></div>
+        <div class="kpi"><div class="v">${fmtNum(summary.total.totalFlower)} g</div><div class="l">Total Flower <span class="bi">/ ดอกรวม</span></div></div>
+        <div class="kpi"><div class="v">${fmtPct(summary.total.avgYield)}</div><div class="l">Avg Yield % <span class="bi">/ ผลผลิตเฉลี่ย</span></div></div>
+        <div class="kpi"><div class="v" style="color:var(--pass)">${summary.total.pass}</div><div class="l">Pass <span class="bi">/ ผ่าน</span></div></div>
+        <div class="kpi"><div class="v" style="color:var(--fail)">${summary.total.fail}</div><div class="l">Fail <span class="bi">/ ไม่ผ่าน</span></div></div>
+        <div class="kpi"><div class="v" style="color:var(--cond)">${summary.total.cond}</div><div class="l">Conditional <span class="bi">/ มีเงื่อนไข</span></div></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-box">
+        <h3>Yield % by Farm <span class="bi">/ ผลผลิตต่อฟาร์ม</span></h3>
+        ${renderYieldChart(summary.perFarm)}
+      </div>
+      <div class="chart-box">
+        <h3>Pass / Fail / Conditional <span class="bi">/ ผล QC รวม</span></h3>
+        ${renderPassFailChart(summary.total)}
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="chart-box" style="border:none;box-shadow:none;padding:0;">
+        <h3>Total Mold by Farm (g) <span class="bi">/ เชื้อรารวมต่อฟาร์ม</span></h3>
+        ${renderMoldChart(summary.perFarm)}
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Farm<br><small>ฟาร์ม</small></th><th>Batches<br><small>รอบ</small></th><th>Total Start (g)<br><small>น้ำหนักก่อน QC</small></th><th>Total Bigs (g)<br><small>ดอกใหญ่รวม</small></th><th>Total Pops (g)<br><small>ดอกเล็กรวม</small></th>
+          <th>Total Flower (g)<br><small>ดอกรวม</small></th><th>Avg Yield %<br><small>ผลผลิตเฉลี่ย</small></th><th>Total Mold (g)<br><small>เชื้อรารวม</small></th><th>Pass<br><small>ผ่าน</small></th><th>Fail<br><small>ไม่ผ่าน</small></th><th>Conditional<br><small>มีเงื่อนไข</small></th>
+        </tr></thead>
+        <tbody>
+          ${summary.perFarm.map(r=>`<tr class="clickable" data-farm="${esc(r.farm)}" title="View ${esc(r.farm)} batches for ${esc(dashMonth)}">
+            <td><b>${esc(r.farm)}</b></td><td>${r.batches}</td><td>${fmtNum(r.totalStart)}</td><td>${fmtNum(r.totalBigs)}</td><td>${fmtNum(r.totalPops)}</td>
+            <td>${fmtNum(r.totalFlower)}</td><td>${fmtPct(r.avgYield)}</td><td>${fmtNum(r.totalMold)}</td>
+            <td style="color:var(--pass)">${r.pass}</td><td style="color:var(--fail)">${r.fail}</td><td style="color:var(--cond)">${r.cond}</td>
+          </tr>`).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL / รวม</td><td>${summary.total.batches}</td><td>${fmtNum(summary.total.totalStart)}</td><td>${fmtNum(summary.total.totalBigs)}</td><td>${fmtNum(summary.total.totalPops)}</td>
+            <td>${fmtNum(summary.total.totalFlower)}</td><td>${fmtPct(summary.total.avgYield)}</td><td>${fmtNum(summary.total.totalMold)}</td>
+            <td>${summary.total.pass}</td><td>${summary.total.fail}</td><td>${summary.total.cond}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+  document.getElementById('monthInput').onchange = (e)=>{ dashMonth = e.target.value; renderDashboard(); };
+  main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{
+    row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth);
+  });
+}
+
+async function loadRemoteConfig(){
+  try{
+    const res = await fetch('/config.json?ts=' + Date.now());
+    if(!res.ok) return;
+    const cfg = await res.json();
+    if(cfg.appsScriptUrl){
+      appsScriptUrl = cfg.appsScriptUrl.trim();
+      localStorage.setItem(APPS_SCRIPT_URL_KEY, appsScriptUrl);
+    }
+    if(cfg.sheetViewUrl){
+      sheetViewUrl = cfg.sheetViewUrl.trim();
+      localStorage.setItem(SHEET_VIEW_URL_KEY, sheetViewUrl);
+    }
+  }catch(e){ /* no config.json — manual connect still works */ }
+}
+
+/* ============ INIT ============ */
+async function init(){
+  state = loadLocal() || defaultState();
+  ensureStateShape();
+  await loadRemoteConfig();
+
+  document.getElementById('btnLinkSheet').onclick = ()=> appsScriptUrl ? openLinkSheetModal() : openSheetSetupGuide();
+  document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
+  document.getElementById('btnOpenSheet').onclick = openGoogleSheetInBrowser;
+  document.getElementById('btnReconnect').onclick = reconnectFile;
+  document.getElementById('btnReload').onclick = ()=>{
+    if(appsScriptUrl) pullFromGoogleSheet(false);
+    else reloadFromFile(false);
+  };
+  document.getElementById('btnSaveFile').onclick = ()=>{
+    if(appsScriptUrl) pushToGoogleSheet();
+    else saveDataFile();
+  };
+  document.getElementById('btnExportJSON').onclick = exportJSON;
+  document.getElementById('btnImportJSON').onclick = ()=> document.getElementById('fileImportInput').click();
+  document.getElementById('fileImportInput').onchange = importJSONFile;
+  document.getElementById('btnExportExcel').onclick = exportExcel;
+  document.getElementById('btnOpenFileMob').onclick = ()=>{ toggleMoreMenu(false); openDataFile(); };
+  document.getElementById('btnMore').onclick = (e)=>{ e.stopPropagation(); toggleMoreMenu(); };
+  document.getElementById('docUploadInput').onchange = handleDocUploadInput;
+  document.addEventListener('click', (e)=>{
+    const menu = document.getElementById('moreMenu');
+    if(menu && !menu.contains(e.target)) toggleMoreMenu(false);
+  });
+
+  // auto-refresh when staff switch back to this tab/window
+  document.addEventListener('visibilitychange', ()=>{
+    if(!document.hidden){
+      if(appsScriptUrl) pullFromGoogleSheet(true);
+      else if(fileHandle) reloadFromFile(true);
+    }
+  });
+  window.addEventListener('focus', ()=>{
+    if(appsScriptUrl) pullFromGoogleSheet(true);
+    else if(fileHandle) reloadFromFile(true);
+  });
+
+  window.addEventListener('beforeunload', (e)=>{
+    if(saveInFlight || sheetSaveInFlight){ e.preventDefault(); e.returnValue = ''; return ''; }
+  });
+
+  render();
+  updateConnPill();
+  if(appsScriptUrl){
+    lastRemoteJson = stateFingerprint();
+    localDirty = false;
+    startSheetPolling();
+    pullFromGoogleSheet(true);
+  } else {
+    await tryAutoReconnect();
+  }
+}
+init();
+</script>
+</body>
+</html>
