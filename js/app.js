@@ -336,26 +336,34 @@ function goToFarmMonth(farm, month){
   render();
 }
 function downloadDocument(doc){
-  if(doc.data){
-    const mime = doc.mimeType || 'application/octet-stream';
-    const blob = b64ToBlob(doc.data, mime);
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = doc.fileName || doc.title || 'document';
-    a.click();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
-  } else if(doc.url){
-    window.open(doc.url, '_blank', 'noopener');
-  }
+  ensureDocData(doc).then(data=>{
+    if(data){
+      const mime = doc.mimeType || 'application/octet-stream';
+      const blob = b64ToBlob(data, mime);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = doc.fileName || doc.title || 'document';
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
+    } else if(doc.url){
+      window.open(doc.url, '_blank', 'noopener');
+    } else {
+      alert('File is only on the device that uploaded it. Add a Google Drive URL for team access.\nไฟล์อยู่เฉพาะเครื่องที่อัปโหลด — ใส่ลิงก์ Google Drive สำหรับทีม');
+    }
+  });
 }
 function openDocument(doc){
-  if(doc.data){
-    const mime = doc.mimeType || 'application/octet-stream';
-    const blob = b64ToBlob(doc.data, mime);
-    window.open(URL.createObjectURL(blob), '_blank');
-  } else if(doc.url){
-    window.open(doc.url, '_blank', 'noopener');
-  }
+  ensureDocData(doc).then(data=>{
+    if(data){
+      const mime = doc.mimeType || 'application/octet-stream';
+      const blob = b64ToBlob(data, mime);
+      window.open(URL.createObjectURL(blob), '_blank');
+    } else if(doc.url){
+      window.open(doc.url, '_blank', 'noopener');
+    } else {
+      alert('File is only on the device that uploaded it. Add a Google Drive URL for team access.\nไฟล์อยู่เฉพาะเครื่องที่อัปโหลด — ใส่ลิงก์ Google Drive สำหรับทีม');
+    }
+  });
 }
 function b64ToBlob(b64, mime){
   const bin = atob(b64);
@@ -383,32 +391,113 @@ function matchesDocFilters(doc){
   }
   return true;
 }
+function stripDocsForSheet(documents){
+  const out = {};
+  FARMS.forEach(f=>{
+    out[f] = (documents[f]||[]).map(d=>({
+      id: d.id,
+      title: d.title || '',
+      category: d.category || '',
+      fileName: d.fileName || '',
+      url: d.url || '',
+      notes: d.notes || '',
+      uploadedBy: d.uploadedBy || '',
+      uploadedAt: d.uploadedAt || '',
+      size: d.size || 0,
+      mimeType: d.mimeType || '',
+      hasLocalFile: !!(d.data || d._fileInIdb)
+    }));
+  });
+  return out;
+}
+function mergeDocumentsFromRemote(remoteDocs){
+  if(!remoteDocs) return;
+  FARMS.forEach(f=>{
+    const local = state.documents[f] || [];
+    const remote = remoteDocs[f] || [];
+    const localById = Object.fromEntries(local.map(d=>[d.id, d]));
+    const merged = remote.map(rd=>{
+      const localDoc = localById[rd.id];
+      if(localDoc && (localDoc.data || localDoc._fileInIdb)){
+        return {...rd, _fileInIdb: true, data: localDoc.data || ''};
+      }
+      return rd;
+    });
+    const remoteIds = new Set(remote.map(d=>d.id));
+    local.forEach(ld=>{
+      if(!remoteIds.has(ld.id)) merged.push(ld);
+    });
+    state.documents[f] = merged;
+  });
+}
 
 /* ============ GOOGLE SHEETS SYNC (via Apps Script) ============ */
 function stateFingerprint(){
-  return JSON.stringify(state.farms);
+  return JSON.stringify({ farms: state.farms, documents: stripDocsForSheet(state.documents) });
 }
 function debouncedPushToSheet(){
   clearTimeout(sheetSaveTimer);
-  sheetSaveTimer = setTimeout(pushToGoogleSheet, 800);
+  sheetSaveTimer = setTimeout(()=> pushToGoogleSheet(true), 800);
 }
 function parseAppsScriptError(text, status){
   if(status === 401 || status === 403 || /ServiceLogin|accounts\.google/i.test(text)){
     return 'Access denied. Redeploy Apps Script → Who has access: Anyone (not only Google account).';
   }
-  if(/ไม่พบเพจ|Page not found|could not open/i.test(text)){
-    return 'Web App URL not found. Deploy → Manage deployments → copy fresh /exec URL.';
+  if(/ไม่พบเพจ|Page not found|could not open|405/i.test(text)){
+    return 'Save failed (HTTP 405). Update Apps Script code and redeploy, then hard-refresh the app.';
   }
   return 'Invalid response from Google Sheet backend';
 }
+function utf8ToBase64(str){
+  return btoa(unescape(encodeURIComponent(str)));
+}
+function gasPostXHR(url, body){
+  return new Promise((resolve, reject)=>{
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Content-Type', 'text/plain;charset=utf-8');
+    xhr.onload = ()=>{
+      const text = xhr.responseText || '';
+      if(xhr.status >= 200 && xhr.status < 300){
+        try { resolve(JSON.parse(text)); }
+        catch(e){ reject(new Error(parseAppsScriptError(text, xhr.status))); }
+      } else reject(new Error(parseAppsScriptError(text, xhr.status) + ' (HTTP ' + xhr.status + ')'));
+    };
+    xhr.onerror = ()=> reject(new Error('Network error calling Google Sheet'));
+    xhr.send(body);
+  });
+}
 async function callAppsScript(payload){
   if(!appsScriptUrl) throw new Error('No Apps Script URL configured');
+  const body = JSON.stringify(payload);
+
+  // Primary: GET write — same reliable path as Reload (POST often returns 405 from Vercel)
+  if(payload.action === 'write'){
+    const encoded = utf8ToBase64(body);
+    if(encoded.length > 180000) throw new Error('Data too large to sync in one request');
+    const url = appsScriptUrl
+      + (appsScriptUrl.includes('?') ? '&' : '?')
+      + 'action=write&payload=' + encodeURIComponent(encoded)
+      + '&_=' + Date.now();
+    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+    const text = await res.text();
+    if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
+    try { return JSON.parse(text); }
+    catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
+  }
+
+  // POST fallback for read/other actions
+  try {
+    return await gasPostXHR(appsScriptUrl, body);
+  } catch(xhrErr) {
+    console.warn('XHR POST failed, trying fetch', xhrErr);
+  }
   const res = await fetch(appsScriptUrl, {
     method: 'POST',
     mode: 'cors',
     redirect: 'follow',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload)
+    body
   });
   const text = await res.text();
   if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
@@ -430,11 +519,10 @@ async function pullFromGoogleSheet(silent){
     catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
     if(!data.ok || !data.farms) throw new Error(data.error || 'Read failed');
     sheetSyncOk = true;
-    const fp = JSON.stringify(data.farms);
+    const fp = JSON.stringify({ farms: data.farms, documents: data.documents || {} });
     if(fp === lastRemoteJson) return;
-    const preservedDocs = state.documents;
     state.farms = data.farms;
-    state.documents = preservedDocs;
+    mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
     saveLocal();
@@ -449,14 +537,18 @@ async function pullFromGoogleSheet(silent){
     if(!silent) alert('Could not reload Google Sheet:\n' + e.message + '\n\nRedeploy Apps Script with access set to Anyone.\nไม่สามารถโหลด Google Sheet ได้');
   }
 }
-async function pushToGoogleSheet(){
+async function pushToGoogleSheet(silent){
   if(!appsScriptUrl) return;
   if(sheetSaveInFlight){ sheetSaveQueued = true; return; }
   sheetSaveInFlight = true;
   try{
-    const payload = { action: 'write', state: { farms: state.farms } };
+    const payload = {
+      action: 'write',
+      state: { farms: state.farms, documents: stripDocsForSheet(state.documents) }
+    };
     const data = await callAppsScript(payload);
     if(!data.ok) throw new Error(data.error || 'Write failed');
+    if(!data.updatedAt) throw new Error('Backend outdated — paste latest CANA_QC_GoogleAppsScript.gs in Apps Script, run upgradeDocumentsTab, redeploy.');
     localDirty = false;
     sheetSyncOk = true;
     lastRemoteJson = stateFingerprint();
@@ -466,10 +558,10 @@ async function pushToGoogleSheet(){
     sheetSyncOk = false;
     updateConnPill();
     console.warn('sheet push failed', e);
-    alert('Could not save to Google Sheet:\n' + e.message + '\n\nFix: Apps Script → Deploy → Who has access: Anyone → copy new URL to config.json\nไม่สามารถบันทึกลง Google Sheet ได้');
+    if(!silent) alert('Could not save to Google Sheet:\n' + e.message + '\n\nFix: Apps Script → Deploy → Who has access: Anyone → copy new URL to config.json\nไม่สามารถบันทึกลง Google Sheet ได้');
   }finally{
     sheetSaveInFlight = false;
-    if(sheetSaveQueued){ sheetSaveQueued = false; pushToGoogleSheet(); }
+    if(sheetSaveQueued){ sheetSaveQueued = false; pushToGoogleSheet(silent); }
   }
 }
 function startSheetPolling(){
@@ -605,9 +697,32 @@ function openGoogleSheetInBrowser(){
 }
 
 /* ============ PERSISTENCE ============ */
+function buildStateForStorage(){
+  const documents = {};
+  FARMS.forEach(f=>{
+    documents[f] = (state.documents[f]||[]).map(d=>{
+      const copy = {...d};
+      if(copy.data){ copy._fileInIdb = true; delete copy.data; }
+      return copy;
+    });
+  });
+  return { farms: state.farms, documents };
+}
 function saveLocal(){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  document.getElementById('lastSavedTag') && (document.getElementById('lastSavedTag').textContent = 'Saved locally ' + new Date().toLocaleTimeString());
+  (state.documents && FARMS.forEach(f=>{
+    (state.documents[f]||[]).forEach(doc=>{
+      if(doc.data) idbSetDocData(doc.id, doc.data);
+    });
+  }));
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(buildStateForStorage()));
+    document.getElementById('lastSavedTag') && (document.getElementById('lastSavedTag').textContent = 'Saved locally ' + new Date().toLocaleTimeString());
+  }catch(e){
+    if(e && e.name === 'QuotaExceededError'){
+      alert('Browser storage full. Use <b>External URL</b> (Google Drive link) instead of uploading large files.\nพื้นที่เก็บข้อมูลเต็ม — ใช้ลิงก์ Google Drive แทนการอัปโหลดไฟล์');
+    }
+    console.warn('saveLocal failed', e);
+  }
 }
 function loadLocal(){
   try{
@@ -615,6 +730,25 @@ function loadLocal(){
     if(raw) return JSON.parse(raw);
   }catch(e){ console.warn('local load failed', e); }
   return null;
+}
+async function hydrateDocumentsFromIdb(){
+  if(!state || !state.documents) return;
+  for(const f of FARMS){
+    for(const doc of (state.documents[f]||[])){
+      if((doc._fileInIdb || doc.hasLocalFile) && !doc.data){
+        doc.data = await idbGetDocData(doc.id) || '';
+        if(doc.data) doc._fileInIdb = true;
+      }
+    }
+  }
+}
+async function ensureDocData(doc){
+  if(doc.data) return doc.data;
+  if(doc._fileInIdb || doc.hasLocalFile){
+    doc.data = await idbGetDocData(doc.id) || '';
+    return doc.data;
+  }
+  return '';
 }
 function onDataChanged(){
   saveLocal();
@@ -629,14 +763,52 @@ function debouncedSaveToFile(){
 }
 
 /* ---- remember the linked file across sessions (IndexedDB) so staff don't have to re-link every time ---- */
-const IDB_NAME = 'cana_qc_handle_db', IDB_STORE = 'handles', IDB_KEY = 'linkedFile';
+const IDB_NAME = 'cana_qc_handle_db', IDB_STORE = 'handles', IDB_DOC_STORE = 'docFiles', IDB_KEY = 'linkedFile';
 function idbOpen(){
   return new Promise((resolve,reject)=>{
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+    const req = indexedDB.open(IDB_NAME, 2);
+    req.onupgradeneeded = (e)=>{
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      if(!db.objectStoreNames.contains(IDB_DOC_STORE)) db.createObjectStore(IDB_DOC_STORE);
+    };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
   });
+}
+async function idbSetDocData(id, b64){
+  if(!id || !b64) return;
+  try{
+    const db = await idbOpen();
+    await new Promise((res,rej)=>{
+      const tx = db.transaction(IDB_DOC_STORE,'readwrite');
+      tx.objectStore(IDB_DOC_STORE).put(b64, id);
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+    });
+  }catch(e){ console.warn('idb doc save failed', e); }
+}
+async function idbGetDocData(id){
+  if(!id) return '';
+  try{
+    const db = await idbOpen();
+    return await new Promise((res,rej)=>{
+      const tx = db.transaction(IDB_DOC_STORE,'readonly');
+      const req = tx.objectStore(IDB_DOC_STORE).get(id);
+      req.onsuccess = ()=> res(req.result || '');
+      req.onerror = ()=> rej(req.error);
+    });
+  }catch(e){ console.warn('idb doc load failed', e); return ''; }
+}
+async function idbDeleteDocData(id){
+  if(!id) return;
+  try{
+    const db = await idbOpen();
+    await new Promise((res,rej)=>{
+      const tx = db.transaction(IDB_DOC_STORE,'readwrite');
+      tx.objectStore(IDB_DOC_STORE).delete(id);
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error);
+    });
+  }catch(e){ console.warn('idb doc delete failed', e); }
 }
 async function idbSetHandle(handle){
   try{
@@ -824,9 +996,16 @@ function importJSONFile(evt){
       state = parsed;
       fileHandle = null;
       ensureStateShape();
+      FARMS.forEach(f=>{
+        (state.documents[f]||[]).forEach(doc=>{
+          if(doc.data) idbSetDocData(doc.id, doc.data);
+        });
+      });
       saveLocal();
-      render();
-      updateStatusLine('Loaded from imported file: ' + file.name);
+      hydrateDocumentsFromIdb().then(()=>{
+        render();
+        updateStatusLine('Loaded from imported file: ' + file.name);
+      });
     }catch(e){ alert('Could not read that file — is it a CANA QC Tracker JSON export?'); }
   };
   reader.readAsText(file);
@@ -1243,21 +1422,40 @@ function renderAllFarmsView(){
   bindRowActions(main, 'allFarms');
 }
 
+function showDocToast(msg){
+  const old = document.querySelector('.doc-toast');
+  if(old) old.remove();
+  const el = document.createElement('div');
+  el.className = 'doc-toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 3200);
+}
+
 /* ============ RENDER: FARM DOCUMENTS ============ */
 function renderFarmDocuments(){
   const main = document.getElementById('mainArea');
   const docs = (state.documents[currentFarm]||[]).filter(matchesDocFilters)
     .slice().sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+  const linkedCount = docs.filter(d=>d.url).length;
 
   main.innerHTML = `
     ${farmSubtabsHtml()}
 
-    <div class="panel">
-      <div class="helpbox" style="font-size:12.5px;color:var(--muted);">
-        Store invoices, COAs, photos, contracts and other files for <b>${esc(currentFarm)}</b>.
-        Uploaded files are saved with your data (JSON backup / linked JSON file). For Excel-linked teams, use <b>Export JSON</b> to back up documents too.
-        <br><span class="bi">เก็บใบเสร็จ ใบรายงานแล็บ รูปภาพ สัญญา และไฟล์อื่นๆ สำหรับ ${esc(currentFarm)} — ไฟล์จะถูกบันทึกพร้อมข้อมูล (สำรอง JSON)</span>
+    <div class="doc-header">
+      <h3>📁 Document Library — ${esc(currentFarm)}</h3>
+      <p>Professional document tracking for invoices, COAs, lab reports, and contracts. Metadata and Google Drive links sync to the <b>Documents</b> tab in Google Sheet for your whole team.</p>
+      <div class="doc-header-meta">
+        <span class="doc-badge">${docs.length} document${docs.length===1?'':'s'}</span>
+        <span class="doc-badge">${linkedCount} team link${linkedCount===1?'':'s'}</span>
+        <span class="doc-badge">↻ Syncs to Google Sheet</span>
       </div>
+    </div>
+
+    <div class="doc-steps">
+      <div class="doc-step"><div class="doc-step-num">1</div><b>Upload to Google Drive</b><span>Save PDF, COA, or invoice in your shared Drive folder.</span></div>
+      <div class="doc-step"><div class="doc-step-num">2</div><b>Add in CANA QC Tracker</b><span>Click + Add Document → paste Drive link in External URL.</span></div>
+      <div class="doc-step"><div class="doc-step-num">3</div><b>Team sees it everywhere</b><span>Appears in app + Google Sheet Documents tab after Save.</span></div>
     </div>
 
     <div class="doc-toolbar">
@@ -1270,14 +1468,13 @@ function renderFarmDocuments(){
           ${DOCUMENT_CATEGORIES.map(c=>`<option value="${esc(c)}" ${docCategoryFilter===c?'selected':''}>${esc(c)}</option>`).join('')}
         </select>
       </div>
-      <div style="font-size:12.5px;color:var(--muted);">${docs.length} document(s) — ${esc(currentFarm)}</div>
     </div>
 
     ${docs.length ? `<div class="doc-grid">${docs.map(renderDocCard).join('')}</div>` : `
       <div class="panel empty-state">
         <b>No documents yet for ${esc(currentFarm)}. / ยังไม่มีเอกสาร</b><br>
-        Click <b>+ Add Document</b> to add a link or note, or <b>Upload File</b> to attach a file (max 8 MB).
-        <div class="upload-hint">Supported: PDF, images, Excel, Word, and other files · รองรับ PDF รูปภาพ Excel และไฟล์อื่นๆ</div>
+        Follow the 3 steps above — recommended: Google Drive link for team access.
+        <div class="upload-hint">Quick upload (this device only): Upload File · max 8 MB</div>
       </div>`}
   `;
 
@@ -1300,19 +1497,28 @@ function renderFarmDocuments(){
 
 function renderDocCard(doc){
   const icon = docFileIcon(doc);
-  const hasFile = !!(doc.data || doc.url);
-  return `<div class="doc-card">
+  const hasFile = !!(doc.data || doc.url || doc._fileInIdb || doc.hasLocalFile);
+  const hasLink = !!doc.url;
+  const cardClass = hasLink ? 'has-link' : ((doc._fileInIdb || doc.data || doc.hasLocalFile) ? 'local-only' : '');
+  const syncTag = hasLink
+    ? '<span class="doc-sync-tag synced">Team link · Google Sheet ✓</span>'
+    : ((doc._fileInIdb || doc.data || doc.hasLocalFile)
+      ? '<span class="doc-sync-tag local">This device only</span>'
+      : '<span class="doc-sync-tag synced">Notes sync · Google Sheet ✓</span>');
+  return `<div class="doc-card ${cardClass}">
     <div class="doc-card-top">
       <div class="doc-icon ${icon.cls}">${icon.icon}</div>
       <div style="min-width:0;flex:1;">
         <p class="doc-title">${esc(doc.title || doc.fileName || 'Untitled')}</p>
         <div class="doc-meta">
           <span class="doc-cat">${esc((doc.category||'Other').split(' / ')[0])}</span><br>
-          ${doc.fileName ? esc(doc.fileName) + (doc.size ? ' · ' + formatFileSize(doc.size) : '') + '<br>' : ''}
-          ${doc.uploadedAt ? '📅 ' + esc(doc.uploadedAt) : ''}${doc.uploadedBy ? ' · 👤 ' + esc(doc.uploadedBy) : ''}
+          ${syncTag}
+          ${doc.fileName ? '<br>' + esc(doc.fileName) + (doc.size ? ' · ' + formatFileSize(doc.size) : '') : ''}
+          ${doc.uploadedAt ? '<br>📅 ' + esc(doc.uploadedAt) : ''}${doc.uploadedBy ? ' · 👤 ' + esc(doc.uploadedBy) : ''}
         </div>
       </div>
     </div>
+    ${doc.url ? `<div class="doc-link-row"><a href="${esc(doc.url)}" target="_blank" rel="noopener">Open in Google Drive ↗</a></div>` : ''}
     ${doc.notes ? `<div class="doc-notes">${esc(doc.notes)}</div>` : ''}
     <div class="doc-actions">
       ${hasFile ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
@@ -1392,6 +1598,7 @@ function openDocumentModal(id, prefill){
     onDataChanged();
     closeModal();
     renderFarmDocuments();
+    showDocToast(updated.url ? 'Document saved · syncing to Google Sheet' : 'Document saved on this device');
   };
 }
 
@@ -1422,6 +1629,7 @@ async function handleDocUploadInput(evt){
   onDataChanged();
   currentFarmTab = 'documents';
   render();
+  showDocToast('File saved on this device · add Google Drive link for team access');
 }
 
 function deleteDocument(id){
@@ -1430,6 +1638,7 @@ function deleteDocument(id){
   const label = doc.title || doc.fileName || 'this document';
   if(!confirm('Delete "' + label + '"? This cannot be undone.\nลบ "' + label + '" หรือไม่?')) return;
   state.documents[currentFarm] = state.documents[currentFarm].filter(d=>d.id!==id);
+  idbDeleteDocData(id);
   onDataChanged();
   renderFarmDocuments();
 }
@@ -1910,6 +2119,7 @@ async function testSheetConnection(){
 async function init(){
   state = loadLocal() || defaultState();
   ensureStateShape();
+  await hydrateDocumentsFromIdb();
   await loadRemoteConfig();
 
   document.getElementById('btnLinkSheet').onclick = ()=> appsScriptUrl ? openLinkSheetModal() : openSheetSetupGuide();
@@ -1921,7 +2131,7 @@ async function init(){
     else reloadFromFile(false);
   };
   document.getElementById('btnSaveFile').onclick = ()=>{
-    if(appsScriptUrl) pushToGoogleSheet();
+    if(appsScriptUrl) pushToGoogleSheet(false);
     else saveDataFile();
   };
   document.getElementById('btnExportJSON').onclick = exportJSON;
@@ -1955,10 +2165,10 @@ async function init(){
   render();
   updateConnPill();
   if(appsScriptUrl){
-    lastRemoteJson = stateFingerprint();
-    localDirty = false;
     startSheetPolling();
-    pullFromGoogleSheet(true);
+    pullFromGoogleSheet(true).then(()=>{
+      if(localDirty) pushToGoogleSheet(true);
+    });
   } else {
     await tryAutoReconnect();
   }

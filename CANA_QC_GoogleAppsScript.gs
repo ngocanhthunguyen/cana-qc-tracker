@@ -1,0 +1,963 @@
+/**
+ * CANA QC Tracker — Google Sheets Backend (Professional Theme)
+ * Run setupSheets or redesignSheets after pasting this file.
+ */
+
+const SPREADSHEET_ID = '1VRsMR7TyNXW4sSjRhsfKoK0R4DMyC9ZCrmrWvUJdoc4';
+
+const FARMS = ['Kenny', 'BB Farm', 'VT Farm', 'Extra Cannabis', 'ZaZa', 'Yang', 'Cana'];
+
+const META_KEYS = ['batchId'];
+const BLUE_KEYS = ['date','strain','bigsCount','popsCount','grossWt','condition','eurofinsTest','tnrTest','invoice','receivedBy','notes'];
+const PURPLE_KEYS = ['qcStart','qcEnd','startWt','bigsG','popsG','scrapsG','seedsG','moldG','wasteG','passFail','qcBy'];
+const DATA_KEYS = META_KEYS.concat(BLUE_KEYS).concat(PURPLE_KEYS);
+
+const HEADERS = ['_id', 'Batch ID']
+  .concat(['Date','Strain','Bigs (count)','Pops (count)','Gross Wt (g)','Physical Condition','Eurofins Test','TNR Test','Invoice','Received by','Notes'])
+  .concat(['QC Start','QC End','Start Wt (g)','Bigs (g)','Pops (g)','Scraps (g)','Seeds (g)','Mold (g)','Waste (g)','Pass/Fail','QC by'])
+  .concat(['Total Flower (g)','Total Out (g)','Diff (g)','Yield %','Month']);
+
+const NUM_COLS = HEADERS.length;
+const HEADER_ROW = 3;
+const DATA_START_ROW = 4;
+const PASS_FAIL_COL = 24; // 1-based column index for Pass/Fail
+
+// Documents table — sits to the RIGHT of the QC table on each farm tab
+const DOC_SPACER_COL = NUM_COLS + 1;
+const FARM_DOC_START_COL = NUM_COLS + 2;
+const FARM_DOC_HEADERS = ['_id', 'Title', 'Category', 'File Name', 'External URL', 'Notes', 'Uploaded By', 'Uploaded At', 'Size', 'MIME Type', 'Has local file'];
+const FARM_DOC_NUM_COLS = FARM_DOC_HEADERS.length;
+
+const THEME = {
+  greenDark: '#14532d',
+  greenMid: '#166534',
+  greenBand: '#15803d',
+  greenLight: '#dcfce7',
+  greenPale: '#f0fdf4',
+  blueHeader: '#1d4ed8',
+  blueBg: '#dbeafe',
+  bluePale: '#eff6ff',
+  purpleHeader: '#6d28d9',
+  purpleBg: '#ede9fe',
+  purplePale: '#f5f3ff',
+  greyHeader: '#334155',
+  greyBg: '#f1f5f9',
+  greyPale: '#f8fafc',
+  pass: '#16a34a',
+  passBg: '#dcfce7',
+  fail: '#dc2626',
+  failBg: '#fee2e2',
+  cond: '#d97706',
+  condBg: '#fef3c7',
+  white: '#ffffff',
+  ink: '#0f172a',
+  muted: '#64748b'
+};
+
+/* ---------- Web App ---------- */
+
+function doGet(e) {
+  if (e && e.parameter && e.parameter.action === 'read') {
+    return jsonOut(readAllFarms());
+  }
+  if (e && e.parameter && e.parameter.action === 'write' && e.parameter.payload) {
+    return jsonOut(handleWriteRequest(String(e.parameter.payload)));
+  }
+  return jsonOut({ ok: true, message: 'CANA QC Tracker API' });
+}
+
+function handleWriteRequest(payloadB64) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return { ok: false, error: 'Server busy, try again' };
+  try {
+    var json = Utilities.newBlob(Utilities.base64Decode(payloadB64)).getDataAsString();
+    var data = JSON.parse(json);
+    if (data.action === 'write') {
+      writeAllFarms(data.state);
+      return { ok: true, updatedAt: new Date().toISOString() };
+    }
+    return { ok: false, error: 'Unknown action' };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function doPost(e) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) return jsonOut({ ok: false, error: 'Server busy, try again' });
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return jsonOut({ ok: false, error: 'Empty POST body — use GET write or redeploy web app' });
+    }
+    var data = JSON.parse(e.postData.contents);
+    if (data.action === 'read') return jsonOut(readAllFarms());
+    if (data.action === 'write') {
+      writeAllFarms(data.state);
+      return jsonOut({ ok: true, updatedAt: new Date().toISOString() });
+    }
+    return jsonOut({ ok: false, error: 'Unknown action' });
+  } catch (err) {
+    return jsonOut({ ok: false, error: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function testConnection() {
+  var ss = getSpreadsheet();
+  Logger.log('OK: ' + ss.getName() + ' | ' + ss.getId());
+}
+
+function getSpreadsheet() {
+  var active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  var id = String(SPREADSHEET_ID || '').trim();
+  if (!id || id.indexOf('PASTE_YOUR') === 0) {
+    throw new Error('Open Apps Script from your Google Sheet (Extensions → Apps Script).');
+  }
+  if (id.indexOf('http') >= 0) throw new Error('Use Sheet ID only, not full URL.');
+  return SpreadsheetApp.openById(id);
+}
+
+/* ---------- Setup / Redesign ---------- */
+
+function setupSheets() {
+  var ss = getSpreadsheet();
+  var existing = ss.getSheets().map(function(s) { return s.getName(); });
+  setupReadmeTab(ss);
+  setupMetaTab(ss, existing);
+  FARMS.forEach(function(farm) {
+    if (existing.indexOf(farm) === -1) ss.insertSheet(farm);
+    writeFarmSheet(ss.getSheetByName(farm), [], []);
+  });
+  if (existing.indexOf('Dashboard') === -1) ss.insertSheet('Dashboard');
+  setupDocumentsTab(ss);
+  updateDashboard(ss);
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Professional setup complete.');
+}
+
+/** Run this to apply the new design without losing data */
+function redesignSheets() {
+  upgradeSheetHeaders();
+}
+
+function migrateV4Sheets() { redesignSheets(); }
+
+function upgradeSheetHeaders() {
+  var ss = getSpreadsheet();
+  var allDocs = readDocuments(ss);
+  FARMS.forEach(function(farm) {
+    var sheet = ss.getSheetByName(farm);
+    if (!sheet) return;
+    var records = readFarmSheet(sheet);
+    var docs = allDocs[farm] || [];
+    writeFarmSheet(sheet, records, docs);
+    Logger.log(farm + ': ' + records.length + ' QC + ' + docs.length + ' doc(s)');
+  });
+  setupReadmeTab(ss);
+  if (allDocs) writeDocuments(ss, allDocs);
+  updateDashboard(ss);
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Redesign complete.');
+}
+
+function orderTabs(ss) {
+  var order = ['README', 'Dashboard', 'Documents'].concat(FARMS);
+  for (var i = order.length - 1; i >= 0; i--) {
+    var sh = ss.getSheetByName(order[i]);
+    if (sh) {
+      ss.setActiveSheet(sh);
+      ss.moveActiveSheet(1);
+    }
+  }
+}
+
+function setupReadmeTab(ss) {
+  var sheet = ss.getSheetByName('README') || ss.insertSheet('README');
+  sheet.clear();
+  sheet.setTabColor(THEME.greenMid);
+
+  sheet.getRange(1, 1, 1, 6).merge()
+    .setValue('CANA QC TRACKER')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(22).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 52);
+
+  sheet.getRange(2, 1, 1, 6).merge()
+    .setValue('Google Sheet Backend · Syncs with web app every ~6 seconds')
+    .setBackground(THEME.greenBand).setFontColor(THEME.white)
+    .setFontSize(11).setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+
+  var steps = [
+    ['Step', 'Action', 'Who'],
+    ['1', 'Extensions → Apps Script → paste CANA_QC_GoogleAppsScript.gs', 'Admin'],
+    ['2', 'Run → setupSheets (first time) or upgradeFarmDocumentTables (docs beside QC)', 'Admin'],
+    ['3', 'Deploy → Web app → Execute as Me → Who has access: Anyone → copy /exec URL', 'Admin'],
+    ['4', 'Paste URL in Vercel config.json + app Connect modal', 'Admin'],
+    ['5', 'Share this sheet with all staff as Editor', 'Admin'],
+    ['6', 'Use the web app for daily QC — sheet updates automatically', 'All team'],
+    ['7', 'Documents: upload files to Google Drive → paste link in app → syncs to Documents tab', 'All team']
+  ];
+  sheet.getRange(4, 1, steps.length, 3).setValues(steps);
+  sheet.getRange(4, 1, 1, 3).setBackground(THEME.blueHeader).setFontColor(THEME.white).setFontWeight('bold');
+  sheet.getRange(5, 1, steps.length - 1, 3).setBackground(THEME.bluePale);
+  sheet.setColumnWidth(1, 50);
+  sheet.setColumnWidth(2, 420);
+  sheet.setColumnWidth(3, 80);
+
+  sheet.getRange(12, 1).setValue('COLOR LEGEND').setFontWeight('bold').setFontColor(THEME.greenDark);
+  var legend = [
+    ['Blue', 'Manager — goods received on arrival'],
+    ['Purple', 'QC staff — same-day QC results'],
+    ['Grey', 'Auto-calculated — do not edit manually']
+  ];
+  sheet.getRange(13, 1, legend.length, 2).setValues(legend);
+  sheet.getRange(13, 1, 1, 1).setBackground(THEME.blueBg);
+  sheet.getRange(14, 1, 1, 1).setBackground(THEME.purpleBg);
+  sheet.getRange(15, 1, 1, 1).setBackground(THEME.greyBg);
+
+  sheet.getRange(17, 1).setValue('Last design run: ' + new Date().toLocaleString()).setFontColor(THEME.muted).setFontSize(10);
+}
+
+function setupMetaTab(ss, existing) {
+  if (existing.indexOf('_Meta') === -1) {
+    var meta = ss.insertSheet('_Meta');
+    meta.hideSheet();
+    meta.getRange('A1').setValue('CANA QC Tracker — do not delete');
+  }
+}
+
+/* ---------- Farm sheet layout ---------- */
+
+function findHeaderRowIndex(sheet) {
+  var max = Math.min(sheet.getLastRow(), 15);
+  if (max < 1) return HEADER_ROW;
+  var values = sheet.getRange(1, 1, max, 3).getValues();
+  for (var r = 0; r < values.length; r++) {
+    if (String(values[r][0] || '') === '_id') return r + 1;
+    if (String(values[r][0] || '') === 'Date' || String(values[r][2] || '') === 'Strain') return r + 1;
+  }
+  return HEADER_ROW;
+}
+
+/** Google Sheets default to 26 columns — document table starts at col 32 */
+function ensureFarmSheetWidth(sheet) {
+  if (!sheet) return;
+  var needed = FARM_DOC_START_COL + FARM_DOC_NUM_COLS - 1;
+  var current = sheet.getMaxColumns();
+  if (current < needed) {
+    sheet.insertColumnsAfter(current, needed - current);
+  }
+}
+
+function writeFarmSheet(sheet, records, docRecords) {
+  if (!sheet) return;
+  var farmName = sheet.getName();
+  docRecords = docRecords || [];
+
+  ensureFarmSheetWidth(sheet);
+  sheet.getCharts().forEach(function(c) { sheet.removeChart(c); });
+  sheet.clearConditionalFormatRules();
+
+  // Row 1 — QC title (left) + Documents title (right)
+  sheet.getRange(1, 1, 1, NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  ' + farmName)
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.getRange(1, FARM_DOC_START_COL, 1, FARM_DOC_NUM_COLS).merge()
+    .setValue('DOCUMENT LIBRARY  ·  ' + farmName)
+    .setBackground('#1e3a8a').setFontColor(THEME.white)
+    .setFontSize(13).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+
+  // Row 2 — Section bands (QC left, Documents right)
+  styleSectionBand(sheet, 2, 1, 2, 'RECORD ID', THEME.greenBand);
+  styleSectionBand(sheet, 2, 3, 11, 'SECTION 1 — GOODS RECEIVED  (Manager)', THEME.blueHeader);
+  styleSectionBand(sheet, 2, 14, 11, 'SECTION 2 — QC RESULTS  (QC Staff)', THEME.purpleHeader);
+  styleSectionBand(sheet, 2, 25, 5, 'AUTO CALCULATED', THEME.greyHeader);
+  styleSectionBand(sheet, 2, FARM_DOC_START_COL, FARM_DOC_NUM_COLS, 'DOCUMENTS — synced from web app · paste Google Drive links', '#2563eb');
+  sheet.getRange(2, DOC_SPACER_COL, 2, 1).setBackground('#e2e8f0');
+  sheet.setRowHeight(2, 30);
+
+  // Row 3 — Column headers
+  sheet.getRange(HEADER_ROW, 1, 1, NUM_COLS).setValues([HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setVerticalAlignment('middle').setHorizontalAlignment('center');
+  sheet.getRange(HEADER_ROW, 1, 1, 2).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.getRange(HEADER_ROW, 3, 1, 11).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(HEADER_ROW, 14, 1, 11).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(HEADER_ROW, 25, 1, 5).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(HEADER_ROW, 42);
+
+  if (records.length) {
+    var rows = records.map(function(rec) { return recordToRow(rec); });
+    sheet.getRange(DATA_START_ROW, 1, rows.length, NUM_COLS).setValues(rows);
+  }
+
+  writeFarmDocumentsSection(sheet, docRecords);
+  formatFarmSheet(sheet);
+  formatFarmDocumentsSection(sheet, docRecords.length);
+}
+
+function styleSectionBand(sheet, row, col, numCols, label, bg) {
+  sheet.getRange(row, col, 1, numCols).merge()
+    .setValue(label)
+    .setBackground(bg).setFontColor(THEME.white)
+    .setFontWeight('bold').setFontSize(10)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+}
+
+function formatFarmSheet(sheet) {
+  if (!sheet) return;
+  sheet.setTabColor(THEME.greenMid);
+  sheet.setFrozenRows(HEADER_ROW);
+  // Cannot freeze columns — row 1 is merged across all columns
+
+  var widths = [72, 108, 92, 118, 68, 68, 82, 128, 98, 98, 88, 88, 132, 92, 92, 82, 68, 68, 68, 68, 62, 62, 62, 118, 88, 82, 82, 62, 72, 78];
+  for (var c = 0; c < widths.length && c < NUM_COLS; c++) {
+    sheet.setColumnWidth(c + 1, widths[c]);
+  }
+
+  var lastRow = Math.max(sheet.getLastRow(), DATA_START_ROW + 20);
+  var dataRows = lastRow - DATA_START_ROW + 1;
+
+  // Data area tints
+  if (dataRows > 0) {
+    sheet.getRange(DATA_START_ROW, 3, dataRows, 11).setBackground(THEME.bluePale);
+    sheet.getRange(DATA_START_ROW, 14, dataRows, 11).setBackground(THEME.purplePale);
+    sheet.getRange(DATA_START_ROW, 25, dataRows, 5).setBackground(THEME.greyPale);
+    sheet.getRange(DATA_START_ROW, 1, dataRows, 2).setBackground(THEME.greenPale);
+  }
+
+  // Borders around header block
+  sheet.getRange(1, 1, HEADER_ROW, NUM_COLS)
+    .setBorder(true, true, true, true, true, true, THEME.greenDark, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+  // Number formats — weight columns
+  [6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27].forEach(function(col) {
+    if (lastRow >= DATA_START_ROW) {
+      sheet.getRange(DATA_START_ROW, col, dataRows, 1).setNumberFormat('#,##0.00');
+    }
+  });
+  if (lastRow >= DATA_START_ROW) {
+    sheet.getRange(DATA_START_ROW, 28, dataRows, 1).setNumberFormat('0.0"%"');
+  }
+
+  // Hide internal _id columns
+  sheet.hideColumns(1);
+  sheet.hideColumns(FARM_DOC_START_COL);
+
+  sheet.setColumnWidth(DOC_SPACER_COL, 14);
+  var docWidths = [72, 150, 110, 130, 200, 160, 88, 92, 52, 90, 72];
+  docWidths.forEach(function(w, i) { sheet.setColumnWidth(FARM_DOC_START_COL + i, w); });
+
+  // Conditional formatting — Pass/Fail
+  if (lastRow >= DATA_START_ROW) {
+    var pfRange = sheet.getRange(DATA_START_ROW, PASS_FAIL_COL, dataRows, 1);
+    var rules = [
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextStartsWith('Pass').setBackground(THEME.passBg).setFontColor(THEME.pass).setRanges([pfRange]).build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextStartsWith('Fail').setBackground(THEME.failBg).setFontColor(THEME.fail).setRanges([pfRange]).build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextStartsWith('Conditional').setBackground(THEME.condBg).setFontColor(THEME.cond).setRanges([pfRange]).build()
+    ];
+    sheet.setConditionalFormatRules(rules);
+
+    // Alternating row stripe on strain column for readability
+    var stripeRange = sheet.getRange(DATA_START_ROW, 1, dataRows, NUM_COLS);
+    rules = sheet.getConditionalFormatRules();
+    rules.push(
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenFormulaSatisfied('=AND(MOD(ROW(),2)=0,ROW()>=' + DATA_START_ROW + ')')
+        .setBackground('#ffffff').setRanges([stripeRange]).build()
+    );
+    sheet.setConditionalFormatRules(rules);
+  }
+}
+
+/* ---------- Read / Write data ---------- */
+
+function readAllFarms() {
+  var ss = getSpreadsheet();
+  var farms = {};
+  FARMS.forEach(function(farm) {
+    farms[farm] = readFarmSheet(ss.getSheetByName(farm));
+  });
+  return { ok: true, farms: farms, documents: readDocuments(ss), readAt: new Date().toISOString() };
+}
+
+function readFarmSheet(sheet) {
+  if (!sheet) return [];
+  var headerRow = findHeaderRowIndex(sheet);
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= headerRow) return [];
+  var firstHeader = String(sheet.getRange(headerRow, 1).getValue() || '');
+  var hasIdCol = firstHeader === '_id';
+  var numRows = lastRow - headerRow;
+  var numCols = Math.max(sheet.getLastColumn(), NUM_COLS);
+  var values = sheet.getRange(headerRow + 1, 1, numRows, numCols).getValues();
+  var records = [];
+  values.forEach(function(row) {
+    if (isEmptyDataRow(row, hasIdCol)) return;
+    var rec = { id: hasIdCol ? (String(row[0] || '') || newId()) : newId() };
+    DATA_KEYS.forEach(function(key, i) {
+      var col = hasIdCol ? i + 1 : i;
+      var v = row[col];
+      if (v instanceof Date) {
+        rec[key] = Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      } else {
+        rec[key] = v === '' || v === null || v === undefined ? '' : String(v);
+      }
+    });
+    if (!rec.id) rec.id = newId();
+    records.push(rec);
+  });
+  return records;
+}
+
+function isEmptyDataRow(row, hasIdCol) {
+  var start = hasIdCol ? 1 : 0;
+  for (var i = start; i < start + DATA_KEYS.length; i++) {
+    if (row[i] !== '' && row[i] !== null && row[i] !== undefined) return false;
+  }
+  return true;
+}
+
+function writeAllFarms(state) {
+  var ss = getSpreadsheet();
+  FARMS.forEach(function(farm) {
+    var records = (state.farms && state.farms[farm]) ? state.farms[farm] : [];
+    var docs = (state.documents && state.documents[farm]) ? state.documents[farm] : [];
+    var sheet = ss.getSheetByName(farm) || ss.insertSheet(farm);
+    writeFarmSheet(sheet, records, docs);
+  });
+  if (state.documents) writeDocuments(ss, state.documents);
+  updateMeta(ss);
+  updateDashboard(ss);
+}
+
+/* ---------- Per-farm document table (right of QC table) ---------- */
+
+function writeFarmDocumentsSection(sheet, docRecords) {
+  sheet.getRange(HEADER_ROW, FARM_DOC_START_COL, 1, FARM_DOC_NUM_COLS).setValues([FARM_DOC_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setVerticalAlignment('middle').setHorizontalAlignment('center');
+  sheet.getRange(HEADER_ROW, FARM_DOC_START_COL, 1, 1).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.getRange(HEADER_ROW, FARM_DOC_START_COL + 1, 1, 4).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(HEADER_ROW, FARM_DOC_START_COL + 5, 1, 3).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(HEADER_ROW, FARM_DOC_START_COL + 8, 1, 3).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+
+  var clearRows = Math.max(sheet.getLastRow() - HEADER_ROW, 50);
+  sheet.getRange(DATA_START_ROW, FARM_DOC_START_COL, clearRows, FARM_DOC_NUM_COLS).clearContent();
+
+  if (!docRecords.length) return;
+  var rows = docRecords.map(function(doc) {
+    return [
+      doc.id || newId(),
+      doc.title || '',
+      doc.category || '',
+      doc.fileName || '',
+      doc.url || '',
+      doc.notes || '',
+      doc.uploadedBy || '',
+      doc.uploadedAt || '',
+      doc.size || 0,
+      doc.mimeType || '',
+      doc.hasLocalFile ? 'Yes' : ''
+    ];
+  });
+  sheet.getRange(DATA_START_ROW, FARM_DOC_START_COL, rows.length, FARM_DOC_NUM_COLS).setValues(rows);
+}
+
+function formatFarmDocumentsSection(sheet, numRows) {
+  if (!sheet || numRows < 1) return;
+  for (var r = 0; r < numRows; r++) {
+    var rowNum = DATA_START_ROW + r;
+    var bg = r % 2 === 0 ? '#f0f9ff' : THEME.white;
+    sheet.getRange(rowNum, FARM_DOC_START_COL, 1, FARM_DOC_NUM_COLS).setBackground(bg).setFontSize(10).setWrap(true);
+    var urlCol = FARM_DOC_START_COL + 4;
+    var url = String(sheet.getRange(rowNum, urlCol).getValue() || '');
+    if (url.indexOf('http') === 0) {
+      sheet.getRange(rowNum, urlCol).setFormula('=HYPERLINK("' + url.replace(/"/g, '""') + '","Open link ↗")')
+        .setFontColor('#1d4ed8').setFontWeight('bold');
+    }
+    var localCol = FARM_DOC_START_COL + FARM_DOC_NUM_COLS - 1;
+    var local = String(sheet.getRange(rowNum, localCol).getValue() || '').toLowerCase();
+    if (local === 'yes') {
+      sheet.getRange(rowNum, localCol).setBackground(THEME.condBg).setFontColor(THEME.cond).setFontWeight('bold');
+    } else {
+      sheet.getRange(rowNum, localCol).setBackground(THEME.passBg).setFontColor(THEME.pass);
+    }
+  }
+  sheet.getRange(DATA_START_ROW, FARM_DOC_START_COL + 8, numRows, 1).setNumberFormat('#,##0');
+}
+
+function hasFarmDocSection(sheet) {
+  if (!sheet) return false;
+  return String(sheet.getRange(HEADER_ROW, FARM_DOC_START_COL + 1).getValue() || '') === 'Title';
+}
+
+function parseDocRow(row) {
+  if (!row[0] && !row[1]) return null;
+  var urlVal = String(row[4] || '');
+  if (urlVal.indexOf('HYPERLINK') >= 0) {
+    var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
+    if (m) urlVal = m[1];
+  }
+  return {
+    id: String(row[0] || newId()),
+    title: String(row[1] || ''),
+    category: String(row[2] || ''),
+    fileName: String(row[3] || ''),
+    url: urlVal,
+    notes: String(row[5] || ''),
+    uploadedBy: String(row[6] || ''),
+    uploadedAt: row[7] instanceof Date
+      ? Utilities.formatDate(row[7], Session.getScriptTimeZone(), 'yyyy-MM-dd')
+      : String(row[7] || ''),
+    size: row[8] === '' || row[8] === null ? 0 : Number(row[8]) || 0,
+    mimeType: String(row[9] || ''),
+    hasLocalFile: String(row[10] || '').toLowerCase() === 'yes'
+  };
+}
+
+function readFarmDocuments(sheet) {
+  if (!sheet || !hasFarmDocSection(sheet)) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= HEADER_ROW) return [];
+  var numRows = lastRow - HEADER_ROW;
+  var values = sheet.getRange(DATA_START_ROW, FARM_DOC_START_COL, numRows, FARM_DOC_NUM_COLS).getValues();
+  var docs = [];
+  values.forEach(function(row) {
+    var doc = parseDocRow(row);
+    if (doc) docs.push(doc);
+  });
+  return docs;
+}
+
+var DOC_HEADERS = ['_id', 'Farm', 'Title', 'Category', 'File Name', 'External URL', 'Notes', 'Uploaded By', 'Uploaded At', 'Size', 'MIME Type', 'Has local file'];
+var DOC_NUM_COLS = DOC_HEADERS.length;
+var DOC_HEADER_ROW = 3;
+var DOC_DATA_START = 4;
+
+function setupDocumentsTab(ss) {
+  var sheet = ss.getSheetByName('Documents');
+  if (!sheet) sheet = ss.insertSheet('Documents');
+  sheet.clear();
+  sheet.clearConditionalFormatRules();
+
+  sheet.getRange(1, 1, 1, DOC_NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  DOCUMENT LIBRARY')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+
+  sheet.getRange(2, 1, 1, DOC_NUM_COLS).merge()
+    .setValue('Synced from web app · Links & metadata for all farms · Upload files to Google Drive and paste URL here')
+    .setBackground(THEME.blueHeader).setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(2, 28);
+
+  sheet.getRange(DOC_HEADER_ROW, 1, 1, DOC_NUM_COLS).setValues([DOC_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setVerticalAlignment('middle').setHorizontalAlignment('center');
+  sheet.getRange(DOC_HEADER_ROW, 1, 1, 2).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.getRange(DOC_HEADER_ROW, 3, 1, 4).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(DOC_HEADER_ROW, 5, 1, 3).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(DOC_HEADER_ROW, 8, 1, 5).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(DOC_HEADER_ROW, 36);
+
+  sheet.setTabColor('#2563eb');
+  sheet.setFrozenRows(DOC_HEADER_ROW);
+  sheet.hideColumns(1);
+
+  var widths = [72, 92, 168, 118, 140, 220, 180, 92, 92, 56, 96, 72];
+  widths.forEach(function(w, i) { sheet.setColumnWidth(i + 1, w); });
+}
+
+function formatDocumentsSheet(sheet, numRows) {
+  if (!sheet || numRows < 1) return;
+  var dataRange = sheet.getRange(DOC_DATA_START, 1, numRows, DOC_NUM_COLS);
+  dataRange.setFontSize(10).setVerticalAlignment('middle').setWrap(true);
+  for (var r = 0; r < numRows; r++) {
+    var rowNum = DOC_DATA_START + r;
+    var bg = r % 2 === 0 ? THEME.white : THEME.bluePale;
+    sheet.getRange(rowNum, 1, 1, DOC_NUM_COLS).setBackground(bg);
+    var url = String(sheet.getRange(rowNum, 6).getValue() || '');
+    if (url.indexOf('http') === 0) {
+      sheet.getRange(rowNum, 6).setFormula('=HYPERLINK("' + url.replace(/"/g, '""') + '","Open link ↗")')
+        .setFontColor('#1d4ed8').setFontWeight('bold');
+    }
+    var farm = String(sheet.getRange(rowNum, 2).getValue() || '');
+    if (farm) {
+      sheet.getRange(rowNum, 2).setFontWeight('bold').setFontColor(THEME.greenDark);
+    }
+    var local = String(sheet.getRange(rowNum, 12).getValue() || '').toLowerCase();
+    if (local === 'yes') {
+      sheet.getRange(rowNum, 12).setBackground(THEME.condBg).setFontColor(THEME.cond).setFontWeight('bold');
+    } else {
+      sheet.getRange(rowNum, 12).setBackground(THEME.passBg).setFontColor(THEME.pass);
+    }
+  }
+  sheet.getRange(DOC_DATA_START, 10, numRows, 1).setNumberFormat('#,##0');
+}
+
+/** Run once — adds document tables beside QC on every farm tab */
+function upgradeFarmDocumentTables() {
+  var ss = getSpreadsheet();
+  var docs = readDocuments(ss);
+  FARMS.forEach(function(farm) {
+    var sheet = ss.getSheetByName(farm);
+    if (!sheet) return;
+    var records = readFarmSheet(sheet);
+    writeFarmSheet(sheet, records, docs[farm] || []);
+    Logger.log(farm + ': document table added (' + (docs[farm] || []).length + ' doc(s))');
+  });
+  writeDocuments(ss, docs);
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Farm document tables ready.');
+}
+
+/** Run once in Apps Script to create the professional Documents tab */
+function upgradeDocumentsTab() {
+  upgradeFarmDocumentTables();
+}
+
+function countDocuments(documents) {
+  var n = 0;
+  FARMS.forEach(function(f) { n += (documents[f] || []).length; });
+  return n;
+}
+
+function readDocuments(ss) {
+  var documents = {};
+  var fromFarmTabs = false;
+  FARMS.forEach(function(f) { documents[f] = []; });
+  FARMS.forEach(function(farm) {
+    var sheet = ss.getSheetByName(farm);
+    if (hasFarmDocSection(sheet)) {
+      documents[farm] = readFarmDocuments(sheet);
+      fromFarmTabs = true;
+    }
+  });
+  if (fromFarmTabs) return documents;
+
+  // Fallback — read from consolidated Documents tab
+  var sheet = ss.getSheetByName('Documents');
+  if (!sheet || sheet.getLastRow() < DOC_DATA_START) return documents;
+  var numRows = sheet.getLastRow() - DOC_HEADER_ROW;
+  var values = sheet.getRange(DOC_DATA_START, 1, numRows, DOC_NUM_COLS).getValues();
+  values.forEach(function(row) {
+    if (!row[0] && !row[2]) return;
+    var farm = String(row[1] || '');
+    if (FARMS.indexOf(farm) === -1) return;
+    var urlVal = String(row[5] || '');
+    if (urlVal.indexOf('HYPERLINK') >= 0) {
+      var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
+      if (m) urlVal = m[1];
+    }
+    documents[farm].push({
+      id: String(row[0] || newId()),
+      title: String(row[2] || ''),
+      category: String(row[3] || ''),
+      fileName: String(row[4] || ''),
+      url: urlVal,
+      notes: String(row[6] || ''),
+      uploadedBy: String(row[7] || ''),
+      uploadedAt: row[8] instanceof Date
+        ? Utilities.formatDate(row[8], Session.getScriptTimeZone(), 'yyyy-MM-dd')
+        : String(row[8] || ''),
+      size: row[9] === '' || row[9] === null ? 0 : Number(row[9]) || 0,
+      mimeType: String(row[10] || ''),
+      hasLocalFile: String(row[11] || '').toLowerCase() === 'yes'
+    });
+  });
+  return documents;
+}
+
+function writeDocuments(ss, documents) {
+  setupDocumentsTab(ss);
+  var sheet = ss.getSheetByName('Documents');
+  var rows = [];
+  FARMS.forEach(function(farm) {
+    var list = (documents && documents[farm]) ? documents[farm] : [];
+    list.forEach(function(doc) {
+      rows.push([
+        doc.id || newId(),
+        farm,
+        doc.title || '',
+        doc.category || '',
+        doc.fileName || '',
+        doc.url || '',
+        doc.notes || '',
+        doc.uploadedBy || '',
+        doc.uploadedAt || '',
+        doc.size || 0,
+        doc.mimeType || '',
+        doc.hasLocalFile ? 'Yes' : ''
+      ]);
+    });
+  });
+  if (sheet.getLastRow() >= DOC_DATA_START) {
+    sheet.getRange(DOC_DATA_START, 1, sheet.getLastRow() - DOC_HEADER_ROW, DOC_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(DOC_DATA_START, 1, rows.length, DOC_NUM_COLS).setValues(rows);
+    formatDocumentsSheet(sheet, rows.length);
+  }
+}
+
+function recordToRow(rec) {
+  var c = computeRow(rec);
+  var row = [rec.id || newId()];
+  DATA_KEYS.forEach(function(key) { row.push(rec[key] || ''); });
+  row.push(c.totalFlower === null ? '' : c.totalFlower);
+  row.push(c.totalOut === null ? '' : c.totalOut);
+  row.push(c.diff === null ? '' : c.diff);
+  row.push(c.yieldPct === null ? '' : c.yieldPct);
+  row.push(c.month || '');
+  return row;
+}
+
+function computeRow(rec) {
+  function num(v) {
+    if (v === '' || v === null || v === undefined) return null;
+    var n = Number(v);
+    return isNaN(n) ? null : n;
+  }
+  var bigsG = num(rec.bigsG), popsG = num(rec.popsG), scrapsG = num(rec.scrapsG),
+      seedsG = num(rec.seedsG), moldG = num(rec.moldG), wasteG = num(rec.wasteG),
+      startWt = num(rec.startWt);
+  var totalFlower = null, totalOut = null, diff = null, yieldPct = null, month = '';
+  if (bigsG !== null) {
+    totalFlower = bigsG + (popsG || 0);
+    totalOut = bigsG + (popsG || 0) + (scrapsG || 0) + (seedsG || 0) + (moldG || 0) + (wasteG || 0);
+  }
+  if (startWt !== null && totalOut !== null) diff = startWt - totalOut;
+  if (startWt !== null && startWt !== 0 && totalFlower !== null) yieldPct = Math.round(totalFlower / startWt * 10000) / 100;
+  if (rec.date) {
+    var d = new Date(rec.date);
+    if (!isNaN(d.getTime())) {
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      month = months[d.getMonth()] + ' ' + d.getFullYear();
+    }
+  }
+  return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct, month: month };
+}
+
+function updateMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return;
+  meta.getRange('A2').setValue('Last updated');
+  meta.getRange('B2').setValue(new Date().toISOString());
+}
+
+/* ---------- Dashboard (KPIs + charts) ---------- */
+
+function collectDashboardStats(ss) {
+  var rows = [];
+  var totals = { batches: 0, start: 0, flower: 0, pass: 0, fail: 0, cond: 0, pending: 0 };
+  FARMS.forEach(function(farm) {
+    var recs = readFarmSheet(ss.getSheetByName(farm));
+    var totalStart = 0, totalFlower = 0, pass = 0, fail = 0, cond = 0, pending = 0;
+    recs.forEach(function(r) {
+      var sw = Number(r.startWt); if (!isNaN(sw)) totalStart += sw;
+      var bg = Number(r.bigsG), pg = Number(r.popsG);
+      if (!isNaN(bg)) totalFlower += bg;
+      if (!isNaN(pg)) totalFlower += pg;
+      var pf = r.passFail || '';
+      var hasDelivery = r.date || r.strain || r.grossWt;
+      var hasQC = r.qcBy || r.passFail || r.bigsG || r.startWt;
+      if (hasDelivery && !hasQC) pending++;
+      if (pf.indexOf('Pass') === 0) pass++;
+      else if (pf.indexOf('Fail') === 0) fail++;
+      else if (pf.indexOf('Conditional') === 0) cond++;
+    });
+    var avgYield = totalStart ? Math.round(totalFlower / totalStart * 10000) / 100 : '';
+    rows.push({ farm: farm, batches: recs.length, start: totalStart, flower: totalFlower, yield: avgYield, pass: pass, fail: fail, cond: cond, pending: pending });
+    totals.batches += recs.length;
+    totals.start += totalStart;
+    totals.flower += totalFlower;
+    totals.pass += pass;
+    totals.fail += fail;
+    totals.cond += cond;
+    totals.pending += pending;
+  });
+  totals.yield = totals.start ? Math.round(totals.flower / totals.start * 10000) / 100 : '';
+  return { rows: rows, totals: totals };
+}
+
+function updateDashboard(ss) {
+  var sheet = ss.getSheetByName('Dashboard');
+  if (!sheet) return;
+
+  sheet.getCharts().forEach(function(c) { sheet.removeChart(c); });
+  sheet.clear();
+  sheet.setTabColor(THEME.blueHeader);
+
+  var stats = collectDashboardStats(ss);
+
+  // Banner
+  sheet.getRange(1, 1, 2, 8).merge()
+    .setValue('CANA QC TRACKER\nOperations Dashboard')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(20).setFontWeight('bold').setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 36);
+  sheet.setRowHeight(2, 36);
+
+  sheet.getRange(3, 1, 1, 4).merge()
+    .setValue('Live sync with web app · Updated ' + new Date().toLocaleString())
+    .setFontColor(THEME.muted).setFontSize(10).setHorizontalAlignment('left');
+
+  // KPI cards — row 5-6
+  var kpiDefs = [
+    { label: 'TOTAL BATCHES', value: stats.totals.batches, bg: THEME.blueBg, color: THEME.blueHeader },
+    { label: 'TOTAL FLOWER (g)', value: stats.totals.flower, bg: THEME.greenLight, color: THEME.greenMid },
+    { label: 'AVG YIELD %', value: stats.totals.yield === '' ? '—' : stats.totals.yield + '%', bg: '#fef3c7', color: THEME.cond },
+    { label: 'PASS', value: stats.totals.pass, bg: THEME.passBg, color: THEME.pass },
+    { label: 'FAIL', value: stats.totals.fail, bg: THEME.failBg, color: THEME.fail },
+    { label: 'PENDING QC', value: stats.totals.pending, bg: THEME.condBg, color: THEME.cond }
+  ];
+  var col = 1;
+  kpiDefs.forEach(function(kpi) {
+    sheet.getRange(5, col, 1, 2).merge()
+      .setValue(kpi.label)
+      .setBackground(kpi.bg).setFontColor(kpi.color)
+      .setFontWeight('bold').setFontSize(9)
+      .setHorizontalAlignment('center').setVerticalAlignment('bottom');
+    sheet.getRange(6, col, 1, 2).merge()
+      .setValue(kpi.value)
+      .setBackground(kpi.bg).setFontColor(kpi.color)
+      .setFontSize(22).setFontWeight('bold')
+      .setHorizontalAlignment('center').setVerticalAlignment('top');
+    sheet.setColumnWidth(col, 95);
+    sheet.setColumnWidth(col + 1, 95);
+    col += 2;
+  });
+  sheet.setRowHeight(5, 22);
+  sheet.setRowHeight(6, 44);
+
+  // Data table — row 8+
+  var tableStart = 8;
+  var headers = ['Farm', 'Batches', 'Start (g)', 'Flower (g)', 'Yield %', 'Pass', 'Fail', 'Cond.', 'Pending'];
+  sheet.getRange(tableStart, 1, 1, headers.length).setValues([headers])
+    .setBackground(THEME.blueHeader).setFontColor(THEME.white)
+    .setFontWeight('bold').setHorizontalAlignment('center');
+  sheet.setRowHeight(tableStart, 32);
+
+  var tableData = stats.rows.map(function(r) {
+    return [r.farm, r.batches, r.start, r.flower, r.yield, r.pass, r.fail, r.cond, r.pending];
+  });
+  tableData.push(['TOTAL', stats.totals.batches, stats.totals.start, stats.totals.flower, stats.totals.yield, stats.totals.pass, stats.totals.fail, stats.totals.cond, stats.totals.pending]);
+
+  if (tableData.length) {
+    sheet.getRange(tableStart + 1, 1, tableData.length, headers.length).setValues(tableData);
+    // Zebra stripes
+    for (var i = 0; i < stats.rows.length; i++) {
+      var bg = i % 2 === 0 ? THEME.white : THEME.greyPale;
+      sheet.getRange(tableStart + 1 + i, 1, 1, headers.length).setBackground(bg);
+    }
+    var totalRow = tableStart + 1 + stats.rows.length;
+    sheet.getRange(totalRow, 1, 1, headers.length)
+      .setFontWeight('bold').setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+    sheet.getRange(tableStart + 1, 3, tableData.length, 2).setNumberFormat('#,##0');
+    sheet.getRange(tableStart + 1, 5, tableData.length, 1).setNumberFormat('0.0');
+  }
+
+  var tableEndRow = tableStart + tableData.length;
+
+  // Charts (right side)
+  if (stats.totals.batches > 0) {
+    addDashboardCharts(sheet, tableStart, tableEndRow, stats);
+  }
+
+  sheet.setColumnWidth(1, 130);
+}
+
+function addDashboardCharts(sheet, tableStart, tableEndRow, stats) {
+  var n = stats.rows.length;
+  if (n < 1) return;
+
+  // Chart 1 — Batches by farm (column)
+  var batchChart = sheet.newChart()
+    .setChartType(Charts.ChartType.COLUMN)
+    .addRange(sheet.getRange(tableStart + 1, 1, n, 2))
+    .setPosition(tableStart, 11, 0, 0)
+    .setOption('title', 'Batches by Farm')
+    .setOption('titleTextStyle', { color: THEME.greenDark, fontSize: 13, bold: true })
+    .setOption('legend', { position: 'none' })
+    .setOption('colors', [THEME.blueHeader])
+    .setOption('backgroundColor', THEME.white)
+    .setOption('height', 280)
+    .setOption('width', 420)
+    .setOption('vAxis', { title: 'Batches', minValue: 0 })
+    .setOption('hAxis', { slantedText: true, slantedTextAngle: 30 })
+    .build();
+  sheet.insertChart(batchChart);
+
+  // Chart 2 — QC outcomes (pie)
+  if (stats.totals.pass + stats.totals.fail + stats.totals.cond > 0) {
+    sheet.getRange(1, 20).setValue('Pass');
+    sheet.getRange(1, 21).setValue(stats.totals.pass);
+    sheet.getRange(2, 20).setValue('Fail');
+    sheet.getRange(2, 21).setValue(stats.totals.fail);
+    sheet.getRange(3, 20).setValue('Conditional');
+    sheet.getRange(3, 21).setValue(stats.totals.cond);
+    sheet.hideColumns(20, 2);
+
+    var pieChart = sheet.newChart()
+      .setChartType(Charts.ChartType.PIE)
+      .addRange(sheet.getRange(1, 20, 3, 2))
+      .setPosition(tableStart, 11, 0, 300)
+      .setOption('title', 'QC Outcomes (All Farms)')
+      .setOption('titleTextStyle', { color: THEME.greenDark, fontSize: 13, bold: true })
+      .setOption('colors', [THEME.pass, THEME.fail, THEME.cond])
+      .setOption('pieSliceText', 'percentage')
+      .setOption('legend', { position: 'right' })
+      .setOption('height', 280)
+      .setOption('width', 420)
+      .build();
+    sheet.insertChart(pieChart);
+  }
+
+  // Chart 3 — Yield % by farm (bar)
+  var hasYield = stats.rows.some(function(r) { return r.yield !== '' && r.yield !== null; });
+  if (hasYield) {
+    var yieldChart = sheet.newChart()
+      .setChartType(Charts.ChartType.BAR)
+      .addRange(sheet.getRange(tableStart + 1, 1, n, 5))
+      .setPosition(tableStart + 16, 11, 0, 0)
+      .setOption('title', 'Avg Yield % by Farm')
+      .setOption('titleTextStyle', { color: THEME.greenDark, fontSize: 13, bold: true })
+      .setOption('legend', { position: 'none' })
+      .setOption('colors', [THEME.greenMid])
+      .setOption('height', 280)
+      .setOption('width', 420)
+      .setOption('hAxis', { title: 'Yield %', minValue: 0 })
+      .build();
+    sheet.insertChart(yieldChart);
+  }
+}
+
+function newId() {
+  return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
