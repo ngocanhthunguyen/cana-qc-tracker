@@ -32,6 +32,7 @@ let localDirty = false;
 let lastRemoteJson = '';
 let lastSyncTime = '';
 let sheetSyncActive = false;
+let sheetSyncOk = false;
 
 /* ============ COMPUTE ============ */
 function num(v){
@@ -230,9 +231,12 @@ function sortRecords(records){
 function updateConnPill(){
   const pill = document.getElementById('connPill');
   if(!pill) return;
-  if(appsScriptUrl && sheetSyncActive){
+  if(appsScriptUrl && sheetSyncActive && sheetSyncOk){
     pill.className = 'conn-pill ok sync';
     pill.innerHTML = 'Google Sheet Live ✓' + (lastSyncTime ? '<span class="sync-time">' + esc(lastSyncTime) + '</span>' : '');
+  } else if(appsScriptUrl && sheetSyncActive){
+    pill.className = 'conn-pill warn';
+    pill.textContent = 'Sheet not syncing / ยังซิงค์ไม่ได้';
   } else if(appsScriptUrl){
     pill.className = 'conn-pill warn';
     pill.textContent = 'Sheet linked (paused) / หยุดชั่วคราว';
@@ -388,16 +392,29 @@ function debouncedPushToSheet(){
   clearTimeout(sheetSaveTimer);
   sheetSaveTimer = setTimeout(pushToGoogleSheet, 800);
 }
+function parseAppsScriptError(text, status){
+  if(status === 401 || status === 403 || /ServiceLogin|accounts\.google/i.test(text)){
+    return 'Access denied. Redeploy Apps Script → Who has access: Anyone (not only Google account).';
+  }
+  if(/ไม่พบเพจ|Page not found|could not open/i.test(text)){
+    return 'Web App URL not found. Deploy → Manage deployments → copy fresh /exec URL.';
+  }
+  return 'Invalid response from Google Sheet backend';
+}
 async function callAppsScript(payload){
   if(!appsScriptUrl) throw new Error('No Apps Script URL configured');
   const res = await fetch(appsScriptUrl, {
     method: 'POST',
+    mode: 'cors',
+    credentials: 'include',
+    redirect: 'follow',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
   });
   const text = await res.text();
+  if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
   try { return JSON.parse(text); }
-  catch(e){ throw new Error('Invalid response from Google Sheet backend'); }
+  catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
 }
 async function pullFromGoogleSheet(silent){
   if(!appsScriptUrl) return;
@@ -406,9 +423,14 @@ async function pullFromGoogleSheet(silent){
   if(localDirty || sheetSaveInFlight) return;
   try{
     const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
-    const res = await fetch(url);
-    const data = await res.json();
+    const res = await fetch(url, { mode: 'cors', credentials: 'include', redirect: 'follow' });
+    const text = await res.text();
+    if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
     if(!data.ok || !data.farms) throw new Error(data.error || 'Read failed');
+    sheetSyncOk = true;
     const fp = JSON.stringify(data.farms);
     if(fp === lastRemoteJson) return;
     const preservedDocs = state.documents;
@@ -422,8 +444,10 @@ async function pullFromGoogleSheet(silent){
     updateConnPill();
     if(!silent) alert('Reloaded from Google Sheet.\nโหลดข้อมูลจาก Google Sheet แล้ว');
   }catch(e){
+    sheetSyncOk = false;
+    updateConnPill();
     console.warn('sheet pull failed', e);
-    if(!silent) alert('Could not reload Google Sheet. Check your Web App URL and permissions.\nไม่สามารถโหลด Google Sheet ได้');
+    if(!silent) alert('Could not reload Google Sheet:\n' + e.message + '\n\nRedeploy Apps Script with access set to Anyone.\nไม่สามารถโหลด Google Sheet ได้');
   }
 }
 async function pushToGoogleSheet(){
@@ -435,12 +459,15 @@ async function pushToGoogleSheet(){
     const data = await callAppsScript(payload);
     if(!data.ok) throw new Error(data.error || 'Write failed');
     localDirty = false;
+    sheetSyncOk = true;
     lastRemoteJson = stateFingerprint();
     lastSyncTime = new Date().toLocaleTimeString();
     updateConnPill();
   }catch(e){
+    sheetSyncOk = false;
+    updateConnPill();
     console.warn('sheet push failed', e);
-    alert('Could not save to Google Sheet. Try Reload, then Save again.\nไม่สามารถบันทึกลง Google Sheet ได้');
+    alert('Could not save to Google Sheet:\n' + e.message + '\n\nFix: Apps Script → Deploy → Who has access: Anyone → copy new URL to config.json\nไม่สามารถบันทึกลง Google Sheet ได้');
   }finally{
     sheetSaveInFlight = false;
     if(sheetSaveQueued){ sheetSaveQueued = false; pushToGoogleSheet(); }
@@ -478,7 +505,7 @@ function openSheetSetupGuide(){
         If new blank sheet: click <b>Run → setupSheets</b><br>
         <h3>Step 3 — Deploy web app / Deploy</h3>
         <b>Deploy → New deployment → Web app</b> (or Manage deployments → Edit → New version if redeploying)<br>
-        Execute as: <b>Me</b> · Who has access: <b>Anyone with Google account</b> (or your organisation)<br>
+        Execute as: <b>Me</b> · Who has access: <b>Anyone</b> (required for Vercel — not “Anyone with Google account”)<br>
         Copy the <b>Web App URL</b> (ends with /exec)
         <h3>Step 4 — Deploy app on Vercel / Deploy แอป</h3>
         Push this folder to GitHub → import on <b>vercel.com</b> → team opens your Vercel link<br>
@@ -1870,8 +1897,12 @@ async function loadRemoteConfig(){
 async function testSheetConnection(){
   if(!appsScriptUrl) throw new Error('No Web App URL set');
   const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
-  const res = await fetch(url);
-  const data = await res.json();
+  const res = await fetch(url, { mode: 'cors', credentials: 'include', redirect: 'follow' });
+  const text = await res.text();
+  if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
   if(!data.ok) throw new Error(data.error || 'Connection failed');
   return data;
 }
