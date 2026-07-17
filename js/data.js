@@ -1,8 +1,15 @@
 /**
  * CANA QC Tracker — Data & configuration
- * Edit farms, columns, export companies, and seed data here.
+ * Default farms (used until you add more via Manage Farms in the app).
  */
-const FARMS = ["Kenny","BB Farm","VT Farm","Extra Cannabis","ZaZa","Yang","Cana"];
+const DEFAULT_FARMS = ["Kenny","BB Farm","VT Farm","Extra Cannabis","ZaZa","Yang","Cana"];
+/** @deprecated use getFarmList() in app.js */
+const FARMS = DEFAULT_FARMS;
+
+const DEFAULT_FARM_CODES = {
+  'BB Farm':'BB','VT Farm':'VT','Extra Cannabis':'EC',
+  'Kenny':'KN','ZaZa':'ZZ','Yang':'YG','Cana':'CA'
+};
 
 const EXPORT_COMPANIES = [
   {
@@ -85,7 +92,7 @@ const SHEET_POLL_MS = 6000;
 
 function defaultState(){
   const farms = {};
-  FARMS.forEach(f=>farms[f]=[]);
+  DEFAULT_FARMS.forEach(f=>farms[f]=[]);
   // seed with the existing BB Farm records from CANA QC Tracker v4.xlsx so nothing is lost
   farms['BB Farm'] = [
     {id:uid(), date:'2026-07-10', strain:'MAC 1', bigsCount:'', popsCount:'', grossWt:'50000', condition:'Minor Issues / มีปัญหาเล็กน้อย', invoice:'', receivedBy:'May,Montry', notes:'',
@@ -96,8 +103,13 @@ function defaultState(){
      qcStart:'', qcEnd:'', startWt:'', bigsG:'', popsG:'', scrapsG:'', seedsG:'', moldG:'', wasteG:'', passFail:'', qcBy:''},
   ];
   const documents = {};
-  FARMS.forEach(f=>documents[f]=[]);
-  return {farms, documents};
+  DEFAULT_FARMS.forEach(f=>documents[f]=[]);
+  return {
+    farmList: DEFAULT_FARMS.slice(),
+    farmCodes: {...DEFAULT_FARM_CODES},
+    farms,
+    documents
+  };
 }
 
 const DOCUMENT_CATEGORIES = ['Invoice / ใบเสร็จ','COA / Lab Report / ใบรายงานแล็บ','Photos / รูปภาพ','Contract / สัญญา','QC Report / รายงาน QC','Other / อื่นๆ'];

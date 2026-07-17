@@ -4,7 +4,7 @@
  */
 /* ============ STATE ============ */
 let state = null;
-let currentFarm = FARMS[0];
+let currentFarm = '';
 let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let currentFarmTab = 'qc'; // 'qc' | 'documents'
@@ -84,9 +84,26 @@ function esc(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+function getFarmList(){
+  if(state && Array.isArray(state.farmList) && state.farmList.length) return state.farmList;
+  return DEFAULT_FARMS;
+}
+function suggestFarmCode(name){
+  const words = String(name||'').trim().split(/\s+/).filter(Boolean);
+  if(words.length >= 2) return words.map(w=>w[0]).join('').toUpperCase().slice(0,3);
+  return String(name||'').trim().slice(0,2).toUpperCase();
+}
+function validateFarmName(name){
+  const n = String(name||'').trim();
+  if(!n) return 'Farm name is required / ต้องใส่ชื่อฟาร์ม';
+  if(n.length > 50) return 'Name too long (max 50 characters)';
+  if(/[:\\/?*\[\]]/.test(n)) return 'Name cannot contain : \\ / ? * [ ]';
+  if(getFarmList().some(f=>f.toLowerCase()===n.toLowerCase())) return 'Farm already exists / มีฟาร์มนี้แล้ว';
+  return '';
+}
 function farmCode(farm){
-  const codes = {'BB Farm':'BB','VT Farm':'VT','Extra Cannabis':'EC','Kenny':'KN','ZaZa':'ZZ','Yang':'YG','Cana':'CA'};
-  return codes[farm] || farm.slice(0,2).toUpperCase();
+  if(state && state.farmCodes && state.farmCodes[farm]) return state.farmCodes[farm];
+  return DEFAULT_FARM_CODES[farm] || farm.slice(0,2).toUpperCase();
 }
 function todayISO(){
   const d = new Date();
@@ -121,7 +138,7 @@ function assignBatchId(rec, farm){
 }
 function getAllFarmRecords(){
   const out = [];
-  FARMS.forEach(farm=>{
+  getFarmList().forEach(farm=>{
     (state.farms[farm]||[]).forEach(rec=> out.push({rec, farm}));
   });
   return out;
@@ -148,7 +165,7 @@ function countPendingFarm(farm){
   return (state.farms[farm]||[]).filter(isPending).length;
 }
 function countPendingAll(){
-  return FARMS.reduce((n,f)=> n + countPendingFarm(f), 0);
+  return getFarmList().reduce((n,f)=> n + countPendingFarm(f), 0);
 }
 function getRowStatus(rec){
   if(isPending(rec)) return {key:'pending', label:'Pending QC / รอ QC'};
@@ -261,10 +278,13 @@ function toggleMoreMenu(open){
 function ensureStateShape(){
   if(!state.farms) state.farms = {};
   if(!state.documents) state.documents = {};
-  FARMS.forEach(f=>{
+  if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
+  if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
+  getFarmList().forEach(f=>{
     if(!state.farms[f]) state.farms[f] = [];
     if(!state.documents[f]) state.documents[f] = [];
   });
+  if(!currentFarm || !getFarmList().includes(currentFarm)) currentFarm = getFarmList()[0] || '';
 }
 function formatFileSize(bytes){
   if(!bytes) return '0 B';
@@ -393,7 +413,7 @@ function matchesDocFilters(doc){
 }
 function stripDocsForSheet(documents){
   const out = {};
-  FARMS.forEach(f=>{
+  getFarmList().forEach(f=>{
     out[f] = (documents[f]||[]).map(d=>({
       id: d.id,
       title: d.title || '',
@@ -412,7 +432,7 @@ function stripDocsForSheet(documents){
 }
 function mergeDocumentsFromRemote(remoteDocs){
   if(!remoteDocs) return;
-  FARMS.forEach(f=>{
+  getFarmList().forEach(f=>{
     const local = state.documents[f] || [];
     const remote = remoteDocs[f] || [];
     const localById = Object.fromEntries(local.map(d=>[d.id, d]));
@@ -433,7 +453,12 @@ function mergeDocumentsFromRemote(remoteDocs){
 
 /* ============ GOOGLE SHEETS SYNC (via Apps Script) ============ */
 function stateFingerprint(){
-  return JSON.stringify({ farms: state.farms, documents: stripDocsForSheet(state.documents) });
+  return JSON.stringify({
+    farms: state.farms,
+    documents: stripDocsForSheet(state.documents),
+    farmList: getFarmList(),
+    farmCodes: state.farmCodes || {}
+  });
 }
 function debouncedPushToSheet(){
   clearTimeout(sheetSaveTimer);
@@ -519,9 +544,16 @@ async function pullFromGoogleSheet(silent){
     catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
     if(!data.ok || !data.farms) throw new Error(data.error || 'Read failed');
     sheetSyncOk = true;
-    const fp = JSON.stringify({ farms: data.farms, documents: data.documents || {} });
+    const fp = JSON.stringify({
+      farms: data.farms,
+      documents: data.documents || {},
+      farmList: data.farmList || getFarmList(),
+      farmCodes: data.farmCodes || {}
+    });
     if(fp === lastRemoteJson) return;
     state.farms = data.farms;
+    if(data.farmList && data.farmList.length) state.farmList = data.farmList;
+    if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -544,7 +576,12 @@ async function pushToGoogleSheet(silent){
   try{
     const payload = {
       action: 'write',
-      state: { farms: state.farms, documents: stripDocsForSheet(state.documents) }
+      state: {
+        farms: state.farms,
+        documents: stripDocsForSheet(state.documents),
+        farmList: getFarmList(),
+        farmCodes: state.farmCodes || {}
+      }
     };
     const data = await callAppsScript(payload);
     if(!data.ok) throw new Error(data.error || 'Write failed');
@@ -575,6 +612,109 @@ function stopSheetPolling(){
   sheetSyncActive = false;
   if(sheetPollTimer){ clearInterval(sheetPollTimer); sheetPollTimer = null; }
 }
+
+function addFarm(name, code){
+  const err = validateFarmName(name);
+  if(err) return err;
+  const farm = String(name).trim();
+  if(!state.farmList) state.farmList = getFarmList().slice();
+  state.farmList.push(farm);
+  if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
+  const c = String(code||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,3)
+    || suggestFarmCode(farm);
+  state.farmCodes[farm] = c;
+  state.farms[farm] = state.farms[farm] || [];
+  state.documents[farm] = state.documents[farm] || [];
+  currentFarm = farm;
+  currentView = 'farm';
+  onDataChanged();
+  return '';
+}
+function removeFarm(farm){
+  const recs = (state.farms[farm]||[]).length;
+  const docs = (state.documents[farm]||[]).length;
+  if(recs || docs) return 'Remove all QC records and documents first / ลบข้อมูล QC และเอกสารก่อน';
+  if(getFarmList().length <= 1) return 'Cannot remove the last farm / ลบฟาร์มสุดท้ายไม่ได้';
+  state.farmList = getFarmList().filter(f=>f!==farm);
+  delete state.farms[farm];
+  delete state.documents[farm];
+  if(state.farmCodes) delete state.farmCodes[farm];
+  if(currentFarm === farm){
+    currentFarm = getFarmList()[0] || '';
+    currentView = currentFarm ? 'farm' : 'dashboard';
+  }
+  onDataChanged();
+  return '';
+}
+function openManageFarmsModal(){
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const list = getFarmList();
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:560px">
+      <h2>🏡 Manage Farms / จัดการฟาร์ม</h2>
+      <div class="sub">Add new supplier farms — syncs to Google Sheet for the whole team<br>เพิ่มฟาร์มใหม่ — ซิงค์ไป Google Sheet ให้ทั้งทีม</div>
+      <div class="farm-manage-list">
+        ${list.map(f=>{
+          const n = (state.farms[f]||[]).length;
+          const d = (state.documents[f]||[]).length;
+          const empty = !n && !d;
+          return `<div class="farm-manage-row">
+            <div>
+              <strong>${esc(f)}</strong>
+              <span class="farm-manage-meta">Batch code: ${esc(farmCode(f))} · ${n} QC · ${d} docs</span>
+            </div>
+            ${empty ? `<button type="button" class="small danger" data-remove-farm="${esc(f)}">Remove</button>` : `<span class="farm-manage-meta" title="Clear data first">Has data</span>`}
+          </div>`;
+        }).join('')}
+      </div>
+      <form id="addFarmForm" class="farm-add-form">
+        <label>Farm name / ชื่อฟาร์ม
+          <input type="text" name="name" placeholder="e.g. Sunrise Farm" required maxlength="50" autocomplete="off">
+        </label>
+        <label>Batch ID code (optional) / รหัส Batch
+          <input type="text" name="code" placeholder="e.g. SF" maxlength="3" pattern="[A-Za-z0-9]{2,3}" autocomplete="off">
+        </label>
+        <p class="farm-add-hint">Batch IDs look like <b>SF-260717-001</b>. If empty, a code is suggested automatically.</p>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCloseManageFarms">Close</button>
+          <button type="submit" class="primary">+ Add Farm</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCloseManageFarms').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelectorAll('[data-remove-farm]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const farm = btn.dataset.removeFarm;
+      if(!confirm('Remove farm "' + farm + '"?\nลบฟาร์ม "' + farm + '"?')) return;
+      const err = removeFarm(farm);
+      if(err){ alert(err); return; }
+      close();
+      render();
+    };
+  });
+  const form = root.querySelector('#addFarmForm');
+  const nameInput = form.querySelector('[name=name]');
+  const codeInput = form.querySelector('[name=code]');
+  nameInput.oninput = ()=>{
+    if(!codeInput.value.trim()) codeInput.placeholder = suggestFarmCode(nameInput.value) || 'e.g. SF';
+  };
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const name = form.querySelector('[name=name]').value;
+    const code = form.querySelector('[name=code]').value;
+    const err = addFarm(name, code);
+    if(err){ alert(err); return; }
+    close();
+    render();
+    alert('Farm added: ' + name.trim() + '\nเพิ่มฟาร์มแล้ว — ข้อมูลจะซิงค์ไป Google Sheet');
+  };
+}
+
 function openSheetSetupGuide(){
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
@@ -699,17 +839,22 @@ function openGoogleSheetInBrowser(){
 /* ============ PERSISTENCE ============ */
 function buildStateForStorage(){
   const documents = {};
-  FARMS.forEach(f=>{
+  getFarmList().forEach(f=>{
     documents[f] = (state.documents[f]||[]).map(d=>{
       const copy = {...d};
       if(copy.data){ copy._fileInIdb = true; delete copy.data; }
       return copy;
     });
   });
-  return { farms: state.farms, documents };
+  return {
+    farms: state.farms,
+    documents,
+    farmList: getFarmList(),
+    farmCodes: state.farmCodes || {}
+  };
 }
 function saveLocal(){
-  (state.documents && FARMS.forEach(f=>{
+  (state.documents && getFarmList().forEach(f=>{
     (state.documents[f]||[]).forEach(doc=>{
       if(doc.data) idbSetDocData(doc.id, doc.data);
     });
@@ -733,7 +878,7 @@ function loadLocal(){
 }
 async function hydrateDocumentsFromIdb(){
   if(!state || !state.documents) return;
-  for(const f of FARMS){
+  for(const f of getFarmList()){
     for(const doc of (state.documents[f]||[])){
       if((doc._fileInIdb || doc.hasLocalFile) && !doc.data){
         doc.data = await idbGetDocData(doc.id) || '';
@@ -996,7 +1141,7 @@ function importJSONFile(evt){
       state = parsed;
       fileHandle = null;
       ensureStateShape();
-      FARMS.forEach(f=>{
+      getFarmList().forEach(f=>{
         (state.documents[f]||[]).forEach(doc=>{
           if(doc.data) idbSetDocData(doc.id, doc.data);
         });
@@ -1039,7 +1184,7 @@ function numOrBlank(v){
 
 function buildWorkbook(){
   const wb = XLSX.utils.book_new();
-  FARMS.forEach(farm=>{
+  getFarmList().forEach(farm=>{
     const rows = [XLSX_HEADER];
     (state.farms[farm]||[]).forEach(rec=>{
       const c = computeRow(rec);
@@ -1069,8 +1214,14 @@ function buildWorkbook(){
 }
 
 function parseWorkbookToState(wb){
+  const skipSheets = new Set(['Dashboard', 'README', 'Documents', '_Meta']);
+  const farmNames = new Set(getFarmList());
+  wb.SheetNames.forEach(name=>{
+    if(!skipSheets.has(name)) farmNames.add(name);
+  });
+  const farmList = [...farmNames];
   const farms = {};
-  FARMS.forEach(farm=>{
+  farmList.forEach(farm=>{
     farms[farm] = [];
     const ws = wb.Sheets[farm];
     if(!ws) return;
@@ -1089,8 +1240,13 @@ function parseWorkbookToState(wb){
       farms[farm].push(rec);
     }
   });
-  const preservedDocs = (state && state.documents) ? state.documents : Object.fromEntries(FARMS.map(f=>[f,[]]));
-  return {farms, documents: preservedDocs};
+  const preservedDocs = (state && state.documents) ? state.documents : Object.fromEntries(farmList.map(f=>[f,[]]));
+  return {
+    farmList,
+    farmCodes: (state && state.farmCodes) ? state.farmCodes : {...DEFAULT_FARM_CODES},
+    farms,
+    documents: preservedDocs
+  };
 }
 
 function exportExcel(){
@@ -1149,7 +1305,7 @@ function exportCompanyExcel(companyId, month){
 /* ============ DASHBOARD COMPUTE ============ */
 function allMonths(){
   const set = new Set();
-  FARMS.forEach(f=>(state.farms[f]||[]).forEach(r=>{ const m = r.date?formatMonth(r.date):''; if(m) set.add(m); }));
+  getFarmList().forEach(f=>(state.farms[f]||[]).forEach(r=>{ const m = r.date?formatMonth(r.date):''; if(m) set.add(m); }));
   return Array.from(set).sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
 }
 function currentMonthLabel(){
@@ -1158,7 +1314,7 @@ function currentMonthLabel(){
   return months[d.getMonth()]+' '+d.getFullYear();
 }
 function computeDashboard(month){
-  const perFarm = FARMS.map(farm=>{
+  const perFarm = getFarmList().map(farm=>{
     const recs = (state.farms[farm]||[]).filter(r => (r.date?formatMonth(r.date):'') === month);
     let totalStart=0, totalBigs=0, totalPops=0, totalMold=0, pass=0, fail=0, cond=0;
     recs.forEach(r=>{
@@ -1209,7 +1365,7 @@ function renderTabs(){
     const old = document.getElementById('globalPendingBanner');
     if(old) old.remove();
   }
-  FARMS.forEach(farm=>{
+  getFarmList().forEach(farm=>{
     const pending = countPendingFarm(farm);
     const b = document.createElement('button');
     b.innerHTML = esc(farm) + (pending ? ' <span class="tab-badge">' + pending + '</span>' : '');
@@ -1377,7 +1533,7 @@ function renderAllFarmsView(){
     <div class="panel">
       <div class="helpbox" style="font-size:13px;">
         <b>All Farms — combined view</b> / <span class="bi">ทุกฟาร์มในมุมมองเดียว</span><br>
-        Every batch from all ${FARMS.length} farms in one table. Click a farm tab to add new deliveries or manage documents per farm.
+        Every batch from all ${getFarmList().length} farms in one table. Click a farm tab to add new deliveries or manage documents per farm.
         <br><span class="bi">รวมทุกรายการจากทุกฟาร์ม — กดแท็บฟาร์มเพื่อรับสินค้าใหม่หรือจัดการเอกสาร</span>
       </div>
     </div>
@@ -2124,6 +2280,7 @@ async function init(){
 
   document.getElementById('btnLinkSheet').onclick = ()=> appsScriptUrl ? openLinkSheetModal() : openSheetSetupGuide();
   document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
+  document.getElementById('btnManageFarms').onclick = ()=>{ toggleMoreMenu(false); openManageFarmsModal(); };
   document.getElementById('btnOpenSheet').onclick = openGoogleSheetInBrowser;
   document.getElementById('btnReconnect').onclick = reconnectFile;
   document.getElementById('btnReload').onclick = ()=>{

@@ -5,7 +5,7 @@
 
 const SPREADSHEET_ID = '1VRsMR7TyNXW4sSjRhsfKoK0R4DMyC9ZCrmrWvUJdoc4';
 
-const FARMS = ['Kenny', 'BB Farm', 'VT Farm', 'Extra Cannabis', 'ZaZa', 'Yang', 'Cana'];
+const DEFAULT_FARMS = ['Kenny', 'BB Farm', 'VT Farm', 'Extra Cannabis', 'ZaZa', 'Yang', 'Cana'];
 
 const META_KEYS = ['batchId'];
 const BLUE_KEYS = ['date','strain','bigsCount','popsCount','grossWt','condition','eurofinsTest','tnrTest','invoice','receivedBy','notes'];
@@ -126,14 +126,73 @@ function getSpreadsheet() {
   return SpreadsheetApp.openById(id);
 }
 
+/** Farm list stored in hidden _Meta sheet — editable from web app */
+function readFarmListFromMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return null;
+  var raw = meta.getRange('B4').getValue();
+  if (!raw) return null;
+  try {
+    var list = JSON.parse(String(raw));
+    if (Array.isArray(list) && list.length) {
+      return list.filter(function(n) { return String(n || '').trim(); }).map(String);
+    }
+  } catch (e) {}
+  return null;
+}
+
+function readFarmCodesFromMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return {};
+  var raw = meta.getRange('B5').getValue();
+  if (!raw) return {};
+  try {
+    var obj = JSON.parse(String(raw));
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch (e) {}
+  return {};
+}
+
+function getFarmList(ss) {
+  return readFarmListFromMeta(ss) || DEFAULT_FARMS.slice();
+}
+
+function writeFarmConfig(ss, farmList, farmCodes) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) {
+    meta = ss.insertSheet('_Meta');
+    meta.hideSheet();
+    meta.getRange('A1').setValue('CANA QC Tracker — do not delete');
+  }
+  if (farmList && farmList.length) {
+    meta.getRange('A4').setValue('farmList');
+    meta.getRange('B4').setValue(JSON.stringify(farmList));
+  }
+  if (farmCodes && typeof farmCodes === 'object') {
+    meta.getRange('A5').setValue('farmCodes');
+    meta.getRange('B5').setValue(JSON.stringify(farmCodes));
+  }
+}
+
+function deleteFarmSheetIfEmpty(ss, farmName, farmList) {
+  if (farmList.indexOf(farmName) >= 0) return;
+  var sheet = ss.getSheetByName(farmName);
+  if (!sheet) return;
+  if (readFarmSheet(sheet).length === 0 && readFarmDocuments(sheet).length === 0) {
+    ss.deleteSheet(sheet);
+  }
+}
+
 /* ---------- Setup / Redesign ---------- */
 
 function setupSheets() {
   var ss = getSpreadsheet();
   var existing = ss.getSheets().map(function(s) { return s.getName(); });
+  writeFarmConfig(ss, DEFAULT_FARMS.slice(), {});
+  var farmList = getFarmList(ss);
   setupReadmeTab(ss);
   setupMetaTab(ss, existing);
-  FARMS.forEach(function(farm) {
+  farmList.forEach(function(farm) {
     if (existing.indexOf(farm) === -1) ss.insertSheet(farm);
     writeFarmSheet(ss.getSheetByName(farm), [], []);
   });
@@ -154,8 +213,9 @@ function migrateV4Sheets() { redesignSheets(); }
 
 function upgradeSheetHeaders() {
   var ss = getSpreadsheet();
-  var allDocs = readDocuments(ss);
-  FARMS.forEach(function(farm) {
+  var farmList = getFarmList(ss);
+  var allDocs = readDocuments(ss, farmList);
+  farmList.forEach(function(farm) {
     var sheet = ss.getSheetByName(farm);
     if (!sheet) return;
     var records = readFarmSheet(sheet);
@@ -164,7 +224,7 @@ function upgradeSheetHeaders() {
     Logger.log(farm + ': ' + records.length + ' QC + ' + docs.length + ' doc(s)');
   });
   setupReadmeTab(ss);
-  if (allDocs) writeDocuments(ss, allDocs);
+  if (allDocs) writeDocuments(ss, allDocs, farmList);
   updateDashboard(ss);
   orderTabs(ss);
   SpreadsheetApp.flush();
@@ -172,7 +232,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents'].concat(FARMS);
+  var order = ['README', 'Dashboard', 'Documents'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -204,6 +264,7 @@ function setupReadmeTab(ss) {
     ['Step', 'Action', 'Who'],
     ['1', 'Extensions → Apps Script → paste CANA_QC_GoogleAppsScript.gs', 'Admin'],
     ['2', 'Run → setupSheets (first time) or upgradeFarmDocumentTables (docs beside QC)', 'Admin'],
+    ['2b', 'More → Manage Farms in web app to add new supplier farms (syncs to sheet)', 'Admin'],
     ['3', 'Deploy → Web app → Execute as Me → Who has access: Anyone → copy /exec URL', 'Admin'],
     ['4', 'Paste URL in Vercel config.json + app Connect modal', 'Admin'],
     ['5', 'Share this sheet with all staff as Editor', 'Admin'],
@@ -394,11 +455,19 @@ function formatFarmSheet(sheet) {
 
 function readAllFarms() {
   var ss = getSpreadsheet();
+  var farmList = getFarmList(ss);
   var farms = {};
-  FARMS.forEach(function(farm) {
+  farmList.forEach(function(farm) {
     farms[farm] = readFarmSheet(ss.getSheetByName(farm));
   });
-  return { ok: true, farms: farms, documents: readDocuments(ss), readAt: new Date().toISOString() };
+  return {
+    ok: true,
+    farms: farms,
+    documents: readDocuments(ss, farmList),
+    farmList: farmList,
+    farmCodes: readFarmCodesFromMeta(ss),
+    readAt: new Date().toISOString()
+  };
 }
 
 function readFarmSheet(sheet) {
@@ -440,15 +509,24 @@ function isEmptyDataRow(row, hasIdCol) {
 
 function writeAllFarms(state) {
   var ss = getSpreadsheet();
-  FARMS.forEach(function(farm) {
+  var farmList = (state.farmList && state.farmList.length) ? state.farmList : getFarmList(ss);
+  if (state.farmList && state.farmList.length) {
+    writeFarmConfig(ss, state.farmList, state.farmCodes || {});
+  }
+  farmList.forEach(function(farm) {
     var records = (state.farms && state.farms[farm]) ? state.farms[farm] : [];
     var docs = (state.documents && state.documents[farm]) ? state.documents[farm] : [];
     var sheet = ss.getSheetByName(farm) || ss.insertSheet(farm);
     writeFarmSheet(sheet, records, docs);
   });
-  if (state.documents) writeDocuments(ss, state.documents);
+  ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
+    if (['README', 'Dashboard', 'Documents', '_Meta'].indexOf(name) >= 0) return;
+    deleteFarmSheetIfEmpty(ss, name, farmList);
+  });
+  if (state.documents) writeDocuments(ss, state.documents, farmList);
   updateMeta(ss);
   updateDashboard(ss);
+  orderTabs(ss);
 }
 
 /* ---------- Per-farm document table (right of QC table) ---------- */
@@ -622,15 +700,16 @@ function formatDocumentsSheet(sheet, numRows) {
 /** Run once — adds document tables beside QC on every farm tab */
 function upgradeFarmDocumentTables() {
   var ss = getSpreadsheet();
-  var docs = readDocuments(ss);
-  FARMS.forEach(function(farm) {
+  var farmList = getFarmList(ss);
+  var docs = readDocuments(ss, farmList);
+  farmList.forEach(function(farm) {
     var sheet = ss.getSheetByName(farm);
     if (!sheet) return;
     var records = readFarmSheet(sheet);
     writeFarmSheet(sheet, records, docs[farm] || []);
     Logger.log(farm + ': document table added (' + (docs[farm] || []).length + ' doc(s))');
   });
-  writeDocuments(ss, docs);
+  writeDocuments(ss, docs, farmList);
   orderTabs(ss);
   SpreadsheetApp.flush();
   Logger.log('Farm document tables ready.');
@@ -641,17 +720,19 @@ function upgradeDocumentsTab() {
   upgradeFarmDocumentTables();
 }
 
-function countDocuments(documents) {
+function countDocuments(documents, farmList) {
   var n = 0;
-  FARMS.forEach(function(f) { n += (documents[f] || []).length; });
+  farmList = farmList || DEFAULT_FARMS;
+  farmList.forEach(function(f) { n += (documents[f] || []).length; });
   return n;
 }
 
-function readDocuments(ss) {
+function readDocuments(ss, farmList) {
+  farmList = farmList || getFarmList(ss);
   var documents = {};
   var fromFarmTabs = false;
-  FARMS.forEach(function(f) { documents[f] = []; });
-  FARMS.forEach(function(farm) {
+  farmList.forEach(function(f) { documents[f] = []; });
+  farmList.forEach(function(farm) {
     var sheet = ss.getSheetByName(farm);
     if (hasFarmDocSection(sheet)) {
       documents[farm] = readFarmDocuments(sheet);
@@ -668,7 +749,7 @@ function readDocuments(ss) {
   values.forEach(function(row) {
     if (!row[0] && !row[2]) return;
     var farm = String(row[1] || '');
-    if (FARMS.indexOf(farm) === -1) return;
+    if (farmList.indexOf(farm) === -1) return;
     var urlVal = String(row[5] || '');
     if (urlVal.indexOf('HYPERLINK') >= 0) {
       var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
@@ -693,11 +774,12 @@ function readDocuments(ss) {
   return documents;
 }
 
-function writeDocuments(ss, documents) {
+function writeDocuments(ss, documents, farmList) {
+  farmList = farmList || getFarmList(ss);
   setupDocumentsTab(ss);
   var sheet = ss.getSheetByName('Documents');
   var rows = [];
-  FARMS.forEach(function(farm) {
+  farmList.forEach(function(farm) {
     var list = (documents && documents[farm]) ? documents[farm] : [];
     list.forEach(function(doc) {
       rows.push([
@@ -775,7 +857,7 @@ function updateMeta(ss) {
 function collectDashboardStats(ss) {
   var rows = [];
   var totals = { batches: 0, start: 0, flower: 0, pass: 0, fail: 0, cond: 0, pending: 0 };
-  FARMS.forEach(function(farm) {
+  getFarmList(ss).forEach(function(farm) {
     var recs = readFarmSheet(ss.getSheetByName(farm));
     var totalStart = 0, totalFlower = 0, pass = 0, fail = 0, cond = 0, pending = 0;
     recs.forEach(function(r) {
