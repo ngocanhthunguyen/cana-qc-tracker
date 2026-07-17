@@ -406,7 +406,6 @@ async function callAppsScript(payload){
   const res = await fetch(appsScriptUrl, {
     method: 'POST',
     mode: 'cors',
-    credentials: 'include',
     redirect: 'follow',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(payload)
@@ -423,7 +422,7 @@ async function pullFromGoogleSheet(silent){
   if(localDirty || sheetSaveInFlight) return;
   try{
     const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
-    const res = await fetch(url, { mode: 'cors', credentials: 'include', redirect: 'follow' });
+    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
     const text = await res.text();
     if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
     let data;
@@ -1897,7 +1896,7 @@ async function loadRemoteConfig(){
 async function testSheetConnection(){
   if(!appsScriptUrl) throw new Error('No Web App URL set');
   const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
-  const res = await fetch(url, { mode: 'cors', credentials: 'include', redirect: 'follow' });
+  const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
   const text = await res.text();
   if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
   let data;
