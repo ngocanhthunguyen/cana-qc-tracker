@@ -33,6 +33,7 @@ let lastRemoteJson = '';
 let lastSyncTime = '';
 let sheetSyncActive = false;
 let sheetSyncOk = false;
+let farmNavOpen = false;
 
 /* ============ COMPUTE ============ */
 function num(v){
@@ -205,6 +206,7 @@ function renderLabTestBadges(rec){
   return `<span style="display:inline-flex;gap:4px;flex-wrap:wrap;">${parts.join('')}</span>`;
 }
 function resetSheetConnection(){
+  if(!requireAdmin('reset sheet connection')) return;
   localStorage.removeItem(APPS_SCRIPT_URL_KEY);
   localStorage.removeItem(SHEET_VIEW_URL_KEY);
   appsScriptUrl = '';
@@ -269,11 +271,122 @@ function updateConnPill(){
   }
   const openBtn = document.getElementById('btnOpenSheet');
   if(openBtn) openBtn.style.display = appsScriptUrl ? '' : 'none';
+  updateAdminUI();
+}
+function isAdmin(){
+  try{
+    const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
+    if(!raw) return false;
+    const exp = Number(raw);
+    if(!exp || Date.now() > exp) {
+      sessionStorage.removeItem(ADMIN_SESSION_KEY);
+      return false;
+    }
+    return true;
+  }catch(e){ return false; }
+}
+function setAdminSession(active){
+  if(active) sessionStorage.setItem(ADMIN_SESSION_KEY, String(Date.now() + ADMIN_SESSION_MS));
+  else sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  updateAdminUI();
+}
+function updateAdminUI(){
+  document.body.classList.toggle('admin-mode', isAdmin());
+  const btn = document.getElementById('btnAdmin');
+  if(btn){
+    btn.textContent = isAdmin() ? '🔒 Admin ✓' : '🔓 Admin';
+    btn.title = isAdmin() ? 'Manager mode active (click to lock)' : 'Unlock manager settings';
+  }
+  document.querySelectorAll('.admin-only').forEach(el=>{
+    el.style.display = isAdmin() ? '' : 'none';
+  });
+  const linkBtn = document.getElementById('btnLinkSheet');
+  if(linkBtn && !appsScriptUrl) linkBtn.style.display = ''; // first-time sheet setup
+}
+/** Returns true if allowed; false if blocked (may open PIN modal). */
+function requireAdmin(reason, onSuccess){
+  if(isAdmin()) return true;
+  if(!appsScriptUrl && reason === 'first-time setup') return true;
+  openAdminUnlockModal(onSuccess, reason);
+  return false;
+}
+async function verifyAdminPinRemote(pin){
+  if(!appsScriptUrl) throw new Error('Connect Google Sheet first to verify admin PIN');
+  const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?')
+    + 'action=verifyAdmin&pin=' + encodeURIComponent(pin) + '&_=' + Date.now();
+  const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); }
+  catch(e){ throw new Error('Could not verify PIN — redeploy Apps Script with admin support'); }
+  if(!data.ok) throw new Error(data.error || 'Incorrect PIN');
+  return true;
+}
+async function checkAdminPinConfigured(){
+  if(!appsScriptUrl) return false;
+  try{
+    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=adminStatus&_=' + Date.now();
+    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+    const data = JSON.parse(await res.text());
+    return !!(data.ok && data.hasPin);
+  }catch(e){ return false; }
+}
+function openAdminUnlockModal(onSuccess, reason){
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const why = reason ? `<div class="ctx">Required for: <b>${esc(reason)}</b></div>` : '';
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:400px">
+      <h2>🔓 Manager unlock</h2>
+      <div class="sub">Staff mode is active — enter admin PIN for settings &amp; delete actions<br>โหมดทั่วไป — ใส่ PIN ผู้จัดการสำหรับการตั้งค่า</div>
+      ${why}
+      <form id="adminPinForm">
+        <label>PIN
+          <input type="password" name="pin" inputmode="numeric" autocomplete="off" required minlength="4" placeholder="••••" autofocus>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCancelAdmin">Cancel</button>
+          <button type="submit" class="primary">Unlock</button>
+        </div>
+      </form>
+      <p class="farm-add-hint" style="margin-top:14px">First time? In Apps Script run <b>setAdminPin('your-pin')</b> then redeploy.</p>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCancelAdmin').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#adminPinForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const pin = root.querySelector('[name=pin]').value;
+    try{
+      await verifyAdminPinRemote(pin);
+      setAdminSession(true);
+      close();
+      if(typeof onSuccess === 'function') onSuccess();
+      else updateAdminUI();
+    }catch(err){
+      alert(err.message || 'Incorrect PIN');
+    }
+  };
+}
+function toggleAdminSession(){
+  if(isAdmin()){
+    if(confirm('Lock manager mode?\nล็อกโหมde ผู้จัดการ?')) setAdminSession(false);
+    return;
+  }
+  openAdminUnlockModal();
 }
 function toggleMoreMenu(open){
   const menu = document.getElementById('moreMenu');
   if(!menu) return;
   menu.classList.toggle('open', open !== undefined ? open : !menu.classList.contains('open'));
+  if(menu.classList.contains('open')) farmNavOpen = false;
+}
+function closeFarmNav(){
+  farmNavOpen = false;
+  const picker = document.querySelector('.farm-picker');
+  if(picker) picker.classList.remove('open');
 }
 function ensureStateShape(){
   if(!state.farms) state.farms = {};
@@ -630,11 +743,20 @@ function addFarm(name, code){
   onDataChanged();
   return '';
 }
-function removeFarm(farm){
+function removeFarm(farm, opts){
+  opts = opts || {};
+  if(!requireAdmin('remove farm')) return 'blocked';
+  if(getFarmList().length <= 1) return 'Cannot remove the last farm / ลบฟาร์มสุดท้ายไม่ได้';
   const recs = (state.farms[farm]||[]).length;
   const docs = (state.documents[farm]||[]).length;
-  if(recs || docs) return 'Remove all QC records and documents first / ลบข้อมูล QC และเอกสารก่อน';
-  if(getFarmList().length <= 1) return 'Cannot remove the last farm / ลบฟาร์มสุดท้ายไม่ได้';
+  if((recs || docs) && !opts.force){
+    return 'Use Delete farm and confirm — this farm still has ' + recs + ' QC and ' + docs + ' document(s).';
+  }
+  if(opts.force && (recs || docs)){
+    (state.documents[farm]||[]).forEach(doc=>{
+      if(doc && doc.id) idbDeleteDocData(doc.id);
+    });
+  }
   state.farmList = getFarmList().filter(f=>f!==farm);
   delete state.farms[farm];
   delete state.documents[farm];
@@ -646,7 +768,30 @@ function removeFarm(farm){
   onDataChanged();
   return '';
 }
+function confirmRemoveFarm(farm, onDone){
+  if(!requireAdmin('delete farm', ()=> confirmRemoveFarm(farm, onDone))) return;
+  if(getFarmList().length <= 1){
+    alert('Cannot remove the last farm / ลบฟาร์มสุดท้ายไม่ได้');
+    return;
+  }
+  const recs = (state.farms[farm]||[]).length;
+  const docs = (state.documents[farm]||[]).length;
+  const hasData = recs || docs;
+  if(hasData){
+    const msg = 'Delete farm "' + farm + '" and ALL ' + recs + ' QC record(s) + ' + docs + ' document(s)?\nThis cannot be undone.\n\nType the farm name to confirm:\nพิมพ์ชื่อฟาร์มเพื่อยืนยัน: "' + farm + '"';
+    const typed = prompt(msg, '');
+    if(typed !== farm) return;
+  } else if(!confirm('Delete farm "' + farm + '"?\nลบฟาร์ม "' + farm + '"?')) {
+    return;
+  }
+  const err = removeFarm(farm, { force: hasData });
+  if(err === 'blocked') return;
+  if(err){ alert(err); return; }
+  if(typeof onDone === 'function') onDone();
+  else render();
+}
 function openManageFarmsModal(){
+  if(!requireAdmin('manage farms', ()=> openManageFarmsModal())) return;
   modalDirty = true;
   const root = document.getElementById('modalRoot');
   const list = getFarmList();
@@ -659,13 +804,13 @@ function openManageFarmsModal(){
         ${list.map(f=>{
           const n = (state.farms[f]||[]).length;
           const d = (state.documents[f]||[]).length;
-          const empty = !n && !d;
+          const canDelete = list.length > 1;
           return `<div class="farm-manage-row">
             <div>
               <strong>${esc(f)}</strong>
               <span class="farm-manage-meta">Batch code: ${esc(farmCode(f))} · ${n} QC · ${d} docs</span>
             </div>
-            ${empty ? `<button type="button" class="small danger" data-remove-farm="${esc(f)}">Remove</button>` : `<span class="farm-manage-meta" title="Clear data first">Has data</span>`}
+            ${canDelete ? `<button type="button" class="small danger admin-only" data-remove-farm="${esc(f)}" title="${n||d ? 'Deletes all QC & docs for this farm' : 'Remove empty farm'}">Delete</button>` : ''}
           </div>`;
         }).join('')}
       </div>
@@ -690,11 +835,7 @@ function openManageFarmsModal(){
   root.querySelectorAll('[data-remove-farm]').forEach(btn=>{
     btn.onclick = ()=>{
       const farm = btn.dataset.removeFarm;
-      if(!confirm('Remove farm "' + farm + '"?\nลบฟาร์ม "' + farm + '"?')) return;
-      const err = removeFarm(farm);
-      if(err){ alert(err); return; }
-      close();
-      render();
+      confirmRemoveFarm(farm, ()=>{ close(); render(); });
     };
   });
   const form = root.querySelector('#addFarmForm');
@@ -716,6 +857,7 @@ function openManageFarmsModal(){
 }
 
 function openSheetSetupGuide(){
+  if(appsScriptUrl && !requireAdmin('Google Sheet setup', ()=> openSheetSetupGuide())) return;
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
   <div class="overlay" id="overlay">
@@ -761,6 +903,7 @@ function openSheetSetupGuide(){
   document.getElementById('btnGuideLink').onclick = ()=>{ closeModal(); openLinkSheetModal(); };
 }
 function openLinkSheetModal(){
+  if(!requireAdmin('Google Sheet connection', ()=> openLinkSheetModal())) return;
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
   <div class="overlay" id="overlay">
@@ -1346,6 +1489,7 @@ function render(){
   else if(currentView==='allFarms') renderAllFarmsView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
+  updateAdminUI();
 }
 
 function renderTabs(){
@@ -1365,24 +1509,92 @@ function renderTabs(){
     const old = document.getElementById('globalPendingBanner');
     if(old) old.remove();
   }
-  getFarmList().forEach(farm=>{
-    const pending = countPendingFarm(farm);
+
+  function navBtn(label, active, onClick){
     const b = document.createElement('button');
-    b.innerHTML = esc(farm) + (pending ? ' <span class="tab-badge">' + pending + '</span>' : '');
-    b.className = (currentView==='farm' && currentFarm===farm) ? 'active' : '';
-    b.onclick = () => { currentView='farm'; currentFarm=farm; render(); };
-    nav.appendChild(b);
+    b.type = 'button';
+    b.innerHTML = label;
+    b.className = active ? 'active' : '';
+    b.onclick = ()=>{ farmNavOpen = false; onClick(); };
+    return b;
+  }
+
+  nav.appendChild(navBtn('📊 Dashboard', currentView === 'dashboard', ()=>{ currentView = 'dashboard'; render(); }));
+  nav.appendChild(navBtn('🌐 All Farms', currentView === 'allFarms', ()=>{ currentView = 'allFarms'; render(); }));
+
+  const divider = document.createElement('span');
+  divider.className = 'nav-divider';
+  divider.setAttribute('aria-hidden', 'true');
+  nav.appendChild(divider);
+
+  const farms = getFarmList();
+  const farmPendingTotal = farms.reduce((n, f)=> n + countPendingFarm(f), 0);
+  const triggerLabel = currentView === 'farm' ? currentFarm : 'Select farm';
+  const picker = document.createElement('div');
+  picker.className = 'farm-picker' + (farmNavOpen ? ' open' : '');
+  picker.innerHTML = `
+    <button type="button" class="farm-picker-trigger ${currentView === 'farm' ? 'active' : ''}" id="farmPickerTrigger" aria-haspopup="listbox" aria-expanded="${farmNavOpen}">
+      <span class="farm-picker-icon" aria-hidden="true">🏡</span>
+      <span class="farm-picker-label">${esc(triggerLabel)}</span>
+      ${farmPendingTotal ? `<span class="tab-badge">${farmPendingTotal}</span>` : ''}
+      <span class="farm-picker-chevron" aria-hidden="true">▾</span>
+    </button>
+    <div class="farm-picker-menu" role="listbox">
+      ${farms.map(farm=>{
+        const pending = countPendingFarm(farm);
+        const selected = currentView === 'farm' && currentFarm === farm;
+        return `<button type="button" class="farm-picker-item ${selected ? 'selected' : ''}" data-farm="${esc(farm)}" role="option" aria-selected="${selected}">
+          <span class="farm-picker-check">${selected ? '✓' : ''}</span>
+          <span class="farm-picker-name">${esc(farm)}</span>
+          ${pending ? `<span class="tab-badge">${pending}</span>` : ''}
+        </button>`;
+      }).join('')}
+      <div class="farm-picker-footer admin-only">
+        <button type="button" class="farm-picker-manage" id="btnManageFarmsNav">⚙ Manage farms</button>
+      </div>
+    </div>`;
+  nav.appendChild(picker);
+
+  const spacer = document.createElement('span');
+  spacer.className = 'nav-spacer';
+  nav.appendChild(spacer);
+
+  if(totalPending > 0){
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'nav-pending-pill';
+    pill.innerHTML = `<span class="nav-pending-dot"></span>${totalPending} pending QC`;
+    pill.onclick = ()=>{ currentView = 'allFarms'; pendingOnly = true; farmNavOpen = false; render(); };
+    nav.appendChild(pill);
+  }
+
+  const trigger = picker.querySelector('#farmPickerTrigger');
+  if(trigger){
+    trigger.onclick = (e)=>{
+      e.stopPropagation();
+      farmNavOpen = !farmNavOpen;
+      picker.classList.toggle('open', farmNavOpen);
+      trigger.setAttribute('aria-expanded', farmNavOpen);
+    };
+  }
+  picker.querySelectorAll('[data-farm]').forEach(btn=>{
+    btn.onclick = (e)=>{
+      e.stopPropagation();
+      farmNavOpen = false;
+      currentView = 'farm';
+      currentFarm = btn.dataset.farm;
+      currentFarmTab = 'qc';
+      render();
+    };
   });
-  const all = document.createElement('button');
-  all.innerHTML = '🌐 All Farms <span class="bi">/ ทุกฟาร์ม</span>';
-  all.className = currentView==='allFarms' ? 'active' : '';
-  all.onclick = () => { currentView='allFarms'; render(); };
-  nav.insertBefore(all, nav.firstChild);
-  const d = document.createElement('button');
-  d.innerHTML = '📊 Main Dashboard <span class="bi">/ แดชบอร์ดหลัก</span>';
-  d.className = currentView==='dashboard' ? 'active' : '';
-  d.onclick = () => { currentView='dashboard'; render(); };
-  nav.insertBefore(d, nav.firstChild);
+  const manageNav = picker.querySelector('#btnManageFarmsNav');
+  if(manageNav){
+    manageNav.onclick = (e)=>{
+      e.stopPropagation();
+      farmNavOpen = false;
+      openManageFarmsModal();
+    };
+  }
 }
 
 /* ============ RENDER: FARM VIEW ============ */
@@ -1431,6 +1643,7 @@ function renderFarmView(){
           <button class="${viewMode==='compact'?'active':''}" id="btnViewCompact">Compact / กระทัดรัด</button>
           <button class="${viewMode==='full'?'active':''}" id="btnViewFull">Full table / ตารางเต็ม</button>
         </div>
+        ${getFarmList().length > 1 ? `<button type="button" class="small danger admin-only" id="btnDeleteCurrentFarm" title="Remove this farm (admin PIN)">🗑 Delete farm</button>` : ''}
       </div>
       <div style="font-size:12.5px;color:var(--muted);">${filtered.length} of ${records.length} record(s) — ${esc(currentFarm)}</div>
     </div>
@@ -1467,6 +1680,8 @@ function renderFarmView(){
   document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; renderFarmView(); };
   if(document.getElementById('btnShowPending')) document.getElementById('btnShowPending').onclick = ()=>{ pendingOnly=true; renderFarmView(); };
   if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; renderFarmView(); };
+  const btnDelFarm = document.getElementById('btnDeleteCurrentFarm');
+  if(btnDelFarm) btnDelFarm.onclick = ()=> confirmRemoveFarm(currentFarm);
   bindRowActions(main);
 }
 
@@ -1600,7 +1815,6 @@ function renderFarmDocuments(){
 
     <div class="doc-header">
       <h3>📁 Document Library — ${esc(currentFarm)}</h3>
-      <p>Professional document tracking for invoices, COAs, lab reports, and contracts. Metadata and Google Drive links sync to the <b>Documents</b> tab in Google Sheet for your whole team.</p>
       <div class="doc-header-meta">
         <span class="doc-badge">${docs.length} document${docs.length===1?'':'s'}</span>
         <span class="doc-badge">${linkedCount} team link${linkedCount===1?'':'s'}</span>
@@ -1679,7 +1893,7 @@ function renderDocCard(doc){
     <div class="doc-actions">
       ${hasFile ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
       <button class="small" data-edit-doc="${doc.id}">Edit / แก้ไข</button>
-      <button class="small danger" data-delete-doc="${doc.id}">Delete / ลบ</button>
+        <button class="small danger admin-only" data-delete-doc="${doc.id}">Delete / ลบ</button>
     </div>
   </div>`;
 }
@@ -1789,6 +2003,7 @@ async function handleDocUploadInput(evt){
 }
 
 function deleteDocument(id){
+  if(!requireAdmin('delete document', ()=> deleteDocument(id))) return;
   const doc = state.documents[currentFarm].find(d=>d.id===id);
   if(!doc) return;
   const label = doc.title || doc.fileName || 'this document';
@@ -1885,7 +2100,7 @@ function renderCompactTable(records){
       <td><div class="action-group">
         <button class="small" data-edit-delivery="${rec.id}">Edit</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
-        <button class="small danger" data-delete="${rec.id}">Del</button>
+        <button class="small danger admin-only" data-delete="${rec.id}">Del</button>
       </div></td>
     </tr>${expanded ? renderExpandedDetail(rec) : ''}`;
   }).join('') + '</tbody>';
@@ -1917,7 +2132,7 @@ function renderCardList(records){
       <div class="action-group">
         <button class="small" data-edit-delivery="${rec.id}">Edit Delivery</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'Edit QC'}</button>
-        <button class="small danger" data-delete="${rec.id}">Delete</button>
+        <button class="small danger admin-only" data-delete="${rec.id}">Delete</button>
       </div>
     </div>`;
   }).join('');
@@ -1974,7 +2189,7 @@ function renderFullTable(records){
       <td><div class="action-group">
         <button class="small" data-edit-delivery="${rec.id}">Edit</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
-        <button class="small danger" data-delete="${rec.id}">Del</button>
+        <button class="small danger admin-only" data-delete="${rec.id}">Del</button>
       </div></td>
     </tr>`;
   }).join('') + '</tbody>';
@@ -2145,6 +2360,7 @@ function fieldHtml(c, value){
 function closeModal(){ modalDirty = false; document.getElementById('modalRoot').innerHTML = ''; }
 
 function deleteRecord(id){
+  if(!requireAdmin('delete QC record', ()=> deleteRecord(id))) return;
   const rec = state.farms[currentFarm].find(r=>r.id===id);
   if(!rec) return;
   const label = rec.strain || getBatchId(rec, currentFarm);
@@ -2278,7 +2494,11 @@ async function init(){
   await hydrateDocumentsFromIdb();
   await loadRemoteConfig();
 
-  document.getElementById('btnLinkSheet').onclick = ()=> appsScriptUrl ? openLinkSheetModal() : openSheetSetupGuide();
+  document.getElementById('btnLinkSheet').onclick = ()=>{
+    if(!appsScriptUrl) openSheetSetupGuide();
+    else if(requireAdmin('Google Sheet settings', openLinkSheetModal)) openLinkSheetModal();
+  };
+  document.getElementById('btnAdmin').onclick = toggleAdminSession;
   document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
   document.getElementById('btnManageFarms').onclick = ()=>{ toggleMoreMenu(false); openManageFarmsModal(); };
   document.getElementById('btnOpenSheet').onclick = openGoogleSheetInBrowser;
@@ -2292,15 +2512,25 @@ async function init(){
     else saveDataFile();
   };
   document.getElementById('btnExportJSON').onclick = exportJSON;
-  document.getElementById('btnImportJSON').onclick = ()=> document.getElementById('fileImportInput').click();
+  document.getElementById('btnImportJSON').onclick = ()=>{
+    toggleMoreMenu(false);
+    if(!requireAdmin('import JSON', ()=> document.getElementById('fileImportInput').click())) return;
+    document.getElementById('fileImportInput').click();
+  };
   document.getElementById('fileImportInput').onchange = importJSONFile;
   document.getElementById('btnExportExcel').onclick = exportExcel;
-  document.getElementById('btnOpenFileMob').onclick = ()=>{ toggleMoreMenu(false); openDataFile(); };
+  document.getElementById('btnOpenFileMob').onclick = ()=>{
+    toggleMoreMenu(false);
+    if(!requireAdmin('link Excel file', openDataFile)) return;
+    openDataFile();
+  };
   document.getElementById('btnMore').onclick = (e)=>{ e.stopPropagation(); toggleMoreMenu(); };
   document.getElementById('docUploadInput').onchange = handleDocUploadInput;
   document.addEventListener('click', (e)=>{
     const menu = document.getElementById('moreMenu');
     if(menu && !menu.contains(e.target)) toggleMoreMenu(false);
+    const picker = document.querySelector('.farm-picker');
+    if(picker && !picker.contains(e.target)) closeFarmNav();
   });
 
   // auto-refresh when staff switch back to this tab/window
@@ -2321,6 +2551,7 @@ async function init(){
 
   render();
   updateConnPill();
+  updateAdminUI();
   if(appsScriptUrl){
     startSheetPolling();
     pullFromGoogleSheet(true).then(()=>{

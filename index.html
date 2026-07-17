@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CANA QC Tracker</title>
+<title>Canaaustralasia</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,11 +14,12 @@
 <header>
   <div class="titlebar">
     <div class="brand">
-      <h1>CANA QC Tracker <span>Main dashboard · all farms · monthly exports · blue = manager, purple = QC</span></h1>
+      <h1>Canaaustralasia</h1>
     </div>
     <div class="toolbar">
       <span class="conn-pill off" id="connPill">Not linked</span>
-      <button id="btnLinkSheet" class="primary" title="Connect to shared Google Sheet for real-time team sync">📗 Google Sheet <span class="bi">/ เชื่อมชีต</span></button>
+      <button id="btnAdmin" type="button" title="Manager unlock for settings">🔓 Admin</button>
+      <button id="btnLinkSheet" class="primary admin-only" title="Connect to shared Google Sheet for real-time team sync">📗 Google Sheet <span class="bi">/ เชื่อมชีต</span></button>
       <button id="btnReconnect" style="display:none;" title="Re-grant access to the previously linked file"></button>
       <button id="btnSaveFile" title="Save now">💾 Save <span class="bi">/ บันทึก</span></button>
       <button id="btnReload" title="Pull latest data now">🔄 Reload</button>
@@ -26,11 +27,11 @@
       <div class="more-menu" id="moreMenu">
         <button id="btnMore" type="button">⋯ More</button>
         <div class="dropdown">
-          <button id="btnOpenFileMob" type="button">🔗 Link Excel File</button>
-          <button id="btnManageFarms" type="button">🏡 Manage Farms</button>
-          <button id="btnSetupGuide" type="button">📖 Google Sheet Setup</button>
+          <button id="btnOpenFileMob" type="button" class="admin-only">🔗 Link Excel File</button>
+          <button id="btnManageFarms" type="button" class="admin-only">🏡 Manage Farms</button>
+          <button id="btnSetupGuide" type="button" class="admin-only">📖 Google Sheet Setup</button>
           <button id="btnExportJSON" type="button">⬇ Export JSON</button>
-          <button id="btnImportJSON" type="button">⬆ Import JSON</button>
+          <button id="btnImportJSON" type="button" class="admin-only">⬆ Import JSON</button>
           <button id="btnExportExcel" type="button">📊 Export Excel Copy</button>
         </div>
       </div>

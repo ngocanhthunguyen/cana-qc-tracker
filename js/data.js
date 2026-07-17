@@ -88,6 +88,8 @@ const GREY_COLS = [
 const STORAGE_KEY = 'cana_qc_tracker_v1';
 const APPS_SCRIPT_URL_KEY = 'cana_qc_apps_script_url';
 const SHEET_VIEW_URL_KEY = 'cana_qc_sheet_view_url';
+const ADMIN_SESSION_KEY = 'cana_qc_admin_session';
+const ADMIN_SESSION_MS = 8 * 60 * 60 * 1000; // 8 hours
 const SHEET_POLL_MS = 6000;
 
 function defaultState(){

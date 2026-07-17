@@ -63,7 +63,44 @@ function doGet(e) {
   if (e && e.parameter && e.parameter.action === 'write' && e.parameter.payload) {
     return jsonOut(handleWriteRequest(String(e.parameter.payload)));
   }
+  if (e && e.parameter && e.parameter.action === 'adminStatus') {
+    return jsonOut({ ok: true, hasPin: !!getAdminPinHash() });
+  }
+  if (e && e.parameter && e.parameter.action === 'verifyAdmin' && e.parameter.pin) {
+    return jsonOut(verifyAdminPin(String(e.parameter.pin)));
+  }
   return jsonOut({ ok: true, message: 'CANA QC Tracker API' });
+}
+
+/** Run once in Apps Script: setAdminPin('your-secret-pin') */
+function setAdminPin(pin) {
+  pin = String(pin || '').trim();
+  if (!pin) throw new Error('No PIN provided. Run setAdminPinOnce() instead (see bottom of this file).');
+  if (pin.length < 4) throw new Error('PIN must be at least 4 characters (you sent ' + pin.length + ')');
+  PropertiesService.getScriptProperties().setProperty('ADMIN_PIN_HASH', hashAdminPin(pin));
+  Logger.log('Admin PIN set. Share only with managers.');
+}
+
+/** ← Select THIS in the Run menu, then click Run. Change the PIN below first. */
+function setAdminPinOnce() {
+  setAdminPin('blck'); // change to your manager PIN (min 4 characters)
+}
+
+function getAdminPinHash() {
+  return PropertiesService.getScriptProperties().getProperty('ADMIN_PIN_HASH');
+}
+
+function hashAdminPin(pin) {
+  return Utilities.base64Encode(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(pin))
+  );
+}
+
+function verifyAdminPin(pin) {
+  var stored = getAdminPinHash();
+  if (!stored) return { ok: false, error: 'Admin PIN not configured. Run setAdminPin in Apps Script.' };
+  if (hashAdminPin(pin) === stored) return { ok: true };
+  return { ok: false, error: 'Incorrect PIN' };
 }
 
 function handleWriteRequest(payloadB64) {
@@ -174,13 +211,11 @@ function writeFarmConfig(ss, farmList, farmCodes) {
   }
 }
 
-function deleteFarmSheetIfEmpty(ss, farmName, farmList) {
+function deleteOrphanFarmSheet(ss, farmName, farmList) {
   if (farmList.indexOf(farmName) >= 0) return;
   var sheet = ss.getSheetByName(farmName);
   if (!sheet) return;
-  if (readFarmSheet(sheet).length === 0 && readFarmDocuments(sheet).length === 0) {
-    ss.deleteSheet(sheet);
-  }
+  ss.deleteSheet(sheet);
 }
 
 /* ---------- Setup / Redesign ---------- */
@@ -265,11 +300,12 @@ function setupReadmeTab(ss) {
     ['1', 'Extensions → Apps Script → paste CANA_QC_GoogleAppsScript.gs', 'Admin'],
     ['2', 'Run → setupSheets (first time) or upgradeFarmDocumentTables (docs beside QC)', 'Admin'],
     ['2b', 'More → Manage Farms in web app to add new supplier farms (syncs to sheet)', 'Admin'],
-    ['3', 'Deploy → Web app → Execute as Me → Who has access: Anyone → copy /exec URL', 'Admin'],
-    ['4', 'Paste URL in Vercel config.json + app Connect modal', 'Admin'],
-    ['5', 'Share this sheet with all staff as Editor', 'Admin'],
-    ['6', 'Use the web app for daily QC — sheet updates automatically', 'All team'],
-    ['7', 'Documents: upload files to Google Drive → paste link in app → syncs to Documents tab', 'All team']
+    ['3', 'Run setAdminPin("your-pin") once in Apps Script — protects settings from accidental clicks', 'Admin'],
+    ['4', 'Deploy → Web app → Execute as Me → Who has access: Anyone → copy /exec URL', 'Admin'],
+    ['5', 'Paste URL in Vercel config.json + app Connect modal', 'Admin'],
+    ['6', 'Share this sheet with all staff as Editor', 'Admin'],
+    ['7', 'Staff: daily QC in web app · Managers: click Admin + PIN for farms/settings', 'All team'],
+    ['8', 'Documents: upload files to Google Drive → paste link in app → syncs to Documents tab', 'All team']
   ];
   sheet.getRange(4, 1, steps.length, 3).setValues(steps);
   sheet.getRange(4, 1, 1, 3).setBackground(THEME.blueHeader).setFontColor(THEME.white).setFontWeight('bold');
@@ -521,7 +557,7 @@ function writeAllFarms(state) {
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
     if (['README', 'Dashboard', 'Documents', '_Meta'].indexOf(name) >= 0) return;
-    deleteFarmSheetIfEmpty(ss, name, farmList);
+    deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
   updateMeta(ss);
