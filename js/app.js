@@ -294,69 +294,212 @@ function updateConnPill(){
   if(openBtn) openBtn.style.display = (appsScriptUrl && isAdmin()) ? '' : 'none';
   updateAdminUI();
 }
-function isAdmin(){
+function migrateLegacyAdminSession(){
   try{
     const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
-    if(!raw) return false;
+    if(!raw || getAuthSession()) return;
     const exp = Number(raw);
-    if(!exp || Date.now() > exp) {
-      sessionStorage.removeItem(ADMIN_SESSION_KEY);
-      return false;
+    if(exp && Date.now() < exp) setAuthSession('manager', exp);
+    sessionStorage.removeItem(ADMIN_SESSION_KEY);
+  }catch(e){}
+}
+function getAuthSession(){
+  try{
+    const raw = sessionStorage.getItem(AUTH_SESSION_KEY);
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    if(!data || !data.role || !data.exp || Date.now() > data.exp) {
+      sessionStorage.removeItem(AUTH_SESSION_KEY);
+      return null;
     }
-    return true;
-  }catch(e){ return false; }
+    return data;
+  }catch(e){
+    sessionStorage.removeItem(AUTH_SESSION_KEY);
+    return null;
+  }
 }
-function setAdminSession(active){
-  const wasAdmin = isAdmin();
-  if(active) sessionStorage.setItem(ADMIN_SESSION_KEY, String(Date.now() + ADMIN_SESSION_MS));
-  else sessionStorage.removeItem(ADMIN_SESSION_KEY);
-  updateAdminUI();
-  if(wasAdmin !== isAdmin() && currentView === 'farm') render();
+function setAuthSession(role, expMs){
+  const exp = expMs || (Date.now() + AUTH_SESSION_MS);
+  sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ role, exp }));
+  updateAuthUI();
 }
-function updateAdminUI(){
-  document.body.classList.toggle('admin-mode', isAdmin());
+function clearAuthSession(){
+  sessionStorage.removeItem(AUTH_SESSION_KEY);
+  updateAuthUI();
+}
+function getUserRole(){
+  const s = getAuthSession();
+  return s ? s.role : null;
+}
+function isLoggedIn(){
+  return !!getAuthSession();
+}
+function isManager(){
+  return getUserRole() === 'manager';
+}
+function isStaff(){
+  return getUserRole() === 'staff';
+}
+function isAdmin(){
+  return isManager();
+}
+function updateAuthUI(){
+  const loggedIn = isLoggedIn();
+  const gate = document.getElementById('authGate');
+  if(gate) gate.hidden = loggedIn;
+  document.body.classList.toggle('auth-locked', !loggedIn);
+  document.body.classList.toggle('admin-mode', isManager());
+  document.body.classList.toggle('manager-mode', isManager());
+  document.body.classList.toggle('staff-mode', isStaff());
+  const rolePill = document.getElementById('rolePill');
+  if(rolePill){
+    if(loggedIn){
+      rolePill.hidden = false;
+      rolePill.textContent = isManager() ? 'Manager' : 'Staff';
+      rolePill.title = isManager() ? 'Full access' : 'QC & documents only';
+    } else rolePill.hidden = true;
+  }
   const btn = document.getElementById('btnAdmin');
   if(btn){
-    btn.textContent = isAdmin() ? 'Log out' : 'Log in';
-    btn.title = isAdmin() ? 'End manager session' : 'Log in as manager';
+    btn.textContent = 'Log out';
+    btn.title = 'Sign out';
+    btn.style.display = loggedIn ? '' : 'none';
   }
   document.querySelectorAll('.admin-only').forEach(el=>{
-    el.style.display = isAdmin() ? '' : 'none';
+    el.style.display = isManager() ? '' : 'none';
   });
+  const openBtn = document.getElementById('btnOpenSheet');
+  if(openBtn) openBtn.style.display = (appsScriptUrl && isManager()) ? '' : 'none';
 }
-/** Returns true if allowed; false if blocked (may open PIN modal). */
-function requireAdmin(reason, onSuccess){
-  if(isAdmin()) return true;
-  if(!appsScriptUrl && reason === 'first-time setup') return true;
-  openAdminUnlockModal(onSuccess, reason);
+function updateAdminUI(){
+  updateAuthUI();
+}
+function requireLogin(){
+  if(isLoggedIn()) return true;
+  showAuthGate();
   return false;
 }
-async function verifyAdminPinRemote(pin){
-  if(!appsScriptUrl) throw new Error('Connect Google Sheet first to verify admin PIN');
+/** Returns true if manager; false if blocked (may open manager PIN modal). */
+function requireAdmin(reason, onSuccess){
+  return requireManager(reason, onSuccess);
+}
+function requireManager(reason, onSuccess){
+  if(isManager()) return true;
+  if(!isLoggedIn()){
+    showAuthGate(onSuccess, reason, 'manager');
+    return false;
+  }
+  openManagerUnlockModal(onSuccess, reason);
+  return false;
+}
+async function verifyLoginRemote(role, pin){
+  if(!appsScriptUrl) throw new Error('App not connected to Google Sheet backend yet.');
   const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?')
-    + 'action=verifyAdmin&pin=' + encodeURIComponent(pin) + '&_=' + Date.now();
+    + 'action=verifyLogin&role=' + encodeURIComponent(role)
+    + '&pin=' + encodeURIComponent(pin) + '&_=' + Date.now();
   const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); }
-  catch(e){ throw new Error('Could not verify PIN — redeploy Apps Script with admin support'); }
+  catch(e){ throw new Error('Could not verify PIN — paste latest CANA_QC_GoogleAppsScript.gs and redeploy.'); }
   if(!data.ok) throw new Error(data.error || 'Incorrect PIN');
-  return true;
+  return data.role || role;
 }
-async function checkAdminPinConfigured(){
-  if(!appsScriptUrl) return false;
+async function verifyAdminPinRemote(pin){
+  return verifyLoginRemote('manager', pin);
+}
+async function checkLoginPinsConfigured(){
+  if(!appsScriptUrl) return { staff: false, manager: false };
   try{
-    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=adminStatus&_=' + Date.now();
+    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=loginStatus&_=' + Date.now();
     const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
     const data = JSON.parse(await res.text());
-    return !!(data.ok && data.hasPin);
-  }catch(e){ return false; }
+    return {
+      staff: !!(data.ok && data.hasStaffPin),
+      manager: !!(data.ok && (data.hasManagerPin || data.hasPin))
+    };
+  }catch(e){ return { staff: false, manager: false }; }
 }
-function openAdminUnlockModal(onSuccess, reason){
+let authGateRole = 'staff';
+let authGateSuccessCallback = null;
+function showAuthGate(onSuccess, reason, preferredRole){
+  authGateSuccessCallback = typeof onSuccess === 'function' ? onSuccess : null;
+  authGateRole = preferredRole || 'staff';
+  const gate = document.getElementById('authGate');
+  if(!gate){ openManagerUnlockModal(onSuccess, reason); return; }
+  gate.hidden = false;
+  document.body.classList.add('auth-locked');
+  setAuthGateRole(authGateRole);
+  const pinInput = gate.querySelector('[name=pin]');
+  if(pinInput){ pinInput.value = ''; pinInput.focus(); }
+}
+function setAuthGateRole(role){
+  authGateRole = role === 'manager' ? 'manager' : 'staff';
+  const gate = document.getElementById('authGate');
+  if(!gate) return;
+  gate.querySelectorAll('.auth-role-tab').forEach(tab=>{
+    const active = tab.dataset.role === authGateRole;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const desc = document.getElementById('authRoleDesc');
+  const pinLabel = document.getElementById('authPinLabel');
+  if(authGateRole === 'manager'){
+    if(desc) desc.innerHTML = '<b>Manager</b> — Full access: deliveries, farms, settings, delete records.<br><span class="bi">จัดการทั้งหมด · ตั้งค่า · ลบข้อมูล</span>';
+    if(pinLabel) pinLabel.textContent = 'manager PIN';
+  } else {
+    if(desc) desc.innerHTML = '<b>Staff</b> — Enter QC results, view records, upload documents.<br><span class="bi">กรอก QC · ดูข้อมูล · อัปโหลดเอกสาร</span>';
+    if(pinLabel) pinLabel.textContent = 'staff PIN';
+  }
+}
+function bindAuthGate(){
+  const gate = document.getElementById('authGate');
+  if(!gate || gate.dataset.bound === '1') return;
+  gate.dataset.bound = '1';
+  const errEl = document.getElementById('authError');
+  const showErr = (msg)=>{
+    if(!errEl) return;
+    errEl.textContent = msg || '';
+    errEl.hidden = !msg;
+  };
+  gate.querySelectorAll('.auth-role-tab').forEach(tab=>{
+    tab.onclick = ()=>{
+      setAuthGateRole(tab.dataset.role);
+      showErr('');
+      gate.querySelector('[name=pin]')?.focus();
+    };
+  });
+  gate.querySelector('#authLoginForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    showErr('');
+    const pin = gate.querySelector('[name=pin]').value;
+    const btn = gate.querySelector('.auth-submit');
+    const prev = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    try{
+      const role = await verifyLoginRemote(authGateRole, pin);
+      setAuthSession(role);
+      gate.hidden = true;
+      document.body.classList.remove('auth-locked');
+      startAppAfterLogin();
+      const cb = authGateSuccessCallback;
+      authGateSuccessCallback = null;
+      if(typeof cb === 'function') cb();
+    }catch(err){
+      showErr(err.message || 'Sign in failed.');
+      gate.querySelector('[name=pin]')?.focus();
+    }finally{
+      btn.disabled = false;
+      btn.textContent = prev;
+    }
+  };
+}
+function openManagerUnlockModal(onSuccess, reason){
   modalDirty = true;
   const root = document.getElementById('modalRoot');
   const why = reason
-    ? `<div class="admin-login-reason">Access required for: <b>${esc(reason)}</b></div>`
+    ? `<div class="admin-login-reason">Manager access required for: <b>${esc(reason)}</b></div>`
     : '';
   root.innerHTML = `
   <div class="overlay" id="overlay">
@@ -366,7 +509,7 @@ function openAdminUnlockModal(onSuccess, reason){
           <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
         </div>
         <h2>Manager Access</h2>
-        <p class="admin-login-sub">Enter your manager PIN to continue<br><span class="bi">ใส่รหัส PIN ผู้จัดการเพื่อดำเนินการต่อ</span></p>
+        <p class="admin-login-sub">Enter manager PIN to continue<br><span class="bi">ใส่รหัสผู้จัดการเพื่อดำเนินการต่อ</span></p>
       </div>
       ${why}
       <form id="adminPinForm">
@@ -398,11 +541,12 @@ function openAdminUnlockModal(onSuccess, reason){
     showPinError('');
     const pin = pinInput.value;
     try{
-      await verifyAdminPinRemote(pin);
-      setAdminSession(true);
+      await verifyLoginRemote('manager', pin);
+      setAuthSession('manager');
       close();
+      render();
       if(typeof onSuccess === 'function') onSuccess();
-      else showDocToast('Manager access granted — Documents tab is now available');
+      else showDocToast('Manager access granted');
     }catch(err){
       showPinError(err.message || 'Incorrect PIN. Please try again.');
       pinInput.focus();
@@ -410,12 +554,34 @@ function openAdminUnlockModal(onSuccess, reason){
     }
   };
 }
+function openAdminUnlockModal(onSuccess, reason){
+  openManagerUnlockModal(onSuccess, reason);
+}
+async function checkAdminPinConfigured(){
+  const s = await checkLoginPinsConfigured();
+  return s.manager;
+}
+function logoutUser(){
+  const msg = isManager()
+    ? 'Sign out of manager session?\nออกจากระบบผู้จัดการ?'
+    : 'Sign out?\nออกจากระบบ?';
+  if(!confirm(msg)) return;
+  clearAuthSession();
+  stopSheetPolling();
+  showAuthGate();
+}
 function toggleAdminSession(){
-  if(isAdmin()){
-    if(confirm('Log out of manager mode?\nออกจากโหมดผู้จัดการ?')) setAdminSession(false);
-    return;
+  logoutUser();
+}
+function startAppAfterLogin(){
+  render();
+  updateConnPill();
+  if(appsScriptUrl){
+    startSheetPolling();
+    pullFromGoogleSheet(true).then(()=>{
+      if(localDirty) pushToGoogleSheet(true);
+    });
   }
-  openAdminUnlockModal();
 }
 function toggleMoreMenu(open){
   const menu = document.getElementById('moreMenu');
@@ -1707,7 +1873,7 @@ function computeDashboard(month){
 
 /* ============ RENDER: SHELL ============ */
 function render(){
-  if(!isAdmin() && currentFarmTab === 'documents') currentFarmTab = 'qc';
+  if(!isLoggedIn()) return;
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
@@ -1860,6 +2026,8 @@ function renderFarmView(){
   main.innerHTML = `
     ${farmSubtabsHtml()}
 
+    ${isStaff() ? `<p class="staff-hint"><b>Staff mode</b> — You can enter QC and upload documents. Delivery edits and deletes require a manager.<br><span class="bi">โหมดพนักงาน — กรอก QC และอัปโหลดเอกสารได้ · แก้ไขการรับสินค้าต้องใช้ผู้จัดการ</span></p>` : ''}
+
     <div class="panel">
       <details>
         <summary>ℹ️ How to use / วิธีใช้</summary>
@@ -1889,7 +2057,7 @@ function renderFarmView(){
 
     <div class="row-actions">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <button class="primary" id="btnNewDelivery">+ New Delivery <span class="bi">/ รับสินค้าใหม่</span></button>
+        <button class="primary admin-only" id="btnNewDelivery">+ New Delivery <span class="bi">/ รับสินค้าใหม่</span></button>
         <input class="search-box" id="searchBox" placeholder="Search strain, invoice, QC by…" value="${esc(searchText)}">
         <label class="chk"><input type="checkbox" id="chkPending" ${pendingOnly?'checked':''}> Pending QC only</label>
         <div class="view-toggle">
@@ -1923,7 +2091,8 @@ function renderFarmView(){
   `;
 
   bindFarmSubtabs(main);
-  document.getElementById('btnNewDelivery').onclick = () => openDeliveryModal(null);
+  const btnNewDel = document.getElementById('btnNewDelivery');
+  if(btnNewDel) btnNewDel.onclick = () => openDeliveryModal(null);
   document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; updateFarmViewResults(); };
   document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; updateFarmViewResults(); };
   document.getElementById('btnViewCompact').onclick = ()=>{ viewMode='compact'; renderFarmView(); };
@@ -1979,7 +2148,7 @@ function renderAllFarmsCompactTable(items){
       <td>${fmtPct(c.yieldPct)||'—'}</td>
       <td>${esc(rec.qcBy||'—')}</td>
       <td><div class="action-group">
-        <button class="small" data-farm="${esc(farm)}" data-edit-delivery="${rec.id}">Edit</button>
+        <button class="small admin-only" data-farm="${esc(farm)}" data-edit-delivery="${rec.id}">Edit</button>
         <button class="small purple" data-farm="${esc(farm)}" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
       </div></td>
     </tr>${expanded ? renderExpandedDetail(rec) : ''}`;
@@ -2429,7 +2598,7 @@ function renderCompactTable(records){
       <td>${fmtPct(c.yieldPct)||'—'}</td>
       <td>${esc(rec.qcBy||'—')}</td>
       <td><div class="action-group">
-        <button class="small" data-edit-delivery="${rec.id}">Edit</button>
+        <button class="small admin-only" data-edit-delivery="${rec.id}">Edit</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
         <button class="small danger admin-only" data-delete="${rec.id}">Del</button>
       </div></td>
@@ -2461,7 +2630,7 @@ function renderCardList(records){
         <div class="stat"><div class="n">${fmtPct(c.yieldPct)||'—'}</div><div class="t">Yield</div></div>
       </div>
       <div class="action-group">
-        <button class="small" data-edit-delivery="${rec.id}">Edit Delivery</button>
+        <button class="small admin-only" data-edit-delivery="${rec.id}">Edit Delivery</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'Edit QC'}</button>
         <button class="small danger admin-only" data-delete="${rec.id}">Delete</button>
       </div>
@@ -2518,7 +2687,7 @@ function renderFullTable(records){
       <td class="grey-col">${fmtPct(c.yieldPct)}</td>
       <td class="grey-col" style="opacity:.5;font-size:11px;">${esc(c.month)}</td>
       <td><div class="action-group">
-        <button class="small" data-edit-delivery="${rec.id}">Edit</button>
+        <button class="small admin-only" data-edit-delivery="${rec.id}">Edit</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'QC'}</button>
         <button class="small danger admin-only" data-delete="${rec.id}">Del</button>
       </div></td>
@@ -2539,6 +2708,7 @@ function tryCloseModal(){
   closeModal();
 }
 function openDeliveryModal(id){
+  if(!requireManager('delivery records')) return;
   const rec = id ? state.farms[currentFarm].find(r=>r.id===id) : {id:uid(), date: todayISO()};
   const isNew = !id;
   const root = document.getElementById('modalRoot');
@@ -2606,6 +2776,7 @@ function updateQcPreview(form){
 }
 
 function openQCModal(id){
+  if(!requireLogin()) return;
   const rec = state.farms[currentFarm].find(r=>r.id===id);
   if(!rec) return;
   const root = document.getElementById('modalRoot');
@@ -2822,8 +2993,10 @@ async function testSheetConnection(){
 async function init(){
   state = loadLocal() || defaultState();
   ensureStateShape();
+  migrateLegacyAdminSession();
   await hydrateDocumentsFromIdb();
   await loadRemoteConfig();
+  bindAuthGate();
 
   document.getElementById('btnLinkSheet').onclick = ()=>{
     if(!requireAdmin('Google Sheet', ()=>{
@@ -2871,12 +3044,13 @@ async function init(){
 
   // auto-refresh when staff switch back to this tab/window
   document.addEventListener('visibilitychange', ()=>{
-    if(!document.hidden){
+    if(!document.hidden && isLoggedIn()){
       if(appsScriptUrl) pullFromGoogleSheet(true);
       else if(fileHandle) reloadFromFile(true);
     }
   });
   window.addEventListener('focus', ()=>{
+    if(!isLoggedIn()) return;
     if(appsScriptUrl) pullFromGoogleSheet(true);
     else if(fileHandle) reloadFromFile(true);
   });
@@ -2885,16 +3059,12 @@ async function init(){
     if(saveInFlight || sheetSaveInFlight){ e.preventDefault(); e.returnValue = ''; return ''; }
   });
 
-  render();
   updateConnPill();
-  updateAdminUI();
-  if(appsScriptUrl){
-    startSheetPolling();
-    pullFromGoogleSheet(true).then(()=>{
-      if(localDirty) pushToGoogleSheet(true);
-    });
+  if(isLoggedIn()){
+    startAppAfterLogin();
   } else {
-    await tryAutoReconnect();
+    showAuthGate();
+    if(!appsScriptUrl) await tryAutoReconnect();
   }
 }
 init();

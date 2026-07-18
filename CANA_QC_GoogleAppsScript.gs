@@ -67,10 +67,16 @@ function doGet(e) {
     return jsonOut(handleDriveConfigRequest(String(e.parameter.payload)));
   }
   if (e && e.parameter && e.parameter.action === 'adminStatus') {
-    return jsonOut({ ok: true, hasPin: !!getAdminPinHash() });
+    return jsonOut(getLoginStatus());
+  }
+  if (e && e.parameter && e.parameter.action === 'loginStatus') {
+    return jsonOut(getLoginStatus());
   }
   if (e && e.parameter && e.parameter.action === 'verifyAdmin' && e.parameter.pin) {
-    return jsonOut(verifyAdminPin(String(e.parameter.pin)));
+    return jsonOut(verifyLoginPin('manager', String(e.parameter.pin)));
+  }
+  if (e && e.parameter && e.parameter.action === 'verifyLogin' && e.parameter.pin) {
+    return jsonOut(verifyLoginPin(String(e.parameter.role || 'staff'), String(e.parameter.pin)));
   }
   return jsonOut({ ok: true, message: 'CANA QC Tracker API' });
 }
@@ -84,13 +90,35 @@ function setAdminPin(pin) {
   Logger.log('Admin PIN set. Share only with managers.');
 }
 
-/** ← Select THIS in the Run menu, then click Run. Change the PIN below first. */
+/** ← Run once — manager PIN (full access). Change the PIN below first. */
+function setManagerPinOnce() {
+  setAdminPin('blck'); // manager PIN — change before running
+}
+
+/** Alias for older docs */
 function setAdminPinOnce() {
-  setAdminPin('blck'); // change to your manager PIN (min 4 characters)
+  setManagerPinOnce();
+}
+
+/** ← Run once — staff PIN (QC + document upload only). Change the PIN below first. */
+function setStaffPinOnce() {
+  setStaffPin('2026'); // staff PIN — change before running
+}
+
+function setStaffPin(pin) {
+  pin = String(pin || '').trim();
+  if (!pin) throw new Error('No PIN provided. Run setStaffPinOnce() instead.');
+  if (pin.length < 4) throw new Error('PIN must be at least 4 characters.');
+  PropertiesService.getScriptProperties().setProperty('STAFF_PIN_HASH', hashAdminPin(pin));
+  Logger.log('Staff PIN set. Share only with QC / operations staff.');
 }
 
 function getAdminPinHash() {
   return PropertiesService.getScriptProperties().getProperty('ADMIN_PIN_HASH');
+}
+
+function getStaffPinHash() {
+  return PropertiesService.getScriptProperties().getProperty('STAFF_PIN_HASH');
 }
 
 function hashAdminPin(pin) {
@@ -99,11 +127,37 @@ function hashAdminPin(pin) {
   );
 }
 
+function getLoginStatus() {
+  return {
+    ok: true,
+    hasPin: !!getAdminPinHash(),
+    hasManagerPin: !!getAdminPinHash(),
+    hasStaffPin: !!getStaffPinHash()
+  };
+}
+
+function verifyLoginPin(role, pin) {
+  role = String(role || 'staff').toLowerCase();
+  pin = String(pin || '').trim();
+  if (!pin) return { ok: false, error: 'Enter your PIN.' };
+  var hash = hashAdminPin(pin);
+  if (role === 'manager') {
+    var managerHash = getAdminPinHash();
+    if (!managerHash) return { ok: false, error: 'Manager PIN not configured. Run setManagerPinOnce in Apps Script.' };
+    if (hash === managerHash) return { ok: true, role: 'manager' };
+    return { ok: false, error: 'Incorrect manager PIN.' };
+  }
+  if (role === 'staff') {
+    var staffHash = getStaffPinHash();
+    if (!staffHash) return { ok: false, error: 'Staff PIN not configured. Run setStaffPinOnce in Apps Script.' };
+    if (hash === staffHash) return { ok: true, role: 'staff' };
+    return { ok: false, error: 'Incorrect staff PIN.' };
+  }
+  return { ok: false, error: 'Invalid role.' };
+}
+
 function verifyAdminPin(pin) {
-  var stored = getAdminPinHash();
-  if (!stored) return { ok: false, error: 'Admin PIN not configured. Run setAdminPin in Apps Script.' };
-  if (hashAdminPin(pin) === stored) return { ok: true };
-  return { ok: false, error: 'Incorrect PIN' };
+  return verifyLoginPin('manager', pin);
 }
 
 function handleWriteRequest(payloadB64) {

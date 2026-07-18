@@ -11,6 +11,38 @@
 </head>
 <body>
 
+<div id="authGate" class="auth-gate" hidden>
+  <div class="auth-shell">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="auth-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 2L3 7v10l9 5 9-5V7l-9-5z"/><path d="M12 12l9-5M12 12L3 7M12 12v10"/></svg>
+        </div>
+        <h1>Canaaustralasia</h1>
+        <p class="auth-tagline">QC Tracker · Sign in to continue<br><span class="bi">เข้าสู่ระบบเพื่อใช้งาน</span></p>
+      </div>
+      <div class="auth-role-tabs" role="tablist">
+        <button type="button" class="auth-role-tab active" data-role="staff" role="tab" aria-selected="true">Staff <span class="bi">/ พนักงาน</span></button>
+        <button type="button" class="auth-role-tab" data-role="manager" role="tab" aria-selected="false">Manager <span class="bi">/ ผู้จัดการ</span></button>
+      </div>
+      <div class="auth-role-desc" id="authRoleDesc">
+        <b>Staff</b> — Enter QC results, view records, upload documents.<br>
+        <span class="bi">กรอก QC · ดูข้อมูล · อัปโหลดเอกสาร</span>
+      </div>
+      <form id="authLoginForm" class="auth-form">
+        <div class="field">
+          <label>PIN <span id="authPinLabel">staff PIN</span></label>
+          <input type="password" name="pin" inputmode="numeric" autocomplete="off" required minlength="4" placeholder="Enter PIN" autofocus>
+        </div>
+        <div class="auth-error" id="authError" hidden></div>
+        <button type="submit" class="primary auth-submit">Sign in / เข้าสู่ระบบ</button>
+      </form>
+      <p class="auth-foot" id="authFootnote">Protected workspace — contact your manager for a PIN.</p>
+    </div>
+  </div>
+</div>
+
+<div id="appShell">
 <header>
   <div class="titlebar">
     <div class="brand">
@@ -18,7 +50,8 @@
     </div>
     <div class="toolbar">
       <span class="conn-pill off" id="connPill">Not linked</span>
-      <button id="btnAdmin" type="button" class="login-btn" title="Manager sign-in">Log in</button>
+      <span class="role-pill" id="rolePill" hidden></span>
+      <button id="btnAdmin" type="button" class="login-btn" title="Sign out">Log out</button>
       <button id="btnLinkSheet" class="primary admin-only" title="Connect to shared Google Sheet for real-time team sync">📗 Google Sheet <span class="bi">/ เชื่อมชีต</span></button>
       <button id="btnReconnect" style="display:none;" title="Re-grant access to the previously linked file"></button>
       <button id="btnSaveFile" title="Save now">💾 Save <span class="bi">/ บันทึก</span></button>
@@ -45,6 +78,7 @@
 <nav class="tabs" id="tabsNav"></nav>
 
 <main id="mainArea"></main>
+</div>
 
 <div id="modalRoot"></div>
 
