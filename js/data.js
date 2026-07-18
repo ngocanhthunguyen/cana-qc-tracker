@@ -115,7 +115,8 @@ function defaultState(){
     driveParentFolderId: '',
     farms,
     documents,
-    trimming: []
+    trimming: [],
+    exportLog: []
   };
 }
 

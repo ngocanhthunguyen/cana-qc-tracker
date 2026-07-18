@@ -538,7 +538,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Trim Rework', 'Trim Cana'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -772,6 +772,7 @@ function readAllFarms() {
     farms: farms,
     documents: readDocuments(ss, farmList),
     trimming: readTrimming(ss),
+    exportLog: readExportLog(ss),
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
@@ -836,11 +837,12 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
   if (state.trimming) writeTrimming(ss, state.trimming);
+  if (state.exportLog) writeExportLog(ss, state.exportLog);
   updateMeta(ss);
   updateDashboard(ss);
   orderTabs(ss);
@@ -1380,6 +1382,106 @@ function cellStr(v) {
 function formatSheetDate(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   return String(v || '');
+}
+
+/* ---------- Export Log tab ---------- */
+
+var EXPORT_LOG_SHEET = 'Export Log';
+var EXPORT_LOG_HEADERS = ['_id', 'Month', 'Export Type', 'Company', 'Batch Count', 'Batch IDs', 'File Name', 'Exported At', 'Exported By'];
+var EXPORT_LOG_NUM_COLS = EXPORT_LOG_HEADERS.length;
+var EXPORT_LOG_HEADER_ROW = 3;
+var EXPORT_LOG_DATA_START = 4;
+
+function setupExportLogTab(ss) {
+  var sheet = ss.getSheetByName(EXPORT_LOG_SHEET);
+  if (!sheet) sheet = ss.insertSheet(EXPORT_LOG_SHEET);
+  sheet.clear();
+  sheet.getRange(1, 1, 1, EXPORT_LOG_NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  EXPORT LOG')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+  sheet.getRange(2, 1, 1, EXPORT_LOG_NUM_COLS).merge()
+    .setValue('Audit trail — each Excel download from Monthly Exports in the web app')
+    .setBackground('#0f766e').setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+  sheet.getRange(EXPORT_LOG_HEADER_ROW, 1, 1, EXPORT_LOG_NUM_COLS).setValues([EXPORT_LOG_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle')
+    .setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(EXPORT_LOG_HEADER_ROW, 32);
+  sheet.setTabColor('#0f766e');
+  sheet.setFrozenRows(EXPORT_LOG_HEADER_ROW);
+  sheet.hideColumns(1);
+}
+
+function readExportLog(ss) {
+  var sheet = ss.getSheetByName(EXPORT_LOG_SHEET);
+  if (!sheet || sheet.getLastRow() < EXPORT_LOG_DATA_START) return [];
+  var numRows = sheet.getLastRow() - EXPORT_LOG_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(EXPORT_LOG_DATA_START, 1, numRows, EXPORT_LOG_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[2] && !row[7]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      month: String(row[1] || ''),
+      exportType: String(row[2] || ''),
+      company: String(row[3] || ''),
+      batchCount: cellStr(row[4]),
+      batchIds: String(row[5] || ''),
+      fileName: String(row[6] || ''),
+      exportedAt: row[7] instanceof Date ? Utilities.formatDate(row[7], Session.getScriptTimeZone(), "yyyy-MM-dd'T'HH:mm:ss") : String(row[7] || ''),
+      exportedBy: String(row[8] || '')
+    });
+  });
+  return list;
+}
+
+function writeExportLog(ss, exportLog) {
+  setupExportLogTab(ss);
+  var sheet = ss.getSheetByName(EXPORT_LOG_SHEET);
+  var rows = (exportLog || []).slice().sort(function(a, b) {
+    return String(b.exportedAt || '').localeCompare(String(a.exportedAt || ''));
+  }).map(function(entry) {
+    return [
+      entry.id || newId(),
+      entry.month || '',
+      entry.exportType || '',
+      entry.company || '',
+      entry.batchCount === '' || entry.batchCount === null || entry.batchCount === undefined ? '' : entry.batchCount,
+      entry.batchIds || '',
+      entry.fileName || '',
+      entry.exportedAt || '',
+      entry.exportedBy || ''
+    ];
+  });
+  if (sheet.getLastRow() >= EXPORT_LOG_DATA_START) {
+    sheet.getRange(EXPORT_LOG_DATA_START, 1, sheet.getLastRow() - EXPORT_LOG_HEADER_ROW, EXPORT_LOG_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(EXPORT_LOG_DATA_START, 1, rows.length, EXPORT_LOG_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      var rowNum = EXPORT_LOG_DATA_START + r;
+      sheet.getRange(rowNum, 1, 1, EXPORT_LOG_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#f0fdfa')
+        .setFontSize(10).setWrap(true);
+    }
+    sheet.getRange(EXPORT_LOG_DATA_START, 5, rows.length, 1).setNumberFormat('0');
+  }
+}
+
+/** Run once — creates Export Log tab */
+function upgradeExportLogTab() {
+  var ss = getSpreadsheet();
+  writeExportLog(ss, readExportLog(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Export Log tab ready.');
 }
 
 function recordToRow(rec) {
