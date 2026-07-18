@@ -224,6 +224,29 @@ function diffClass(diff){
   if(n > 5) return 'diff-warn';
   return '';
 }
+function searchQuery(text){
+  return String(text == null ? searchText : text).trim().toLowerCase();
+}
+function recordSearchHaystack(r, farm){
+  const farmName = farm || currentFarm;
+  return [
+    farmName,
+    r.batchId,
+    getBatchId(r, farmName),
+    r.date,
+    r.strain,
+    r.invoice,
+    r.receivedBy,
+    r.notes,
+    r.qcBy,
+    r.passFail,
+    r.condition,
+    r.eurofinsTest,
+    r.tnrTest,
+    r.grossWt,
+    r.startWt
+  ].join(' ').toLowerCase();
+}
 function matchesRecordFilters(r, farmCtx){
   const farmForBatch = farmCtx || currentFarm;
   if(pendingOnly && !isPending(r)) return false;
@@ -234,10 +257,8 @@ function matchesRecordFilters(r, farmCtx){
   if(farmMonthFilter && (r.date?formatMonth(r.date):'') !== farmMonthFilter) return false;
   if(filterDateFrom && (r.date||'') < filterDateFrom) return false;
   if(filterDateTo && (r.date||'') > filterDateTo) return false;
-  if(searchText){
-    const hay = [r.strain,r.invoice,r.receivedBy,r.notes,r.qcBy,r.passFail,r.condition,r.eurofinsTest,r.tnrTest,getBatchId(r,farmForBatch)].join(' ').toLowerCase();
-    if(!hay.includes(searchText.toLowerCase())) return false;
-  }
+  const q = searchQuery();
+  if(q && !recordSearchHaystack(r, farmForBatch).includes(q)) return false;
   return true;
 }
 function sortRecords(records){
@@ -518,9 +539,10 @@ function readFileAsBase64(file){
 }
 function matchesDocFilters(doc){
   if(docCategoryFilter && doc.category !== docCategoryFilter) return false;
-  if(docSearchText){
-    const hay = [doc.title,doc.fileName,doc.notes,doc.category,doc.uploadedBy].join(' ').toLowerCase();
-    if(!hay.includes(docSearchText.toLowerCase())) return false;
+  const q = searchQuery(docSearchText);
+  if(q){
+    const hay = [doc.title,doc.fileName,doc.notes,doc.category,doc.uploadedBy,doc.url,doc.mimeType].join(' ').toLowerCase();
+    if(!hay.includes(q)) return false;
   }
   return true;
 }
@@ -1598,10 +1620,39 @@ function renderTabs(){
 }
 
 /* ============ RENDER: FARM VIEW ============ */
+function getFilteredFarmRecords(){
+  const records = state.farms[currentFarm]||[];
+  return sortRecords(records.filter(matchesRecordFilters));
+}
+function farmResultsMarkup(filtered, records){
+  return {
+    table: filtered.length
+      ? (viewMode==='full' ? renderFullTable(filtered) : renderCompactTable(filtered))
+      : `<div class="empty-state">${records.length? 'No records match your filters.' : `<b>No records yet for ${esc(currentFarm)}.</b><br>Click "+ New Delivery" to add the first batch.`}</div>`,
+    cards: filtered.length ? renderCardList(filtered) : '',
+    count: `${filtered.length} of ${records.length} record(s) — ${currentFarm}`
+  };
+}
+function updateFarmViewResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'farm' || currentFarmTab !== 'qc') return;
+  const records = state.farms[currentFarm]||[];
+  const filtered = getFilteredFarmRecords();
+  const parts = farmResultsMarkup(filtered, records);
+  const tableWrap = document.getElementById('farmTableWrap');
+  const cardList = document.getElementById('farmCardList');
+  const countEl = document.getElementById('farmRecordCount');
+  if(tableWrap) tableWrap.innerHTML = parts.table;
+  if(cardList) cardList.innerHTML = parts.cards;
+  if(countEl) countEl.textContent = parts.count;
+  bindRowActions(main);
+  updateAdminUI();
+}
 function renderFarmView(){
   const main = document.getElementById('mainArea');
-  const records = (state.farms[currentFarm]||[]);
-  const filtered = sortRecords(records.filter(matchesRecordFilters));
+  const records = state.farms[currentFarm]||[];
+  const filtered = getFilteredFarmRecords();
+  const parts = farmResultsMarkup(filtered, records);
   const farmPending = countPendingFarm(currentFarm);
 
   main.innerHTML = `
@@ -1645,7 +1696,7 @@ function renderFarmView(){
         </div>
         ${getFarmList().length > 1 ? `<button type="button" class="small danger admin-only" id="btnDeleteCurrentFarm" title="Remove this farm (admin PIN)">🗑 Delete farm</button>` : ''}
       </div>
-      <div style="font-size:12.5px;color:var(--muted);">${filtered.length} of ${records.length} record(s) — ${esc(currentFarm)}</div>
+      <div style="font-size:12.5px;color:var(--muted);" id="farmRecordCount">${parts.count}</div>
     </div>
 
     <div class="filter-row">
@@ -1661,25 +1712,25 @@ function renderFarmView(){
       ${farmMonthFilter ? `<span style="font-size:12px;color:var(--blue-700);font-weight:600;">Month: ${esc(farmMonthFilter)} <button class="small" id="btnClearMonth">✕</button></span>` : ''}
     </div>
 
-    <div class="table-wrap desktop-table">
-      ${filtered.length ? (viewMode==='full' ? renderFullTable(filtered) : renderCompactTable(filtered)) : `<div class="empty-state">${records.length? 'No records match your filters.' : `<b>No records yet for ${esc(currentFarm)}.</b><br>Click "+ New Delivery" to add the first batch.`}</div>`}
+    <div class="table-wrap desktop-table" id="farmTableWrap">
+      ${parts.table}
     </div>
-    <div class="card-list">
-      ${filtered.length ? renderCardList(filtered) : ''}
+    <div class="card-list" id="farmCardList">
+      ${parts.cards}
     </div>
   `;
 
   bindFarmSubtabs(main);
   document.getElementById('btnNewDelivery').onclick = () => openDeliveryModal(null);
-  document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; renderFarmView(); };
-  document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; renderFarmView(); };
+  document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; updateFarmViewResults(); };
+  document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; updateFarmViewResults(); };
   document.getElementById('btnViewCompact').onclick = ()=>{ viewMode='compact'; renderFarmView(); };
   document.getElementById('btnViewFull').onclick = ()=>{ viewMode='full'; renderFarmView(); };
-  document.getElementById('filterStatus').onchange = (e)=>{ filterStatus = e.target.value; renderFarmView(); };
-  document.getElementById('filterDateFrom').onchange = (e)=>{ filterDateFrom = e.target.value; renderFarmView(); };
-  document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; renderFarmView(); };
-  if(document.getElementById('btnShowPending')) document.getElementById('btnShowPending').onclick = ()=>{ pendingOnly=true; renderFarmView(); };
-  if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; renderFarmView(); };
+  document.getElementById('filterStatus').onchange = (e)=>{ filterStatus = e.target.value; updateFarmViewResults(); };
+  document.getElementById('filterDateFrom').onchange = (e)=>{ filterDateFrom = e.target.value; updateFarmViewResults(); };
+  document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; updateFarmViewResults(); };
+  if(document.getElementById('btnShowPending')) document.getElementById('btnShowPending').onclick = ()=>{ pendingOnly=true; updateFarmViewResults(); };
+  if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; updateFarmViewResults(); };
   const btnDelFarm = document.getElementById('btnDeleteCurrentFarm');
   if(btnDelFarm) btnDelFarm.onclick = ()=> confirmRemoveFarm(currentFarm);
   bindRowActions(main);
@@ -1734,15 +1785,33 @@ function renderAllFarmsCompactTable(items){
   return `<table class="compact-table">${head}${body}</table>`;
 }
 
-function renderAllFarmsView(){
-  const main = document.getElementById('mainArea');
-  const allItems = getAllFarmRecords();
-  const sortedItems = allItems.filter(({rec,farm})=> matchesRecordFilters(rec, farm))
+function getFilteredAllFarmItems(){
+  return getAllFarmRecords().filter(({rec,farm})=> matchesRecordFilters(rec, farm))
     .sort((a,b)=>{
       const ap = isPending(a.rec)?1:0, bp = isPending(b.rec)?1:0;
       if(ap !== bp) return bp - ap;
       return (b.rec.date||'').localeCompare(a.rec.date||'');
     });
+}
+function updateAllFarmsViewResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'allFarms') return;
+  const allItems = getAllFarmRecords();
+  const sortedItems = getFilteredAllFarmItems();
+  const tableWrap = document.getElementById('allFarmsTableWrap');
+  const countEl = document.getElementById('allFarmsRecordCount');
+  if(tableWrap){
+    tableWrap.innerHTML = sortedItems.length
+      ? renderAllFarmsCompactTable(sortedItems)
+      : `<div class="empty-state"><b>No batches match your filters.</b><br>Try clearing filters or add deliveries from a farm tab.</div>`;
+  }
+  if(countEl) countEl.textContent = `${sortedItems.length} of ${allItems.length} batch(es) across all farms`;
+  bindRowActions(main, 'allFarms');
+}
+function renderAllFarmsView(){
+  const main = document.getElementById('mainArea');
+  const allItems = getAllFarmRecords();
+  const sortedItems = getFilteredAllFarmItems();
 
   main.innerHTML = `
     <div class="panel">
@@ -1758,7 +1827,7 @@ function renderAllFarmsView(){
         <input class="search-box" id="searchBox" placeholder="Search batch, strain, farm, invoice…" value="${esc(searchText)}">
         <label class="chk"><input type="checkbox" id="chkPending" ${pendingOnly?'checked':''}> Pending QC only</label>
       </div>
-      <div style="font-size:12.5px;color:var(--muted);">${sortedItems.length} of ${allItems.length} batch(es) across all farms</div>
+      <div style="font-size:12.5px;color:var(--muted);" id="allFarmsRecordCount">${sortedItems.length} of ${allItems.length} batch(es) across all farms</div>
     </div>
 
     <div class="filter-row">
@@ -1778,18 +1847,18 @@ function renderAllFarmsView(){
       ${farmMonthFilter ? `<button class="small" id="btnClearMonth">Clear month / ล้างเดือน</button>` : ''}
     </div>
 
-    <div class="table-wrap desktop-table">
+    <div class="table-wrap desktop-table" id="allFarmsTableWrap">
       ${sortedItems.length ? renderAllFarmsCompactTable(sortedItems) : `<div class="empty-state"><b>No batches match your filters.</b><br>Try clearing filters or add deliveries from a farm tab.</div>`}
     </div>
   `;
 
-  document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; renderAllFarmsView(); };
-  document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; renderAllFarmsView(); };
-  document.getElementById('filterStatus').onchange = (e)=>{ filterStatus = e.target.value; renderAllFarmsView(); };
-  document.getElementById('allFarmsMonth').onchange = (e)=>{ farmMonthFilter = e.target.value; renderAllFarmsView(); };
-  document.getElementById('filterDateFrom').onchange = (e)=>{ filterDateFrom = e.target.value; renderAllFarmsView(); };
-  document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; renderAllFarmsView(); };
-  if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; renderAllFarmsView(); };
+  document.getElementById('searchBox').oninput = (e)=>{ searchText = e.target.value; updateAllFarmsViewResults(); };
+  document.getElementById('chkPending').onchange = (e)=>{ pendingOnly = e.target.checked; updateAllFarmsViewResults(); };
+  document.getElementById('filterStatus').onchange = (e)=>{ filterStatus = e.target.value; updateAllFarmsViewResults(); };
+  document.getElementById('allFarmsMonth').onchange = (e)=>{ farmMonthFilter = e.target.value; updateAllFarmsViewResults(); };
+  document.getElementById('filterDateFrom').onchange = (e)=>{ filterDateFrom = e.target.value; updateAllFarmsViewResults(); };
+  document.getElementById('filterDateTo').onchange = (e)=>{ filterDateTo = e.target.value; updateAllFarmsViewResults(); };
+  if(document.getElementById('btnClearMonth')) document.getElementById('btnClearMonth').onclick = ()=>{ farmMonthFilter=''; updateAllFarmsViewResults(); };
   bindRowActions(main, 'allFarms');
 }
 
@@ -1804,10 +1873,45 @@ function showDocToast(msg){
 }
 
 /* ============ RENDER: FARM DOCUMENTS ============ */
+function getFilteredFarmDocuments(){
+  return (state.documents[currentFarm]||[]).filter(matchesDocFilters)
+    .slice().sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+}
+function bindDocGridActions(main){
+  main.querySelectorAll('[data-edit-doc]').forEach(el=> el.onclick = ()=> openDocumentModal(el.dataset.editDoc));
+  main.querySelectorAll('[data-download-doc]').forEach(el=> el.onclick = ()=>{
+    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.downloadDoc);
+    if(doc) downloadDocument(doc);
+  });
+  main.querySelectorAll('[data-open-doc]').forEach(el=> el.onclick = ()=>{
+    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.openDoc);
+    if(doc) openDocument(doc);
+  });
+  main.querySelectorAll('[data-delete-doc]').forEach(el=> el.onclick = ()=> deleteDocument(el.dataset.deleteDoc));
+  updateAdminUI();
+}
+function updateDocViewResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'farm' || currentFarmTab !== 'documents') return;
+  const docs = getFilteredFarmDocuments();
+  const linkedCount = docs.filter(d=>d.url).length;
+  const grid = document.getElementById('docResultsWrap');
+  const countBadge = document.getElementById('docCountBadge');
+  const linkBadge = document.getElementById('docLinkBadge');
+  if(grid){
+    grid.innerHTML = docs.length ? `<div class="doc-grid">${docs.map(renderDocCard).join('')}</div>` : `
+      <div class="panel empty-state">
+        <b>${docSearchText || docCategoryFilter ? 'No documents match your search.' : `No documents yet for ${esc(currentFarm)}.`}</b><br>
+        ${docSearchText || docCategoryFilter ? 'Try a different keyword or category.' : 'Follow the 3 steps above — recommended: Google Drive link for team access.<div class="upload-hint">Quick upload (this device only): Upload File · max 8 MB</div>'}
+      </div>`;
+  }
+  if(countBadge) countBadge.textContent = `${docs.length} document${docs.length===1?'':'s'}`;
+  if(linkBadge) linkBadge.textContent = `${linkedCount} team link${linkedCount===1?'':'s'}`;
+  bindDocGridActions(main);
+}
 function renderFarmDocuments(){
   const main = document.getElementById('mainArea');
-  const docs = (state.documents[currentFarm]||[]).filter(matchesDocFilters)
-    .slice().sort((a,b)=>(b.uploadedAt||'').localeCompare(a.uploadedAt||''));
+  const docs = getFilteredFarmDocuments();
   const linkedCount = docs.filter(d=>d.url).length;
 
   main.innerHTML = `
@@ -1816,8 +1920,8 @@ function renderFarmDocuments(){
     <div class="doc-header">
       <h3>📁 Document Library — ${esc(currentFarm)}</h3>
       <div class="doc-header-meta">
-        <span class="doc-badge">${docs.length} document${docs.length===1?'':'s'}</span>
-        <span class="doc-badge">${linkedCount} team link${linkedCount===1?'':'s'}</span>
+        <span class="doc-badge" id="docCountBadge">${docs.length} document${docs.length===1?'':'s'}</span>
+        <span class="doc-badge" id="docLinkBadge">${linkedCount} team link${linkedCount===1?'':'s'}</span>
         <span class="doc-badge">↻ Syncs to Google Sheet</span>
       </div>
     </div>
@@ -1840,29 +1944,22 @@ function renderFarmDocuments(){
       </div>
     </div>
 
+    <div id="docResultsWrap">
     ${docs.length ? `<div class="doc-grid">${docs.map(renderDocCard).join('')}</div>` : `
       <div class="panel empty-state">
         <b>No documents yet for ${esc(currentFarm)}. / ยังไม่มีเอกสาร</b><br>
         Follow the 3 steps above — recommended: Google Drive link for team access.
         <div class="upload-hint">Quick upload (this device only): Upload File · max 8 MB</div>
       </div>`}
+    </div>
   `;
 
   bindFarmSubtabs(main);
   document.getElementById('btnAddDoc').onclick = ()=> openDocumentModal(null);
   document.getElementById('btnUploadDoc').onclick = ()=> document.getElementById('docUploadInput').click();
-  document.getElementById('docSearchBox').oninput = (e)=>{ docSearchText = e.target.value; renderFarmDocuments(); };
-  document.getElementById('docCategoryFilter').onchange = (e)=>{ docCategoryFilter = e.target.value; renderFarmDocuments(); };
-  main.querySelectorAll('[data-edit-doc]').forEach(el=> el.onclick = ()=> openDocumentModal(el.dataset.editDoc));
-  main.querySelectorAll('[data-download-doc]').forEach(el=> el.onclick = ()=>{
-    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.downloadDoc);
-    if(doc) downloadDocument(doc);
-  });
-  main.querySelectorAll('[data-open-doc]').forEach(el=> el.onclick = ()=>{
-    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.openDoc);
-    if(doc) openDocument(doc);
-  });
-  main.querySelectorAll('[data-delete-doc]').forEach(el=> el.onclick = ()=> deleteDocument(el.dataset.deleteDoc));
+  document.getElementById('docSearchBox').oninput = (e)=>{ docSearchText = e.target.value; updateDocViewResults(); };
+  document.getElementById('docCategoryFilter').onchange = (e)=>{ docCategoryFilter = e.target.value; updateDocViewResults(); };
+  bindDocGridActions(main);
 }
 
 function renderDocCard(doc){
