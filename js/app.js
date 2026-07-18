@@ -307,9 +307,11 @@ function isAdmin(){
   }catch(e){ return false; }
 }
 function setAdminSession(active){
+  const wasAdmin = isAdmin();
   if(active) sessionStorage.setItem(ADMIN_SESSION_KEY, String(Date.now() + ADMIN_SESSION_MS));
   else sessionStorage.removeItem(ADMIN_SESSION_KEY);
   updateAdminUI();
+  if(wasAdmin !== isAdmin() && currentView === 'farm') render();
 }
 function updateAdminUI(){
   document.body.classList.toggle('admin-mode', isAdmin());
@@ -404,7 +406,7 @@ function openAdminUnlockModal(onSuccess, reason){
       setAdminSession(true);
       close();
       if(typeof onSuccess === 'function') onSuccess();
-      else updateAdminUI();
+      else showDocToast('Manager access granted — Documents tab is now available');
     }catch(err){
       showPinError(err.message || 'Incorrect PIN. Please try again.');
       pinInput.focus();
@@ -464,7 +466,7 @@ function farmSubtabsHtml(){
   return `<div class="farm-subtabs">
     <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
     ${docsBtn}
-  </div>`;
+  </div>${!isAdmin() ? '<p class="doc-staff-hint">📁 Documents: click <b>Log in</b> (top right) and enter manager PIN.</p>' : ''}`;
 }
 function bindFarmSubtabs(root){
   const qc = root.querySelector('#btnFarmQc');
@@ -547,27 +549,47 @@ function openDocument(doc){
     }
   });
 }
+function extractDriveFileId(url){
+  const s = String(url || '').trim();
+  let m = s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  if(m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if(m) return m[1];
+  return '';
+}
 function normalizeExternalUrl(raw){
   let url = String(raw || '').trim();
   if(!url) return '';
-  if(/^https?:\/\//i.test(url)) return url;
-  if(/^(drive\.google\.com|docs\.google\.com|www\.)/i.test(url)) return 'https://' + url;
-  if(url.includes('drive.google.com') || url.includes('docs.google.com')) return 'https://' + url.replace(/^\/+/, '');
+  if(!/^https?:\/\//i.test(url)){
+    if(/^(drive\.google\.com|docs\.google\.com|www\.)/i.test(url)) url = 'https://' + url;
+    else if(url.includes('drive.google.com') || url.includes('docs.google.com')) url = 'https://' + url.replace(/^\/+/, '');
+  }
+  url = url.replace(/\/u\/\d+\//g, '/');
+  if(isDriveFolderUrl(url)) return url;
+  const fileId = extractDriveFileId(url);
+  if(fileId) return 'https://drive.google.com/file/d/' + fileId + '/view';
   return url;
 }
 function isDriveFolderUrl(url){
   return /drive\.google\.com\/(?:drive\/)?folders\//i.test(String(url || ''));
 }
-function openExternalDocUrl(url){
+function openExternalLink(url){
   url = normalizeExternalUrl(url);
   if(!url) return false;
   if(isDriveFolderUrl(url)){
     alert('This is a Google Drive FOLDER link — it cannot open a photo/PDF directly.\n\n1. Open the folder in Drive\n2. Right-click the FILE → Share → Copy link\n3. Paste that file link in External URL\n\nนี่เป็นลิงก์ folder — ต้อง copy link ของไฟล์ ไม่ใช่ folder');
-    window.open(url, '_blank', 'noopener');
-    return true;
   }
-  window.open(url, '_blank', 'noopener');
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
   return true;
+}
+function openExternalDocUrl(url){
+  return openExternalLink(url);
 }
 function b64ToBlob(b64, mime){
   const bin = atob(b64);
@@ -1939,6 +1961,12 @@ function bindDocGridActions(main){
     const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.openDoc);
     if(doc) openDocument(doc);
   });
+  main.querySelectorAll('[data-open-doc-link]').forEach(el=> el.onclick = (e)=>{
+    e.preventDefault();
+    const doc = state.documents[currentFarm].find(d=>d.id===el.dataset.openDocLink);
+    if(doc && doc.url) openExternalDocUrl(doc.url);
+    else if(el.href) openExternalLink(el.getAttribute('href'));
+  });
   main.querySelectorAll('[data-delete-doc]').forEach(el=> el.onclick = ()=> deleteDocument(el.dataset.deleteDoc));
   updateAdminUI();
 }
@@ -2038,10 +2066,12 @@ function renderDocCard(doc){
         </div>
       </div>
     </div>
-    ${doc.url ? `<div class="doc-link-row"><a href="${esc(normalizeExternalUrl(doc.url))}" target="_blank" rel="noopener">Open in Google Drive ↗</a></div>` : ''}
+    ${doc.url ? `<div class="doc-link-row"><a href="${esc(normalizeExternalUrl(doc.url))}" target="_blank" rel="noopener" data-open-doc-link="${doc.id}">Open in Google Drive ↗</a></div>` : ''}
     ${doc.notes ? `<div class="doc-notes">${esc(doc.notes)}</div>` : ''}
     <div class="doc-actions">
-      ${hasFile ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
+      ${doc.url ? `<button class="small primary" data-open-doc="${doc.id}">Open / เปิด</button>` : ''}
+      ${hasFile && !doc.url ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
+      ${hasFile && doc.url ? `<button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
       <button class="small" data-edit-doc="${doc.id}">Edit / แก้ไข</button>
         <button class="small danger admin-only" data-delete-doc="${doc.id}">Delete / ลบ</button>
     </div>
