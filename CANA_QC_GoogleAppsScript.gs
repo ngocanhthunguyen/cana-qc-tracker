@@ -63,6 +63,9 @@ function doGet(e) {
   if (e && e.parameter && e.parameter.action === 'write' && e.parameter.payload) {
     return jsonOut(handleWriteRequest(String(e.parameter.payload)));
   }
+  if (e && e.parameter && e.parameter.action === 'setDriveConfig' && e.parameter.payload) {
+    return jsonOut(handleDriveConfigRequest(String(e.parameter.payload)));
+  }
   if (e && e.parameter && e.parameter.action === 'adminStatus') {
     return jsonOut({ ok: true, hasPin: !!getAdminPinHash() });
   }
@@ -121,6 +124,29 @@ function handleWriteRequest(payloadB64) {
   }
 }
 
+function handleDriveConfigRequest(payloadB64) {
+  try {
+    var json = Utilities.newBlob(Utilities.base64Decode(payloadB64)).getDataAsString();
+    var data = JSON.parse(json);
+    if (data.action !== 'setDriveConfig') return { ok: false, error: 'Invalid action' };
+    return applyDriveConfig(data);
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+function applyDriveConfig(data) {
+  var parentId = normalizeDriveFolderId(data.driveParentFolderId);
+  if (!parentId || parentId.length < 20) {
+    return { ok: false, error: 'Parent folder ID missing or too short — paste the full Cana Documents URL.' };
+  }
+  var ss = getSpreadsheet();
+  writeDriveParentFolder(ss, parentId);
+  writeFarmDriveFolders(ss, data.farmDriveFolders || {});
+  updateMeta(ss);
+  return { ok: true, driveParentFolderId: parentId, updatedAt: new Date().toISOString() };
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return jsonOut({ ok: false, error: 'Server busy, try again' });
@@ -133,6 +159,9 @@ function doPost(e) {
     if (data.action === 'write') {
       writeAllFarms(data.state);
       return jsonOut({ ok: true, updatedAt: new Date().toISOString() });
+    }
+    if (data.action === 'setDriveConfig') {
+      return jsonOut(applyDriveConfig(data));
     }
     if (data.action === 'uploadDoc') {
       return jsonOut(uploadDocumentToFarm(data.farm, data.fileName, data.mimeType, data.data));
@@ -1285,4 +1314,57 @@ function addDashboardCharts(sheet, tableStart, tableEndRow, stats) {
 
 function newId() {
   return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/** Run once in Apps Script if app save did not reach the Sheet — paste Cana Documents folder ID below */
+function setCanaDocumentsParentOnce() {
+  var parentId = '1H13opBTINjpHx3ztGYU1Hp4HNHdLiFFI'; // Cana Documents folder ID from Drive URL
+  var res = applyDriveConfig({ action: 'setDriveConfig', driveParentFolderId: parentId, farmDriveFolders: {} });
+  Logger.log(JSON.stringify(res));
+  if (res.ok) Logger.log('Saved to _Meta B7. Run verifyDriveFolders next.');
+  else throw new Error(res.error);
+}
+
+/** Run to diagnose Drive permission — check Execution log */
+function testOpenCanaDocuments() {
+  var id = readDriveParentFolderFromMeta(getSpreadsheet()) || '1H13opBTINjpHx3ztGYU1Hp4HNHdLiFFI';
+  var who = Session.getEffectiveUser().getEmail();
+  Logger.log('Trying folder ID: ' + id);
+  Logger.log('Apps Script account: ' + who);
+  Logger.log('Open this URL in Chrome as THAT account: https://drive.google.com/drive/folders/' + id);
+  try {
+    var f = DriveApp.getFolderById(id);
+    Logger.log('OK — folder name: ' + f.getName());
+    Logger.log('Owner email (if visible): ' + (f.getOwner() ? f.getOwner().getEmail() : '(shared folder)'));
+    var subs = f.getFolders();
+    var names = [];
+    while (subs.hasNext() && names.length < 20) names.push(subs.next().getName());
+    Logger.log('Subfolders: ' + (names.length ? names.join(', ') : '(none)'));
+  } catch (e) {
+    var msg = String(e);
+    Logger.log('FAIL — ' + msg);
+    if (/do not have permission to call DriveApp|Required permissions.*drive/i.test(msg)) {
+      Logger.log('');
+      Logger.log('>>> NOT a folder sharing problem. Apps Script needs Drive permission.');
+      Logger.log('>>> Fix: Run authorizeDriveOnce() → click Review permissions → Allow Drive access.');
+      Logger.log('>>> Then run verifyDriveFolders again.');
+    } else {
+      Logger.log('Fix: In Google Drive, share "Cana Documents" with ' + who + ' as Editor (or move folder into that account\'s My Drive).');
+    }
+  }
+}
+
+/** Run once — opens Google permission screen for Drive (required before upload works) */
+function authorizeDriveOnce() {
+  var who = Session.getEffectiveUser().getEmail();
+  Logger.log('Account: ' + who);
+  Logger.log('If prompted, click Review permissions → Allow (includes Google Drive).');
+  var rootName = DriveApp.getRootFolder().getName();
+  Logger.log('Drive access OK. Root: ' + rootName);
+  var id = readDriveParentFolderFromMeta(getSpreadsheet());
+  if (id) {
+    var f = DriveApp.getFolderById(id);
+    Logger.log('Cana Documents OK: ' + f.getName());
+  }
+  Logger.log('Next: Run verifyDriveFolders');
 }

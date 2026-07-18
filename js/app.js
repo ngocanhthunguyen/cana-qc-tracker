@@ -751,12 +751,13 @@ async function callAppsScript(payload){
   const body = JSON.stringify(payload);
 
   // Primary: GET write — same reliable path as Reload (POST often returns 405 from Vercel)
-  if(payload.action === 'write'){
+  if(payload.action === 'write' || payload.action === 'setDriveConfig'){
     const encoded = utf8ToBase64(body);
     if(encoded.length > 180000) throw new Error('Data too large to sync in one request');
     const url = appsScriptUrl
       + (appsScriptUrl.includes('?') ? '&' : '?')
-      + 'action=write&payload=' + encodeURIComponent(encoded)
+      + 'action=' + encodeURIComponent(payload.action)
+      + '&payload=' + encodeURIComponent(encoded)
       + '&_=' + Date.now();
     const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
     const text = await res.text();
@@ -811,7 +812,7 @@ async function pullFromGoogleSheet(silent){
     if(data.farmList && data.farmList.length) state.farmList = data.farmList;
     if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
     if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
-    if(data.driveParentFolderId !== undefined) state.driveParentFolderId = data.driveParentFolderId || '';
+    if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -826,6 +827,21 @@ async function pullFromGoogleSheet(silent){
     console.warn('sheet pull failed', e);
     if(!silent) alert('Could not reload Google Sheet:\n' + e.message + '\n\nRedeploy Apps Script with access set to Anyone.\nไม่สามารถโหลด Google Sheet ได้');
   }
+}
+async function pushDriveConfigToSheet(silent){
+  if(!appsScriptUrl) throw new Error('Google Sheet not connected');
+  const payload = {
+    action: 'setDriveConfig',
+    driveParentFolderId: state.driveParentFolderId || '',
+    farmDriveFolders: state.farmDriveFolders || {}
+  };
+  const data = await callAppsScript(payload);
+  if(!data.ok) throw new Error(data.error || 'Could not save Drive folder to Sheet');
+  if(!data.updatedAt) throw new Error('Backend outdated — paste latest CANA_QC_GoogleAppsScript.gs, redeploy, then Save again.');
+  lastRemoteJson = stateFingerprint();
+  lastSyncTime = new Date().toLocaleTimeString();
+  sheetSyncOk = true;
+  updateConnPill();
 }
 async function pushToGoogleSheet(silent){
   if(!appsScriptUrl) return;
@@ -1032,7 +1048,7 @@ function openDriveFoldersModal(){
   const close = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#btnCloseDriveFolders').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
-  root.querySelector('#driveFoldersForm').onsubmit = (e)=>{
+  root.querySelector('#driveFoldersForm').onsubmit = async (e)=>{
     e.preventDefault();
     const raw = String(new FormData(e.target).get('parentFolder') || '').trim();
     const parent = normalizeDriveFolderId(raw);
@@ -1042,10 +1058,23 @@ function openDriveFoldersModal(){
     }
     state.driveParentFolderId = parent;
     state.farmDriveFolders = {};
-    onDataChanged();
-    close();
-    render();
-    showDocToast('Cana Documents folder saved');
+    saveLocal();
+    const btn = e.target.querySelector('button[type="submit"]');
+    const prevLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try{
+      await pushDriveConfigToSheet(false);
+      localDirty = true;
+      debouncedPushToSheet();
+      close();
+      render();
+      showDocToast('Saved to Google Sheet ✓');
+    }catch(err){
+      alert('Could not save Drive folder to Google Sheet:\n\n' + err.message + '\n\nFix: Apps Script → paste latest CANA_QC_GoogleAppsScript.gs → Save → Deploy new version → Save here again.');
+      btn.disabled = false;
+      btn.textContent = prevLabel;
+    }
   };
 }
 
