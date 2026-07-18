@@ -291,7 +291,7 @@ function updateConnPill(){
     pill.textContent = 'Not linked / ยังไม่เชื่อม';
   }
   const openBtn = document.getElementById('btnOpenSheet');
-  if(openBtn) openBtn.style.display = appsScriptUrl ? '' : 'none';
+  if(openBtn) openBtn.style.display = (appsScriptUrl && isAdmin()) ? '' : 'none';
   updateAdminUI();
 }
 function isAdmin(){
@@ -321,8 +321,10 @@ function updateAdminUI(){
   document.querySelectorAll('.admin-only').forEach(el=>{
     el.style.display = isAdmin() ? '' : 'none';
   });
-  const linkBtn = document.getElementById('btnLinkSheet');
-  if(linkBtn && !appsScriptUrl) linkBtn.style.display = ''; // first-time sheet setup
+  if(!isAdmin() && currentFarmTab === 'documents'){
+    currentFarmTab = 'qc';
+    if(currentView === 'farm') render();
+  }
 }
 /** Returns true if allowed; false if blocked (may open PIN modal). */
 function requireAdmin(reason, onSuccess){
@@ -437,16 +439,23 @@ function docFileIcon(doc){
 }
 function farmSubtabsHtml(){
   const docCount = (state.documents[currentFarm]||[]).length;
+  const docsBtn = isAdmin()
+    ? `<button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>`
+    : '';
   return `<div class="farm-subtabs">
     <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
-    <button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>
+    ${docsBtn}
   </div>`;
 }
 function bindFarmSubtabs(root){
   const qc = root.querySelector('#btnFarmQc');
   const docs = root.querySelector('#btnFarmDocs');
   if(qc) qc.onclick = ()=>{ currentFarmTab='qc'; render(); };
-  if(docs) docs.onclick = ()=>{ currentFarmTab='documents'; render(); };
+  if(docs) docs.onclick = ()=>{
+    if(!requireAdmin('document library', ()=>{ currentFarmTab='documents'; render(); })) return;
+    currentFarmTab='documents';
+    render();
+  };
 }
 function renderYieldChart(perFarm){
   const rows = perFarm.filter(r=>r.batches > 0 && r.avgYield !== null);
@@ -500,7 +509,7 @@ function downloadDocument(doc){
       a.click();
       setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
     } else if(doc.url){
-      window.open(doc.url, '_blank', 'noopener');
+      openExternalDocUrl(doc.url);
     } else {
       alert('File is only on the device that uploaded it. Add a Google Drive URL for team access.\nไฟล์อยู่เฉพาะเครื่องที่อัปโหลด — ใส่ลิงก์ Google Drive สำหรับทีม');
     }
@@ -513,11 +522,33 @@ function openDocument(doc){
       const blob = b64ToBlob(data, mime);
       window.open(URL.createObjectURL(blob), '_blank');
     } else if(doc.url){
-      window.open(doc.url, '_blank', 'noopener');
+      openExternalDocUrl(doc.url);
     } else {
       alert('File is only on the device that uploaded it. Add a Google Drive URL for team access.\nไฟล์อยู่เฉพาะเครื่องที่อัปโหลด — ใส่ลิงก์ Google Drive สำหรับทีม');
     }
   });
+}
+function normalizeExternalUrl(raw){
+  let url = String(raw || '').trim();
+  if(!url) return '';
+  if(/^https?:\/\//i.test(url)) return url;
+  if(/^(drive\.google\.com|docs\.google\.com|www\.)/i.test(url)) return 'https://' + url;
+  if(url.includes('drive.google.com') || url.includes('docs.google.com')) return 'https://' + url.replace(/^\/+/, '');
+  return url;
+}
+function isDriveFolderUrl(url){
+  return /drive\.google\.com\/(?:drive\/)?folders\//i.test(String(url || ''));
+}
+function openExternalDocUrl(url){
+  url = normalizeExternalUrl(url);
+  if(!url) return false;
+  if(isDriveFolderUrl(url)){
+    alert('This is a Google Drive FOLDER link — it cannot open a photo/PDF directly.\n\n1. Open the folder in Drive\n2. Right-click the FILE → Share → Copy link\n3. Paste that file link in External URL\n\nนี่เป็นลิงก์ folder — ต้อง copy link ของไฟล์ ไม่ใช่ folder');
+    window.open(url, '_blank', 'noopener');
+    return true;
+  }
+  window.open(url, '_blank', 'noopener');
+  return true;
 }
 function b64ToBlob(b64, mime){
   const bin = atob(b64);
@@ -879,7 +910,7 @@ function openManageFarmsModal(){
 }
 
 function openSheetSetupGuide(){
-  if(appsScriptUrl && !requireAdmin('Google Sheet setup', ()=> openSheetSetupGuide())) return;
+  if(!requireAdmin('Google Sheet setup', ()=> openSheetSetupGuide())) return;
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
   <div class="overlay" id="overlay">
@@ -996,6 +1027,7 @@ function openLinkSheetModal(){
   };
 }
 function openGoogleSheetInBrowser(){
+  if(!requireAdmin('open Google Sheet', openGoogleSheetInBrowser)) return;
   const url = sheetViewUrl || localStorage.getItem(SHEET_VIEW_URL_KEY);
   if(url) window.open(url, '_blank', 'noopener');
   else alert('Add your Google Sheet URL when connecting (optional field), or open it from Google Drive.\nใส่ URL ของ Google Sheet ตอนเชื่อมต่อ หรือเปิดจาก Google Drive');
@@ -1506,10 +1538,11 @@ function computeDashboard(month){
 
 /* ============ RENDER: SHELL ============ */
 function render(){
+  if(!isAdmin() && currentFarmTab === 'documents') currentFarmTab = 'qc';
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
-  else if(currentFarmTab==='documents') renderFarmDocuments();
+  else if(currentFarmTab==='documents' && isAdmin()) renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
 }
@@ -1910,6 +1943,7 @@ function updateDocViewResults(){
   bindDocGridActions(main);
 }
 function renderFarmDocuments(){
+  if(!isAdmin()){ currentFarmTab = 'qc'; renderFarmView(); return; }
   const main = document.getElementById('mainArea');
   const docs = getFilteredFarmDocuments();
   const linkedCount = docs.filter(d=>d.url).length;
@@ -1985,7 +2019,7 @@ function renderDocCard(doc){
         </div>
       </div>
     </div>
-    ${doc.url ? `<div class="doc-link-row"><a href="${esc(doc.url)}" target="_blank" rel="noopener">Open in Google Drive ↗</a></div>` : ''}
+    ${doc.url ? `<div class="doc-link-row"><a href="${esc(normalizeExternalUrl(doc.url))}" target="_blank" rel="noopener">Open in Google Drive ↗</a></div>` : ''}
     ${doc.notes ? `<div class="doc-notes">${esc(doc.notes)}</div>` : ''}
     <div class="doc-actions">
       ${hasFile ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
@@ -1996,6 +2030,7 @@ function renderDocCard(doc){
 }
 
 function openDocumentModal(id, prefill){
+  if(!requireAdmin('manage documents', ()=> openDocumentModal(id, prefill))) return;
   const doc = id ? state.documents[currentFarm].find(d=>d.id===id) : {
     id:uid(), title:'', category:DOCUMENT_CATEGORIES[0], fileName:'', mimeType:'', size:0,
     notes:'', uploadedBy:'', uploadedAt:new Date().toISOString().slice(0,10), url:'', data:''
@@ -2040,7 +2075,7 @@ function openDocumentModal(id, prefill){
       category: fd.get('category') || DOCUMENT_CATEGORIES[0],
       uploadedAt: fd.get('uploadedAt') || '',
       uploadedBy: fd.get('uploadedBy') || '',
-      url: fd.get('url') || '',
+      url: normalizeExternalUrl(fd.get('url') || ''),
       notes: fd.get('notes') || ''
     };
     const fileInput = document.getElementById('docModalFile');
@@ -2070,6 +2105,7 @@ function openDocumentModal(id, prefill){
 }
 
 async function handleDocUploadInput(evt){
+  if(!requireAdmin('upload documents')){ evt.target.value = ''; return; }
   const files = Array.from(evt.target.files || []);
   evt.target.value = '';
   if(!files.length) return;
@@ -2592,8 +2628,12 @@ async function init(){
   await loadRemoteConfig();
 
   document.getElementById('btnLinkSheet').onclick = ()=>{
+    if(!requireAdmin('Google Sheet', ()=>{
+      if(!appsScriptUrl) openSheetSetupGuide();
+      else openLinkSheetModal();
+    })) return;
     if(!appsScriptUrl) openSheetSetupGuide();
-    else if(requireAdmin('Google Sheet settings', openLinkSheetModal)) openLinkSheetModal();
+    else openLinkSheetModal();
   };
   document.getElementById('btnAdmin').onclick = toggleAdminSession;
   document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
