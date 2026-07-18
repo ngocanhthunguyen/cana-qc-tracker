@@ -538,7 +538,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Trimming'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Trim Rework', 'Trim Cana'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -836,7 +836,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1148,9 +1148,13 @@ function writeDocuments(ss, documents, farmList) {
   }
 }
 
-/* ---------- Trimming tab ---------- */
+/* ---------- Trimming — separate Rework / Cana sheet tabs ---------- */
 
-var TRIM_HEADERS = ['_id', 'Type', 'Date', 'Source Farm', 'Batch ID', 'Strain', 'Input Wt (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
+var TRIM_REWORK_SHEET = 'Trim Rework';
+var TRIM_CANA_SHEET = 'Trim Cana';
+var TRIM_TYPE_REWORK = 'Rework flower';
+var TRIM_TYPE_CANA = 'Cana flower';
+var TRIM_HEADERS = ['_id', 'Date', 'Source Farm', 'Batch ID', 'Strain', 'Input Wt (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
 var TRIM_NUM_COLS = TRIM_HEADERS.length;
 var TRIM_HEADER_ROW = 3;
 var TRIM_DATA_START = 4;
@@ -1181,31 +1185,31 @@ function computeTrimRow(rec) {
   return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct };
 }
 
-function setupTrimmingTab(ss) {
-  var sheet = ss.getSheetByName('Trimming');
-  if (!sheet) sheet = ss.insertSheet('Trimming');
+function setupTrimmingTab(ss, sheetName, subtitle, tabColor) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) sheet = ss.insertSheet(sheetName);
   sheet.clear();
   sheet.getRange(1, 1, 1, TRIM_NUM_COLS).merge()
-    .setValue('CANA QC TRACKER  ·  TRIMMING RECORDS')
+    .setValue('CANA QC TRACKER  ·  ' + sheetName.toUpperCase())
     .setBackground(THEME.greenDark).setFontColor(THEME.white)
     .setFontSize(15).setFontWeight('bold')
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
   sheet.setRowHeight(1, 46);
   sheet.getRange(2, 1, 1, TRIM_NUM_COLS).merge()
-    .setValue('Rework flower (clean incoming) · Cana flower (in-house grow) · Synced from web app')
-    .setBackground('#7c3aed').setFontColor(THEME.white)
+    .setValue(subtitle + ' · Synced from web app · weights in grams (g)')
+    .setBackground(tabColor).setFontColor(THEME.white)
     .setFontSize(10).setFontWeight('bold')
     .setHorizontalAlignment('center');
   sheet.setRowHeight(2, 28);
   sheet.getRange(TRIM_HEADER_ROW, 1, 1, TRIM_NUM_COLS).setValues([TRIM_HEADERS])
     .setFontWeight('bold').setFontSize(9).setWrap(true)
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
-  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 6).setBackground(THEME.blueBg).setFontColor('#1e40af');
-  sheet.getRange(TRIM_HEADER_ROW, 7, 1, 7).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
-  sheet.getRange(TRIM_HEADER_ROW, 14, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
-  sheet.getRange(TRIM_HEADER_ROW, 18, 1, 4).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 5).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(TRIM_HEADER_ROW, 6, 1, 7).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(TRIM_HEADER_ROW, 13, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.getRange(TRIM_HEADER_ROW, 17, 1, 4).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
   sheet.setRowHeight(TRIM_HEADER_ROW, 36);
-  sheet.setTabColor('#7c3aed');
+  sheet.setTabColor(tabColor);
   sheet.setFrozenRows(TRIM_HEADER_ROW);
   sheet.hideColumns(1);
   sheet.hideColumns(TRIM_NUM_COLS);
@@ -1217,47 +1221,155 @@ function formatTrimmingSheet(sheet, numRows) {
     var rowNum = TRIM_DATA_START + r;
     var bg = r % 2 === 0 ? THEME.white : THEME.purplePale;
     sheet.getRange(rowNum, 1, 1, TRIM_NUM_COLS).setBackground(bg).setFontSize(10).setWrap(true);
-    var type = String(sheet.getRange(rowNum, 2).getValue() || '');
-    if (type.indexOf('Rework') >= 0) {
-      sheet.getRange(rowNum, 2).setBackground('#fef3c7').setFontColor('#b45309').setFontWeight('bold');
-    } else if (type.indexOf('Cana') >= 0) {
-      sheet.getRange(rowNum, 2).setBackground(THEME.passBg).setFontColor(THEME.pass).setFontWeight('bold');
-    }
   }
-  sheet.getRange(TRIM_DATA_START, 7, numRows, 11).setNumberFormat('#,##0.##');
-  sheet.getRange(TRIM_DATA_START, 17, numRows, 1).setNumberFormat('0.00"%"');
+  sheet.getRange(TRIM_DATA_START, 6, numRows, 11).setNumberFormat('#,##0.##');
+  sheet.getRange(TRIM_DATA_START, 16, numRows, 1).setNumberFormat('0.00"%"');
 }
 
-function readTrimming(ss) {
-  var sheet = ss.getSheetByName('Trimming');
+function parseTrimRowValues(row, type) {
+  if (!row[0] && !row[2] && !row[5]) return null;
+  return {
+    id: String(row[0] || '') || newId(),
+    type: type,
+    date: formatSheetDate(row[1]),
+    sourceFarm: String(row[2] || ''),
+    batchId: String(row[3] || ''),
+    strain: String(row[4] || ''),
+    inputWt: cellStr(row[5]),
+    outputBigsG: cellStr(row[6]),
+    outputPopsG: cellStr(row[7]),
+    moldG: cellStr(row[8]),
+    seedsG: cellStr(row[9]),
+    stemsG: cellStr(row[10]),
+    wasteG: cellStr(row[11]),
+    trimmedBy: String(row[16] || ''),
+    status: String(row[17] || ''),
+    notes: String(row[18] || ''),
+    linkedRecordId: String(row[19] || '')
+  };
+}
+
+function readTrimmingFromSheet(ss, sheetName, type) {
+  var sheet = ss.getSheetByName(sheetName);
   if (!sheet || sheet.getLastRow() < TRIM_DATA_START) return [];
   var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
   if (numRows < 1) return [];
   var values = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_NUM_COLS).getValues();
   var list = [];
   values.forEach(function(row) {
-    if (!row[1] && !row[3] && !row[6]) return;
-    list.push({
-      id: String(row[0] || '') || newId(),
-      type: String(row[1] || ''),
-      date: formatSheetDate(row[2]),
-      sourceFarm: String(row[3] || ''),
-      batchId: String(row[4] || ''),
-      strain: String(row[5] || ''),
-      inputWt: cellStr(row[6]),
-      outputBigsG: cellStr(row[7]),
-      outputPopsG: cellStr(row[8]),
-      moldG: cellStr(row[9]),
-      seedsG: cellStr(row[10]),
-      stemsG: cellStr(row[11]),
-      wasteG: cellStr(row[12]),
-      trimmedBy: String(row[17] || ''),
-      status: String(row[18] || ''),
-      notes: String(row[19] || ''),
-      linkedRecordId: String(row[20] || '')
-    });
+    var rec = parseTrimRowValues(row, type);
+    if (rec) list.push(rec);
   });
   return list;
+}
+
+/** Legacy single-tab format (with Type column) */
+function readLegacyTrimmingSheet(ss) {
+  var sheet = ss.getSheetByName('Trimming');
+  if (!sheet || sheet.getLastRow() < TRIM_DATA_START) return [];
+  var header = String(sheet.getRange(TRIM_HEADER_ROW, 2).getValue() || '');
+  var hasTypeCol = header === 'Type' || header.indexOf('Type') >= 0;
+  var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
+  if (numRows < 1) return [];
+  var colCount = hasTypeCol ? TRIM_NUM_COLS + 1 : TRIM_NUM_COLS;
+  var values = sheet.getRange(TRIM_DATA_START, 1, numRows, colCount).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (hasTypeCol) {
+      if (!row[1] && !row[3] && !row[6]) return;
+      list.push({
+        id: String(row[0] || '') || newId(),
+        type: String(row[1] || ''),
+        date: formatSheetDate(row[2]),
+        sourceFarm: String(row[3] || ''),
+        batchId: String(row[4] || ''),
+        strain: String(row[5] || ''),
+        inputWt: cellStr(row[6]),
+        outputBigsG: cellStr(row[7]),
+        outputPopsG: cellStr(row[8]),
+        moldG: cellStr(row[9]),
+        seedsG: cellStr(row[10]),
+        stemsG: cellStr(row[11]),
+        wasteG: cellStr(row[12]),
+        trimmedBy: String(row[17] || ''),
+        status: String(row[18] || ''),
+        notes: String(row[19] || ''),
+        linkedRecordId: String(row[20] || '')
+      });
+    } else {
+      var rec = parseTrimRowValues(row, TRIM_TYPE_REWORK);
+      if (rec) list.push(rec);
+    }
+  });
+  return list;
+}
+
+function readTrimming(ss) {
+  var rework = readTrimmingFromSheet(ss, TRIM_REWORK_SHEET, TRIM_TYPE_REWORK);
+  var cana = readTrimmingFromSheet(ss, TRIM_CANA_SHEET, TRIM_TYPE_CANA);
+  if (rework.length || cana.length) return rework.concat(cana);
+  return readLegacyTrimmingSheet(ss);
+}
+
+function trimRowToValues(rec) {
+  var c = computeTrimRow(rec);
+  return [
+    rec.id || newId(),
+    rec.date || '',
+    rec.sourceFarm || '',
+    rec.batchId || '',
+    rec.strain || '',
+    rec.inputWt || '',
+    rec.outputBigsG || '',
+    rec.outputPopsG || '',
+    rec.moldG || '',
+    rec.seedsG || '',
+    rec.stemsG || '',
+    rec.wasteG || '',
+    c.totalFlower === null ? '' : c.totalFlower,
+    c.totalOut === null ? '' : c.totalOut,
+    c.diff === null ? '' : c.diff,
+    c.yieldPct === null ? '' : c.yieldPct,
+    rec.trimmedBy || '',
+    rec.status || '',
+    rec.notes || '',
+    rec.linkedRecordId || ''
+  ];
+}
+
+function writeTrimmingSheet(ss, sheetName, subtitle, tabColor, records) {
+  setupTrimmingTab(ss, sheetName, subtitle, tabColor);
+  var sheet = ss.getSheetByName(sheetName);
+  var rows = (records || []).map(trimRowToValues);
+  if (sheet.getLastRow() >= TRIM_DATA_START) {
+    sheet.getRange(TRIM_DATA_START, 1, sheet.getLastRow() - TRIM_HEADER_ROW, TRIM_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(TRIM_DATA_START, 1, rows.length, TRIM_NUM_COLS).setValues(rows);
+    formatTrimmingSheet(sheet, rows.length);
+  }
+}
+
+function writeTrimming(ss, trimming) {
+  var all = trimming || [];
+  var rework = all.filter(function(r) { return String(r.type || '').indexOf('Rework') >= 0; });
+  var cana = all.filter(function(r) { return String(r.type || '').indexOf('Cana') >= 0; });
+  writeTrimmingSheet(ss, TRIM_REWORK_SHEET, 'Rework flower — clean incoming batches (mold, seeds, stems)', '#d97706', rework);
+  writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — in-house grow trimming', '#16a34a', cana);
+  var legacy = ss.getSheetByName('Trimming');
+  if (legacy) ss.deleteSheet(legacy);
+}
+
+/** Run once — creates Trim Rework + Trim Cana tabs (migrates old Trimming tab if present) */
+function upgradeTrimmingTab() {
+  var ss = getSpreadsheet();
+  var data = readTrimming(ss);
+  writeTrimming(ss, data);
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Trim Rework: ' + data.filter(function(r) { return String(r.type).indexOf('Rework') >= 0; }).length);
+  Logger.log('Trim Cana: ' + data.filter(function(r) { return String(r.type).indexOf('Cana') >= 0; }).length);
+  Logger.log('Trimming tabs ready.');
 }
 
 function cellStr(v) {
@@ -1268,54 +1380,6 @@ function cellStr(v) {
 function formatSheetDate(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   return String(v || '');
-}
-
-function writeTrimming(ss, trimming) {
-  setupTrimmingTab(ss);
-  var sheet = ss.getSheetByName('Trimming');
-  var rows = [];
-  (trimming || []).forEach(function(rec) {
-    var c = computeTrimRow(rec);
-    rows.push([
-      rec.id || newId(),
-      rec.type || '',
-      rec.date || '',
-      rec.sourceFarm || '',
-      rec.batchId || '',
-      rec.strain || '',
-      rec.inputWt || '',
-      rec.outputBigsG || '',
-      rec.outputPopsG || '',
-      rec.moldG || '',
-      rec.seedsG || '',
-      rec.stemsG || '',
-      rec.wasteG || '',
-      c.totalFlower === null ? '' : c.totalFlower,
-      c.totalOut === null ? '' : c.totalOut,
-      c.diff === null ? '' : c.diff,
-      c.yieldPct === null ? '' : c.yieldPct,
-      rec.trimmedBy || '',
-      rec.status || '',
-      rec.notes || '',
-      rec.linkedRecordId || ''
-    ]);
-  });
-  if (sheet.getLastRow() >= TRIM_DATA_START) {
-    sheet.getRange(TRIM_DATA_START, 1, sheet.getLastRow() - TRIM_HEADER_ROW, TRIM_NUM_COLS).clearContent();
-  }
-  if (rows.length) {
-    sheet.getRange(TRIM_DATA_START, 1, rows.length, TRIM_NUM_COLS).setValues(rows);
-    formatTrimmingSheet(sheet, rows.length);
-  }
-}
-
-/** Run once — creates Trimming tab in Google Sheet */
-function upgradeTrimmingTab() {
-  var ss = getSpreadsheet();
-  writeTrimming(ss, readTrimming(ss));
-  orderTabs(ss);
-  SpreadsheetApp.flush();
-  Logger.log('Trimming tab ready.');
 }
 
 function recordToRow(rec) {

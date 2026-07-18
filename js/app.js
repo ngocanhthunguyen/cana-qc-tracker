@@ -9,6 +9,7 @@ let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let trimSubTab = 'rework'; // 'rework' | 'cana'
 let trimSearchText = '';
+let trimMonth = '';
 let currentFarmTab = 'qc'; // 'qc' | 'documents'
 let docCategoryFilter = '';
 let docSearchText = '';
@@ -118,6 +119,12 @@ function fmtNum(v, dec){
 function fmtPct(v){
   if(v===null||v===undefined||v==='') return '';
   return (Number(v)*100).toFixed(1)+'%';
+}
+function fmtWeight(g, dec){
+  const n = num(g);
+  if(n === null) return '—';
+  if(Math.abs(n) >= 1000) return fmtNum(n / 1000, dec === undefined ? 2 : dec) + ' kg';
+  return fmtNum(n, dec) + ' g';
 }
 function esc(s){
   if(s===undefined||s===null) return '';
@@ -1884,6 +1891,11 @@ function allMonths(){
   getFarmList().forEach(f=>(state.farms[f]||[]).forEach(r=>{ const m = r.date?formatMonth(r.date):''; if(m) set.add(m); }));
   return Array.from(set).sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
 }
+function allTrimMonths(){
+  const set = new Set(allMonths());
+  (state.trimming||[]).forEach(r=>{ const m = r.date?formatMonth(r.date):''; if(m) set.add(m); });
+  return Array.from(set).sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+}
 function currentMonthLabel(){
   const d = new Date();
   const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -2292,43 +2304,71 @@ function showDocToast(msg){
 /* ============ RENDER: TRIMMING ============ */
 function getFilteredTrimmingRecords(){
   const type = trimTypeForSubTab(trimSubTab);
+  const month = trimMonth || currentMonthLabel();
   const q = trimSearchText.trim().toLowerCase();
   return (state.trimming||[]).filter(rec=>{
     if(rec.type !== type) return false;
+    if((rec.date ? formatMonth(rec.date) : '') !== month) return false;
     if(!q) return true;
     const hay = [rec.batchId, rec.sourceFarm, rec.strain, rec.trimmedBy, rec.notes].join(' ').toLowerCase();
     return hay.includes(q);
   }).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 function renderTrimStats(records){
-  let input = 0, flower = 0, n = 0;
+  let input = 0, flower = 0, mold = 0, seeds = 0, stems = 0, waste = 0, n = 0;
   records.forEach(rec=>{
     const c = computeTrimRow(rec);
     if(num(rec.inputWt) !== null) input += num(rec.inputWt);
     if(c.totalFlower !== null) flower += c.totalFlower;
+    if(num(rec.moldG) !== null) mold += num(rec.moldG);
+    if(num(rec.seedsG) !== null) seeds += num(rec.seedsG);
+    if(num(rec.stemsG) !== null) stems += num(rec.stemsG);
+    if(num(rec.wasteG) !== null) waste += num(rec.wasteG);
     n++;
   });
   const avgYield = input ? flower / input : null;
-  return { count: n, input, flower, avgYield };
+  return { count: n, input, flower, mold, seeds, stems, waste, avgYield };
+}
+function renderTrimStatsMeta(stats){
+  return `
+    <span class="doc-badge">${stats.count} session${stats.count===1?'':'s'}</span>
+    <span class="doc-badge">${fmtWeight(stats.input)} in</span>
+    <span class="doc-badge">${fmtWeight(stats.flower)} flower</span>
+    <span class="doc-badge">${fmtWeight(stats.mold)} mold</span>
+    <span class="doc-badge">${fmtWeight(stats.seeds)} seeds</span>
+    <span class="doc-badge">${fmtPct(stats.avgYield)||'—'} yield</span>`;
+}
+function renderTrimStatsKpi(stats){
+  return `<div class="trim-kpi-row">
+    <div class="kpi"><span>Sessions</span><b>${stats.count}</b></div>
+    <div class="kpi"><span>Input</span><b>${fmtWeight(stats.input)}</b></div>
+    <div class="kpi"><span>Flower out</span><b>${fmtWeight(stats.flower)}</b></div>
+    <div class="kpi"><span>Mold removed</span><b>${fmtWeight(stats.mold)}</b></div>
+    <div class="kpi"><span>Seeds removed</span><b>${fmtWeight(stats.seeds)}</b></div>
+    <div class="kpi"><span>Stems / waste</span><b>${fmtWeight(stats.stems + stats.waste)}</b></div>
+    <div class="kpi"><span>Avg yield</span><b>${fmtPct(stats.avgYield)||'—'}</b></div>
+  </div>`;
 }
 function renderTrimmingTable(records){
   if(!records.length){
-    return `<div class="panel empty-state"><b>No trimming records yet.</b><br>Click <b>+ New record</b> to log a ${esc(trimTypeForSubTab(trimSubTab))} session.</div>`;
+    return `<div class="panel empty-state"><b>No trimming records for this month.</b><br>Click <b>+ New session</b> to log ${esc(trimTypeForSubTab(trimSubTab))} weights (strain, input, mold, seeds, etc.).</div>`;
   }
   const head = `<thead><tr>
-    <th>Date</th><th>Batch / Farm</th><th>Strain</th><th>Input</th><th>Flower out</th><th>Yield</th><th>Diff</th><th>By</th><th>Status</th><th>Actions</th>
+    <th>Date</th><th>Strain</th><th>Batch / Farm</th><th>Input</th><th>Flower out</th><th>Mold</th><th>Seeds</th><th>Stems</th><th>Waste</th><th>Yield</th><th>By</th><th>Status</th><th>Actions</th>
   </tr></thead>`;
   const body = records.map(rec=>{
     const c = computeTrimRow(rec);
-    const badge = trimBadgeClass(rec.type);
     return `<tr>
       <td>${esc(rec.date||'—')}</td>
-      <td><span class="trim-badge ${badge}">${esc(rec.type.split(' ')[0])}</span><br><span class="batch-id">${esc(rec.batchId||'—')}</span><br><span style="font-size:11px;color:var(--muted)">${esc(rec.sourceFarm||'—')}</span></td>
       <td><b>${esc(rec.strain||'—')}</b></td>
-      <td>${fmtNum(rec.inputWt)} g</td>
-      <td>${fmtNum(c.totalFlower)} g</td>
+      <td><span class="batch-id">${esc(rec.batchId||'—')}</span><br><span style="font-size:11px;color:var(--muted)">${esc(rec.sourceFarm||'—')}</span></td>
+      <td>${fmtWeight(rec.inputWt)}</td>
+      <td>${fmtWeight(c.totalFlower)}</td>
+      <td>${fmtWeight(rec.moldG)}</td>
+      <td>${fmtWeight(rec.seedsG)}</td>
+      <td>${fmtWeight(rec.stemsG)}</td>
+      <td>${fmtWeight(rec.wasteG)}</td>
       <td>${fmtPct(c.yieldPct)||'—'}</td>
-      <td class="${diffClass(c.diff)}">${c.diff!==null?fmtNum(c.diff)+' g':'—'}</td>
       <td>${esc(rec.trimmedBy||'—')}</td>
       <td><span class="status-chip ${(rec.status||'').indexOf('Complete')>=0?'pass':'pending'}">${esc((rec.status||'—').split(' / ')[0])}</span></td>
       <td><div class="action-group">
@@ -2337,25 +2377,26 @@ function renderTrimmingTable(records){
       </div></td>
     </tr>`;
   }).join('');
-  return `<div class="table-wrap desktop-table"><table class="compact-table">${head}<tbody>${body}</tbody></table></div>`;
+  return `<div class="table-wrap desktop-table"><table class="compact-table trim-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 function renderTrimmingView(){
   if(!requireLogin()) return;
+  if(!trimMonth) trimMonth = currentMonthLabel();
+  const months = allTrimMonths();
+  if(!months.includes(trimMonth)) months.push(trimMonth);
+  months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
   const main = document.getElementById('mainArea');
   const records = getFilteredTrimmingRecords();
   const stats = renderTrimStats(records);
   const isRework = trimSubTab === 'rework';
+  const sheetTab = isRework ? 'Trim Rework' : 'Trim Cana';
   main.innerHTML = `
     <div class="trim-header">
       <div>
-        <h2>✂️ Trimming Records</h2>
-        <p class="sub">${isRework ? 'Rework flower — clean incoming batches (mold, seeds, stems)' : 'Cana flower — in-house grow cleaning'} · <span class="bi">${isRework ? 'ทำความสะอาดดอกจากฟาร์มอื่น' : 'ดอก Cana ปลูกเอง'}</span></p>
+        <h2>✂️ Trimming — ${esc(isRework ? 'Rework flower' : 'Cana flower')}</h2>
+        <p class="sub">${isRework ? 'Track each rework session: strain, input weight, flower out, mold, seeds, stems' : 'Track each Cana trim session: strain, weights in/out, mold, seeds'} · Syncs to Google Sheet tab <b>${esc(sheetTab)}</b> · <span class="bi">${isRework ? 'ทำความสะอาดดอกจากฟาร์มอื่น' : 'ดอก Cana ปลูกเอง'}</span></p>
       </div>
-      <div class="trim-header-meta">
-        <span class="doc-badge">${stats.count} record${stats.count===1?'':'s'}</span>
-        <span class="doc-badge">${fmtNum(stats.input)||0} g in</span>
-        <span class="doc-badge">${fmtPct(stats.avgYield)||'—'} avg yield</span>
-      </div>
+      <div class="trim-header-meta" id="trimStatsMeta">${renderTrimStatsMeta(stats)}</div>
     </div>
 
     <div class="trim-subtabs">
@@ -2363,16 +2404,24 @@ function renderTrimmingView(){
       <button type="button" class="${trimSubTab==='cana'?'active':''}" id="btnTrimCana">🌿 Cana flower <span class="bi">/ Cana</span></button>
     </div>
 
-    <div class="row-actions">
-      <button class="primary" id="btnNewTrim">+ New record <span class="bi">/ เพิ่มรายการ</span></button>
+    <div class="row-actions trim-toolbar">
+      <button class="primary" id="btnNewTrim">+ New session <span class="bi">/ เพิ่มรายการ</span></button>
+      <label class="month-filter">Month:
+        <select id="trimMonthInput">
+          ${months.map(m=>`<option value="${esc(m)}" ${m===trimMonth?'selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+      </label>
       <input class="search-box" id="trimSearchBox" placeholder="Search batch, strain, name…" value="${esc(trimSearchText)}">
     </div>
+
+    ${renderTrimStatsKpi(stats)}
 
     <div id="trimResultsWrap">${renderTrimmingTable(records)}</div>
   `;
   document.getElementById('btnTrimRework').onclick = ()=>{ trimSubTab='rework'; renderTrimmingView(); };
   document.getElementById('btnTrimCana').onclick = ()=>{ trimSubTab='cana'; renderTrimmingView(); };
   document.getElementById('btnNewTrim').onclick = ()=> openTrimmingModal(null);
+  document.getElementById('trimMonthInput').onchange = (e)=>{ trimMonth = e.target.value; renderTrimmingView(); };
   document.getElementById('trimSearchBox').oninput = (e)=>{ trimSearchText = e.target.value; updateTrimViewResults(); };
   bindTrimActions(main);
 }
@@ -2380,6 +2429,11 @@ function updateTrimViewResults(){
   const main = document.getElementById('mainArea');
   if(!main || currentView !== 'trimming') return;
   const records = getFilteredTrimmingRecords();
+  const stats = renderTrimStats(records);
+  const meta = document.getElementById('trimStatsMeta');
+  if(meta) meta.innerHTML = renderTrimStatsMeta(stats);
+  const kpi = main.querySelector('.trim-kpi-row');
+  if(kpi) kpi.outerHTML = renderTrimStatsKpi(stats);
   const wrap = document.getElementById('trimResultsWrap');
   if(wrap) wrap.innerHTML = renderTrimmingTable(records);
   bindTrimActions(main);
@@ -2422,10 +2476,15 @@ function openTrimmingModal(id){
         ${batchSelect}
         ${fields}
         <div class="live-preview full">
-          <div class="preview-grid">
-            <div><span>Flower out</span><b id="tpFlower">${fmtNum(c.totalFlower)||'—'} g</b></div>
-            <div><span>Total out</span><b id="tpOut">${fmtNum(c.totalOut)||'—'} g</b></div>
-            <div><span>Diff</span><b id="tpDiff">${c.diff!==null?fmtNum(c.diff)+' g':'—'}</b></div>
+          <div class="preview-grid trim-preview">
+            <div><span>Input</span><b id="tpInput">${fmtWeight(rec.inputWt)}</b></div>
+            <div><span>Flower out</span><b id="tpFlower">${fmtWeight(c.totalFlower)}</b></div>
+            <div><span>Mold</span><b id="tpMold">${fmtWeight(rec.moldG)}</b></div>
+            <div><span>Seeds</span><b id="tpSeeds">${fmtWeight(rec.seedsG)}</b></div>
+            <div><span>Stems</span><b id="tpStems">${fmtWeight(rec.stemsG)}</b></div>
+            <div><span>Waste</span><b id="tpWaste">${fmtWeight(rec.wasteG)}</b></div>
+            <div><span>Total out</span><b id="tpOut">${fmtWeight(c.totalOut)}</b></div>
+            <div><span>Diff</span><b id="tpDiff">${c.diff!==null?fmtWeight(c.diff):'—'}</b></div>
             <div><span>Yield</span><b id="tpYield">${fmtPct(c.yieldPct)||'—'}</b></div>
           </div>
         </div>
@@ -2493,9 +2552,14 @@ function updateTrimPreview(form){
   TRIMMING_COLS.forEach(col=>{ rec[col.key] = form.querySelector(`[name=${col.key}]`)?.value || ''; });
   const c = computeTrimRow(rec);
   const set = (id, val)=>{ const el = document.getElementById(id); if(el) el.textContent = val; };
-  set('tpFlower', c.totalFlower!==null ? fmtNum(c.totalFlower)+' g' : '—');
-  set('tpOut', c.totalOut!==null ? fmtNum(c.totalOut)+' g' : '—');
-  set('tpDiff', c.diff!==null ? fmtNum(c.diff)+' g' : '—');
+  set('tpInput', fmtWeight(rec.inputWt));
+  set('tpFlower', fmtWeight(c.totalFlower));
+  set('tpMold', fmtWeight(rec.moldG));
+  set('tpSeeds', fmtWeight(rec.seedsG));
+  set('tpStems', fmtWeight(rec.stemsG));
+  set('tpWaste', fmtWeight(rec.wasteG));
+  set('tpOut', fmtWeight(c.totalOut));
+  set('tpDiff', c.diff!==null ? fmtWeight(c.diff) : '—');
   set('tpYield', fmtPct(c.yieldPct)||'—');
 }
 function deleteTrimmingRecord(id){
