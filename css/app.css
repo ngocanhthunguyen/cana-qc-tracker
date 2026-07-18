@@ -362,6 +362,18 @@
   .staff-hint{display:none;font-size:12px;color:var(--muted);margin:0 0 12px;padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;}
   .staff-hint b{color:#1d4ed8;}
 
+  /* ---- Trimming module ---- */
+  .trim-header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px;padding:18px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);}
+  .trim-header h2{margin:0 0 6px;font-size:20px;font-weight:800;letter-spacing:-.02em;}
+  .trim-header .sub{margin:0;font-size:13px;color:var(--muted);line-height:1.45;}
+  .trim-header-meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .trim-subtabs{display:flex;gap:8px;margin-bottom:16px;padding:4px;background:var(--grey-bg);border:1px solid var(--line);border-radius:12px;width:fit-content;max-width:100%;}
+  .trim-subtabs button{border:0;background:transparent;padding:10px 16px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
+  .trim-subtabs button.active{background:#fff;color:#5b21b6;box-shadow:0 2px 8px rgba(15,23,42,.08);}
+  .trim-badge{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
+  .trim-badge.rework{background:#fef3c7;color:#b45309;}
+  .trim-badge.cana{background:var(--pass-bg);color:var(--pass);}
+
   @media (max-width:900px){
     .chart-row{grid-template-columns:1fr;}
     .preview-grid{grid-template-columns:repeat(2,1fr);}

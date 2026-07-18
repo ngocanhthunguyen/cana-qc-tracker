@@ -5,8 +5,10 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
+let trimSubTab = 'rework'; // 'rework' | 'cana'
+let trimSearchText = '';
 let currentFarmTab = 'qc'; // 'qc' | 'documents'
 let docCategoryFilter = '';
 let docSearchText = '';
@@ -54,6 +56,43 @@ function computeRow(rec){
   if(startWt!==null && startWt!==0 && totalFlower!==null){ yieldPct = totalFlower/startWt; }
   const month = rec.date ? formatMonth(rec.date) : '';
   return {totalFlower, totalOut, diff, yieldPct, month};
+}
+
+function computeTrimRow(rec){
+  const inputWt = num(rec.inputWt);
+  const bigs = num(rec.outputBigsG), pops = num(rec.outputPopsG);
+  const mold = num(rec.moldG)||0, seeds = num(rec.seedsG)||0, stems = num(rec.stemsG)||0, waste = num(rec.wasteG)||0;
+  let totalFlower = null, totalOut = null, diff = null, yieldPct = null;
+  if(bigs !== null) totalFlower = bigs + (pops||0);
+  if(bigs !== null || pops !== null || mold || seeds || stems || waste){
+    totalOut = (bigs||0) + (pops||0) + mold + seeds + stems + waste;
+  }
+  if(inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
+  if(inputWt && totalFlower !== null) yieldPct = totalFlower / inputWt;
+  return { totalFlower, totalOut, diff, yieldPct };
+}
+
+function trimTypeForSubTab(tab){
+  return tab === 'cana' ? 'Cana flower' : 'Rework flower';
+}
+function trimBadgeClass(type){
+  return String(type||'').indexOf('Cana') >= 0 ? 'cana' : 'rework';
+}
+function getAllQcBatchOptions(){
+  const opts = [];
+  getFarmList().forEach(farm=>{
+    (state.farms[farm]||[]).forEach(rec=>{
+      if(!rec.date && !rec.strain && !rec.grossWt) return;
+      opts.push({
+        farm,
+        recordId: rec.id,
+        batchId: getBatchId(rec, farm),
+        strain: rec.strain || '',
+        label: getBatchId(rec, farm) + ' · ' + farm + (rec.strain ? ' · ' + rec.strain : '')
+      });
+    });
+  });
+  return opts.sort((a,b)=> String(b.batchId).localeCompare(String(a.batchId)));
 }
 
 function formatMonth(dateStr){
@@ -597,6 +636,7 @@ function closeFarmNav(){
 function ensureStateShape(){
   if(!state.farms) state.farms = {};
   if(!state.documents) state.documents = {};
+  if(!state.trimming) state.trimming = [];
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
@@ -877,7 +917,8 @@ function stateFingerprint(){
     farmList: getFarmList(),
     farmCodes: state.farmCodes || {},
     farmDriveFolders: state.farmDriveFolders || {},
-    driveParentFolderId: state.driveParentFolderId || ''
+    driveParentFolderId: state.driveParentFolderId || '',
+    trimming: state.trimming || []
   });
 }
 function debouncedPushToSheet(){
@@ -971,7 +1012,8 @@ async function pullFromGoogleSheet(silent){
       farmList: data.farmList || getFarmList(),
       farmCodes: data.farmCodes || {},
       farmDriveFolders: data.farmDriveFolders || {},
-      driveParentFolderId: data.driveParentFolderId || ''
+      driveParentFolderId: data.driveParentFolderId || '',
+      trimming: data.trimming || []
     });
     if(fp === lastRemoteJson) return;
     state.farms = data.farms;
@@ -979,6 +1021,7 @@ async function pullFromGoogleSheet(silent){
     if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
     if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
     if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
+    if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice();
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -1022,7 +1065,8 @@ async function pushToGoogleSheet(silent){
         farmList: getFarmList(),
         farmCodes: state.farmCodes || {},
         farmDriveFolders: state.farmDriveFolders || {},
-        driveParentFolderId: state.driveParentFolderId || ''
+        driveParentFolderId: state.driveParentFolderId || '',
+        trimming: state.trimming || []
       }
     };
     const data = await callAppsScript(payload);
@@ -1877,6 +1921,7 @@ function render(){
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
+  else if(currentView==='trimming') renderTrimmingView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
@@ -1911,6 +1956,7 @@ function renderTabs(){
 
   nav.appendChild(navBtn('📊 Dashboard', currentView === 'dashboard', ()=>{ currentView = 'dashboard'; render(); }));
   nav.appendChild(navBtn('🌐 All Farms', currentView === 'allFarms', ()=>{ currentView = 'allFarms'; render(); }));
+  nav.appendChild(navBtn('✂️ Trimming', currentView === 'trimming', ()=>{ currentView = 'trimming'; render(); }));
 
   const divider = document.createElement('span');
   divider.className = 'nav-divider';
@@ -2241,6 +2287,225 @@ function showDocToast(msg){
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(()=>{ el.remove(); }, 3200);
+}
+
+/* ============ RENDER: TRIMMING ============ */
+function getFilteredTrimmingRecords(){
+  const type = trimTypeForSubTab(trimSubTab);
+  const q = trimSearchText.trim().toLowerCase();
+  return (state.trimming||[]).filter(rec=>{
+    if(rec.type !== type) return false;
+    if(!q) return true;
+    const hay = [rec.batchId, rec.sourceFarm, rec.strain, rec.trimmedBy, rec.notes].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+}
+function renderTrimStats(records){
+  let input = 0, flower = 0, n = 0;
+  records.forEach(rec=>{
+    const c = computeTrimRow(rec);
+    if(num(rec.inputWt) !== null) input += num(rec.inputWt);
+    if(c.totalFlower !== null) flower += c.totalFlower;
+    n++;
+  });
+  const avgYield = input ? flower / input : null;
+  return { count: n, input, flower, avgYield };
+}
+function renderTrimmingTable(records){
+  if(!records.length){
+    return `<div class="panel empty-state"><b>No trimming records yet.</b><br>Click <b>+ New record</b> to log a ${esc(trimTypeForSubTab(trimSubTab))} session.</div>`;
+  }
+  const head = `<thead><tr>
+    <th>Date</th><th>Batch / Farm</th><th>Strain</th><th>Input</th><th>Flower out</th><th>Yield</th><th>Diff</th><th>By</th><th>Status</th><th>Actions</th>
+  </tr></thead>`;
+  const body = records.map(rec=>{
+    const c = computeTrimRow(rec);
+    const badge = trimBadgeClass(rec.type);
+    return `<tr>
+      <td>${esc(rec.date||'—')}</td>
+      <td><span class="trim-badge ${badge}">${esc(rec.type.split(' ')[0])}</span><br><span class="batch-id">${esc(rec.batchId||'—')}</span><br><span style="font-size:11px;color:var(--muted)">${esc(rec.sourceFarm||'—')}</span></td>
+      <td><b>${esc(rec.strain||'—')}</b></td>
+      <td>${fmtNum(rec.inputWt)} g</td>
+      <td>${fmtNum(c.totalFlower)} g</td>
+      <td>${fmtPct(c.yieldPct)||'—'}</td>
+      <td class="${diffClass(c.diff)}">${c.diff!==null?fmtNum(c.diff)+' g':'—'}</td>
+      <td>${esc(rec.trimmedBy||'—')}</td>
+      <td><span class="status-chip ${(rec.status||'').indexOf('Complete')>=0?'pass':'pending'}">${esc((rec.status||'—').split(' / ')[0])}</span></td>
+      <td><div class="action-group">
+        <button class="small purple" data-edit-trim="${rec.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-trim="${rec.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap desktop-table"><table class="compact-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+function renderTrimmingView(){
+  if(!requireLogin()) return;
+  const main = document.getElementById('mainArea');
+  const records = getFilteredTrimmingRecords();
+  const stats = renderTrimStats(records);
+  const isRework = trimSubTab === 'rework';
+  main.innerHTML = `
+    <div class="trim-header">
+      <div>
+        <h2>✂️ Trimming Records</h2>
+        <p class="sub">${isRework ? 'Rework flower — clean incoming batches (mold, seeds, stems)' : 'Cana flower — in-house grow cleaning'} · <span class="bi">${isRework ? 'ทำความสะอาดดอกจากฟาร์มอื่น' : 'ดอก Cana ปลูกเอง'}</span></p>
+      </div>
+      <div class="trim-header-meta">
+        <span class="doc-badge">${stats.count} record${stats.count===1?'':'s'}</span>
+        <span class="doc-badge">${fmtNum(stats.input)||0} g in</span>
+        <span class="doc-badge">${fmtPct(stats.avgYield)||'—'} avg yield</span>
+      </div>
+    </div>
+
+    <div class="trim-subtabs">
+      <button type="button" class="${trimSubTab==='rework'?'active':''}" id="btnTrimRework">🔄 Rework flower <span class="bi">/ รีเวิร์ค</span></button>
+      <button type="button" class="${trimSubTab==='cana'?'active':''}" id="btnTrimCana">🌿 Cana flower <span class="bi">/ Cana</span></button>
+    </div>
+
+    <div class="row-actions">
+      <button class="primary" id="btnNewTrim">+ New record <span class="bi">/ เพิ่มรายการ</span></button>
+      <input class="search-box" id="trimSearchBox" placeholder="Search batch, strain, name…" value="${esc(trimSearchText)}">
+    </div>
+
+    <div id="trimResultsWrap">${renderTrimmingTable(records)}</div>
+  `;
+  document.getElementById('btnTrimRework').onclick = ()=>{ trimSubTab='rework'; renderTrimmingView(); };
+  document.getElementById('btnTrimCana').onclick = ()=>{ trimSubTab='cana'; renderTrimmingView(); };
+  document.getElementById('btnNewTrim').onclick = ()=> openTrimmingModal(null);
+  document.getElementById('trimSearchBox').oninput = (e)=>{ trimSearchText = e.target.value; updateTrimViewResults(); };
+  bindTrimActions(main);
+}
+function updateTrimViewResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'trimming') return;
+  const records = getFilteredTrimmingRecords();
+  const wrap = document.getElementById('trimResultsWrap');
+  if(wrap) wrap.innerHTML = renderTrimmingTable(records);
+  bindTrimActions(main);
+}
+function bindTrimActions(root){
+  root.querySelectorAll('[data-edit-trim]').forEach(el=> el.onclick = ()=> openTrimmingModal(el.dataset.editTrim));
+  root.querySelectorAll('[data-delete-trim]').forEach(el=> el.onclick = ()=> deleteTrimmingRecord(el.dataset.deleteTrim));
+  updateAdminUI();
+}
+function openTrimmingModal(id){
+  if(!requireLogin()) return;
+  const type = trimTypeForSubTab(trimSubTab);
+  const rec = id ? (state.trimming||[]).find(r=>r.id===id) : {
+    id: uid(), type, date: todayISO(), sourceFarm: type === 'Cana flower' ? 'Cana' : '',
+    batchId:'', linkedRecordId:'', strain:'', inputWt:'', outputBigsG:'', outputPopsG:'',
+    moldG:'', seedsG:'', stemsG:'', wasteG:'', trimmedBy:'', status: TRIM_STATUS_OPTIONS[0], notes:''
+  };
+  if(!rec) return;
+  const isNew = !id;
+  const batchOpts = getAllQcBatchOptions();
+  const batchSelect = trimSubTab === 'rework' ? `
+    <div class="field full">
+      <label>Link QC batch <span>optional — auto-fills farm & strain</span></label>
+      <select name="linkedBatch" id="trimBatchSelect">
+        <option value="">— Select batch —</option>
+        ${batchOpts.map(o=>`<option value="${esc(o.recordId)}" data-farm="${esc(o.farm)}" data-batch="${esc(o.batchId)}" data-strain="${esc(o.strain)}" ${rec.linkedRecordId===o.recordId?'selected':''}>${esc(o.label)}</option>`).join('')}
+      </select>
+    </div>` : '';
+  const fields = TRIMMING_COLS.filter(c=> !(trimSubTab === 'cana' && c.key === 'sourceFarm'))
+    .map(c=> fieldHtml(c, rec[c.key])).join('');
+  const c = computeTrimRow(rec);
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>${isNew?'+ New':'Edit'} trimming — ${esc(type)}</h2>
+      <form id="trimForm" class="form-grid">
+        <input type="hidden" name="type" value="${esc(type)}">
+        ${batchSelect}
+        ${fields}
+        <div class="live-preview full">
+          <div class="preview-grid">
+            <div><span>Flower out</span><b id="tpFlower">${fmtNum(c.totalFlower)||'—'} g</b></div>
+            <div><span>Total out</span><b id="tpOut">${fmtNum(c.totalOut)||'—'} g</b></div>
+            <div><span>Diff</span><b id="tpDiff">${c.diff!==null?fmtNum(c.diff)+' g':'—'}</b></div>
+            <div><span>Yield</span><b id="tpYield">${fmtPct(c.yieldPct)||'—'}</b></div>
+          </div>
+        </div>
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelTrim">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ if(modalDirty && !confirm('Discard unsaved changes?')) return; modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelTrim').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const form = root.querySelector('#trimForm');
+  const batchSel = root.querySelector('#trimBatchSelect');
+  if(batchSel){
+    batchSel.onchange = ()=>{
+      const opt = batchSel.selectedOptions[0];
+      if(!opt || !opt.value) return;
+      const farmIn = form.querySelector('[name=sourceFarm]');
+      const strainIn = form.querySelector('[name=strain]');
+      const batchIn = form.querySelector('[name=batchId]');
+      if(farmIn) farmIn.value = opt.dataset.farm || '';
+      if(strainIn) strainIn.value = opt.dataset.strain || '';
+      if(batchIn) batchIn.value = opt.dataset.batch || '';
+      modalDirty = true;
+      updateTrimPreview(form);
+    };
+  }
+  form.addEventListener('input', ()=>{ modalDirty = true; updateTrimPreview(form); });
+  form.addEventListener('change', ()=>{ modalDirty = true; updateTrimPreview(form); });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const fd = new FormData(form);
+    const updated = { ...rec };
+    updated.type = type;
+    TRIMMING_COLS.forEach(col=>{
+      updated[col.key] = String(fd.get(col.key) ?? '').trim();
+    });
+    updated.linkedRecordId = batchSel ? String(fd.get('linkedBatch')||'') : (rec.linkedRecordId||'');
+    if(trimSubTab === 'rework' && batchSel && updated.linkedRecordId){
+      const opt = batchSel.selectedOptions[0];
+      if(opt){
+        updated.sourceFarm = opt.dataset.farm || updated.sourceFarm;
+        updated.batchId = opt.dataset.batch || updated.batchId;
+        updated.strain = opt.dataset.strain || updated.strain;
+      }
+    }
+    if(trimSubTab === 'cana') updated.sourceFarm = 'Cana';
+    if(!state.trimming) state.trimming = [];
+    if(isNew) state.trimming.push(updated);
+    else {
+      const i = state.trimming.findIndex(r=>r.id===rec.id);
+      if(i >= 0) state.trimming[i] = updated;
+    }
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    renderTrimmingView();
+    showDocToast('Trimming record saved');
+  };
+}
+function updateTrimPreview(form){
+  const rec = {};
+  TRIMMING_COLS.forEach(col=>{ rec[col.key] = form.querySelector(`[name=${col.key}]`)?.value || ''; });
+  const c = computeTrimRow(rec);
+  const set = (id, val)=>{ const el = document.getElementById(id); if(el) el.textContent = val; };
+  set('tpFlower', c.totalFlower!==null ? fmtNum(c.totalFlower)+' g' : '—');
+  set('tpOut', c.totalOut!==null ? fmtNum(c.totalOut)+' g' : '—');
+  set('tpDiff', c.diff!==null ? fmtNum(c.diff)+' g' : '—');
+  set('tpYield', fmtPct(c.yieldPct)||'—');
+}
+function deleteTrimmingRecord(id){
+  if(!requireAdmin('delete trimming record', ()=> deleteTrimmingRecord(id))) return;
+  const rec = (state.trimming||[]).find(r=>r.id===id);
+  if(!rec) return;
+  if(!confirm('Delete this trimming record?\nลบรายการทริมนี้?')) return;
+  state.trimming = (state.trimming||[]).filter(r=>r.id!==id);
+  onDataChanged();
+  renderTrimmingView();
 }
 
 /* ============ RENDER: FARM DOCUMENTS ============ */

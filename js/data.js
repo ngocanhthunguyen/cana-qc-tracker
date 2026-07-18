@@ -114,12 +114,38 @@ function defaultState(){
     farmDriveFolders: {},
     driveParentFolderId: '',
     farms,
-    documents
+    documents,
+    trimming: []
   };
 }
 
 const DOCUMENT_CATEGORIES = ['Invoice / ใบเสร็จ','COA / Lab Report / ใบรายงานแล็บ','Photos / รูปภาพ','Contract / สัญญา','QC Report / รายงาน QC','Other / อื่นๆ'];
 const MAX_DOC_BYTES = 8 * 1024 * 1024;
+
+const TRIM_TYPES = ['Rework flower', 'Cana flower'];
+const TRIM_STATUS_OPTIONS = ['In progress / กำลังทำ', 'Complete / เสร็จ'];
+const TRIMMING_COLS = [
+  {key:'date', label:'Date', labelTh:'วันที่', type:'date'},
+  {key:'sourceFarm', label:'Source farm', labelTh:'ฟาร์มต้นทาง', type:'text'},
+  {key:'batchId', label:'Batch ID', labelTh:'Batch ID', type:'text'},
+  {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
+  {key:'inputWt', label:'Input Wt (g)', labelTh:'น้ำหนักเข้า (กรัม)', type:'number'},
+  {key:'outputBigsG', label:'Out Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
+  {key:'outputPopsG', label:'Out Pops (g)', labelTh:'ดอกเล็ก (กรัม)', type:'number'},
+  {key:'moldG', label:'Mold removed (g)', labelTh:'รา (กรัม)', type:'number'},
+  {key:'seedsG', label:'Seeds removed (g)', labelTh:'เมล็ด (กรัม)', type:'number'},
+  {key:'stemsG', label:'Stems / scraps (g)', labelTh:'ก้าน/เศษ (กรัม)', type:'number'},
+  {key:'wasteG', label:'Waste (g)', labelTh:'ของเสีย (กรัม)', type:'number'},
+  {key:'trimmedBy', label:'Trimmed by', labelTh:'ทำโดย', type:'text'},
+  {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: TRIM_STATUS_OPTIONS},
+  {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
+];
+const TRIMMING_GREY = [
+  {key:'totalFlower', label:'Total flower out (g)', labelTh:'ดอกรวม (กรัม)'},
+  {key:'totalOut', label:'Total out (g)', labelTh:'รวมออก (กรัม)'},
+  {key:'diff', label:'Diff (g)', labelTh:'ผลต่าง (กรัม)'},
+  {key:'yieldPct', label:'Yield %', labelTh:'Yield %'},
+];
 
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 

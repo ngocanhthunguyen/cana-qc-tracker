@@ -538,7 +538,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Trimming'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -771,6 +771,7 @@ function readAllFarms() {
     ok: true,
     farms: farms,
     documents: readDocuments(ss, farmList),
+    trimming: readTrimming(ss),
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
@@ -835,10 +836,11 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
+  if (state.trimming) writeTrimming(ss, state.trimming);
   updateMeta(ss);
   updateDashboard(ss);
   orderTabs(ss);
@@ -1144,6 +1146,176 @@ function writeDocuments(ss, documents, farmList) {
     sheet.getRange(DOC_DATA_START, 1, rows.length, DOC_NUM_COLS).setValues(rows);
     formatDocumentsSheet(sheet, rows.length);
   }
+}
+
+/* ---------- Trimming tab ---------- */
+
+var TRIM_HEADERS = ['_id', 'Type', 'Date', 'Source Farm', 'Batch ID', 'Strain', 'Input Wt (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
+var TRIM_NUM_COLS = TRIM_HEADERS.length;
+var TRIM_HEADER_ROW = 3;
+var TRIM_DATA_START = 4;
+
+function computeTrimRow(rec) {
+  function num(v) {
+    if (v === '' || v === null || v === undefined) return null;
+    var n = Number(v);
+    return isNaN(n) ? null : n;
+  }
+  var inputWt = num(rec.inputWt);
+  var bigs = num(rec.outputBigsG);
+  var pops = num(rec.outputPopsG);
+  var mold = num(rec.moldG) || 0;
+  var seeds = num(rec.seedsG) || 0;
+  var stems = num(rec.stemsG) || 0;
+  var waste = num(rec.wasteG) || 0;
+  var totalFlower = null;
+  var totalOut = null;
+  var diff = null;
+  var yieldPct = null;
+  if (bigs !== null) totalFlower = bigs + (pops || 0);
+  if (bigs !== null || pops !== null || mold || seeds || stems || waste) {
+    totalOut = (bigs || 0) + (pops || 0) + mold + seeds + stems + waste;
+  }
+  if (inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
+  if (inputWt && totalFlower !== null) yieldPct = Math.round(totalFlower / inputWt * 10000) / 100;
+  return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct };
+}
+
+function setupTrimmingTab(ss) {
+  var sheet = ss.getSheetByName('Trimming');
+  if (!sheet) sheet = ss.insertSheet('Trimming');
+  sheet.clear();
+  sheet.getRange(1, 1, 1, TRIM_NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  TRIMMING RECORDS')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+  sheet.getRange(2, 1, 1, TRIM_NUM_COLS).merge()
+    .setValue('Rework flower (clean incoming) · Cana flower (in-house grow) · Synced from web app')
+    .setBackground('#7c3aed').setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+  sheet.getRange(TRIM_HEADER_ROW, 1, 1, TRIM_NUM_COLS).setValues([TRIM_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 6).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(TRIM_HEADER_ROW, 7, 1, 7).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(TRIM_HEADER_ROW, 14, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.getRange(TRIM_HEADER_ROW, 18, 1, 4).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.setRowHeight(TRIM_HEADER_ROW, 36);
+  sheet.setTabColor('#7c3aed');
+  sheet.setFrozenRows(TRIM_HEADER_ROW);
+  sheet.hideColumns(1);
+  sheet.hideColumns(TRIM_NUM_COLS);
+}
+
+function formatTrimmingSheet(sheet, numRows) {
+  if (!sheet || numRows < 1) return;
+  for (var r = 0; r < numRows; r++) {
+    var rowNum = TRIM_DATA_START + r;
+    var bg = r % 2 === 0 ? THEME.white : THEME.purplePale;
+    sheet.getRange(rowNum, 1, 1, TRIM_NUM_COLS).setBackground(bg).setFontSize(10).setWrap(true);
+    var type = String(sheet.getRange(rowNum, 2).getValue() || '');
+    if (type.indexOf('Rework') >= 0) {
+      sheet.getRange(rowNum, 2).setBackground('#fef3c7').setFontColor('#b45309').setFontWeight('bold');
+    } else if (type.indexOf('Cana') >= 0) {
+      sheet.getRange(rowNum, 2).setBackground(THEME.passBg).setFontColor(THEME.pass).setFontWeight('bold');
+    }
+  }
+  sheet.getRange(TRIM_DATA_START, 7, numRows, 11).setNumberFormat('#,##0.##');
+  sheet.getRange(TRIM_DATA_START, 17, numRows, 1).setNumberFormat('0.00"%"');
+}
+
+function readTrimming(ss) {
+  var sheet = ss.getSheetByName('Trimming');
+  if (!sheet || sheet.getLastRow() < TRIM_DATA_START) return [];
+  var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[3] && !row[6]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      type: String(row[1] || ''),
+      date: formatSheetDate(row[2]),
+      sourceFarm: String(row[3] || ''),
+      batchId: String(row[4] || ''),
+      strain: String(row[5] || ''),
+      inputWt: cellStr(row[6]),
+      outputBigsG: cellStr(row[7]),
+      outputPopsG: cellStr(row[8]),
+      moldG: cellStr(row[9]),
+      seedsG: cellStr(row[10]),
+      stemsG: cellStr(row[11]),
+      wasteG: cellStr(row[12]),
+      trimmedBy: String(row[17] || ''),
+      status: String(row[18] || ''),
+      notes: String(row[19] || ''),
+      linkedRecordId: String(row[20] || '')
+    });
+  });
+  return list;
+}
+
+function cellStr(v) {
+  if (v === '' || v === null || v === undefined) return '';
+  return String(v);
+}
+
+function formatSheetDate(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return String(v || '');
+}
+
+function writeTrimming(ss, trimming) {
+  setupTrimmingTab(ss);
+  var sheet = ss.getSheetByName('Trimming');
+  var rows = [];
+  (trimming || []).forEach(function(rec) {
+    var c = computeTrimRow(rec);
+    rows.push([
+      rec.id || newId(),
+      rec.type || '',
+      rec.date || '',
+      rec.sourceFarm || '',
+      rec.batchId || '',
+      rec.strain || '',
+      rec.inputWt || '',
+      rec.outputBigsG || '',
+      rec.outputPopsG || '',
+      rec.moldG || '',
+      rec.seedsG || '',
+      rec.stemsG || '',
+      rec.wasteG || '',
+      c.totalFlower === null ? '' : c.totalFlower,
+      c.totalOut === null ? '' : c.totalOut,
+      c.diff === null ? '' : c.diff,
+      c.yieldPct === null ? '' : c.yieldPct,
+      rec.trimmedBy || '',
+      rec.status || '',
+      rec.notes || '',
+      rec.linkedRecordId || ''
+    ]);
+  });
+  if (sheet.getLastRow() >= TRIM_DATA_START) {
+    sheet.getRange(TRIM_DATA_START, 1, sheet.getLastRow() - TRIM_HEADER_ROW, TRIM_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(TRIM_DATA_START, 1, rows.length, TRIM_NUM_COLS).setValues(rows);
+    formatTrimmingSheet(sheet, rows.length);
+  }
+}
+
+/** Run once — creates Trimming tab in Google Sheet */
+function upgradeTrimmingTab() {
+  var ss = getSpreadsheet();
+  writeTrimming(ss, readTrimming(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Trimming tab ready.');
 }
 
 function recordToRow(rec) {
