@@ -323,10 +323,6 @@ function updateAdminUI(){
   document.querySelectorAll('.admin-only').forEach(el=>{
     el.style.display = isAdmin() ? '' : 'none';
   });
-  if(!isAdmin() && currentFarmTab === 'documents'){
-    currentFarmTab = 'qc';
-    if(currentView === 'farm') render();
-  }
 }
 /** Returns true if allowed; false if blocked (may open PIN modal). */
 function requireAdmin(reason, onSuccess){
@@ -437,6 +433,7 @@ function ensureStateShape(){
   if(!state.documents) state.documents = {};
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
+  if(!state.farmDriveFolders) state.farmDriveFolders = {};
   getFarmList().forEach(f=>{
     if(!state.farms[f]) state.farms[f] = [];
     if(!state.documents[f]) state.documents[f] = [];
@@ -460,23 +457,42 @@ function docFileIcon(doc){
 }
 function farmSubtabsHtml(){
   const docCount = (state.documents[currentFarm]||[]).length;
-  const docsBtn = isAdmin()
-    ? `<button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>`
-    : '';
+  const driveOk = !!getFarmDriveFolderId(currentFarm);
   return `<div class="farm-subtabs">
     <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
-    ${docsBtn}
-  </div>${!isAdmin() ? '<p class="doc-staff-hint">📁 Documents: click <b>Log in</b> (top right) and enter manager PIN.</p>' : ''}`;
+    <button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>
+  </div>${driveOk ? '' : '<p class="doc-staff-hint">📁 Drive folder not linked for this farm yet — admin: <b>More → Drive Folders</b>.</p>'}`;
 }
 function bindFarmSubtabs(root){
   const qc = root.querySelector('#btnFarmQc');
   const docs = root.querySelector('#btnFarmDocs');
   if(qc) qc.onclick = ()=>{ currentFarmTab='qc'; render(); };
-  if(docs) docs.onclick = ()=>{
-    if(!requireAdmin('document library', ()=>{ currentFarmTab='documents'; render(); })) return;
-    currentFarmTab='documents';
-    render();
+  if(docs) docs.onclick = ()=>{ currentFarmTab='documents'; render(); };
+}
+function extractDriveFolderId(url){
+  const m = String(url || '').trim().match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : '';
+}
+function getFarmDriveFolderId(farm){
+  return (state.farmDriveFolders && state.farmDriveFolders[farm]) || '';
+}
+function hasDriveUploadForFarm(farm){
+  return !!(appsScriptUrl && getFarmDriveFolderId(farm));
+}
+async function uploadFileToFarmDrive(file, farm){
+  if(!appsScriptUrl) throw new Error('Google Sheet not connected');
+  if(!getFarmDriveFolderId(farm)) throw new Error('No Drive folder configured for ' + farm);
+  const data = await readFileAsBase64(file);
+  const payload = {
+    action: 'uploadDoc',
+    farm,
+    fileName: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    data
   };
+  const res = await gasPostXHR(appsScriptUrl, JSON.stringify(payload));
+  if(!res.ok) throw new Error(res.error || 'Upload failed');
+  return res;
 }
 function renderYieldChart(perFarm){
   const rows = perFarm.filter(r=>r.batches > 0 && r.avgYield !== null);
@@ -679,7 +695,8 @@ function stateFingerprint(){
     farms: state.farms,
     documents: stripDocsForSheet(state.documents),
     farmList: getFarmList(),
-    farmCodes: state.farmCodes || {}
+    farmCodes: state.farmCodes || {},
+    farmDriveFolders: state.farmDriveFolders || {}
   });
 }
 function debouncedPushToSheet(){
@@ -770,12 +787,14 @@ async function pullFromGoogleSheet(silent){
       farms: data.farms,
       documents: data.documents || {},
       farmList: data.farmList || getFarmList(),
-      farmCodes: data.farmCodes || {}
+      farmCodes: data.farmCodes || {},
+      farmDriveFolders: data.farmDriveFolders || {}
     });
     if(fp === lastRemoteJson) return;
     state.farms = data.farms;
     if(data.farmList && data.farmList.length) state.farmList = data.farmList;
     if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
+    if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -802,7 +821,8 @@ async function pushToGoogleSheet(silent){
         farms: state.farms,
         documents: stripDocsForSheet(state.documents),
         farmList: getFarmList(),
-        farmCodes: state.farmCodes || {}
+        farmCodes: state.farmCodes || {},
+        farmDriveFolders: state.farmDriveFolders || {}
       }
     };
     const data = await callAppsScript(payload);
@@ -870,6 +890,7 @@ function removeFarm(farm, opts){
   delete state.farms[farm];
   delete state.documents[farm];
   if(state.farmCodes) delete state.farmCodes[farm];
+  if(state.farmDriveFolders) delete state.farmDriveFolders[farm];
   if(currentFarm === farm){
     currentFarm = getFarmList()[0] || '';
     currentView = currentFarm ? 'farm' : 'dashboard';
@@ -962,6 +983,54 @@ function openManageFarmsModal(){
     close();
     render();
     alert('Farm added: ' + name.trim() + '\nเพิ่มฟาร์มแล้ว — ข้อมูลจะซิงค์ไป Google Sheet');
+  };
+}
+
+function openDriveFoldersModal(){
+  if(!requireAdmin('Drive folder setup', ()=> openDriveFoldersModal())) return;
+  modalDirty = true;
+  if(!state.farmDriveFolders) state.farmDriveFolders = {};
+  const list = getFarmList();
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:640px">
+      <h2>📁 Drive Folders / โฟลเดอร์ Google Drive</h2>
+      <div class="sub">Paste the Google Drive <b>folder link</b> for each farm. Uploads from the app go into that folder automatically.</div>
+      <form id="driveFoldersForm">
+        ${list.map((f, i)=>{
+          const id = getFarmDriveFolderId(f);
+          const preview = id ? ('https://drive.google.com/drive/folders/' + id) : '';
+          return `<div class="field full" style="margin-bottom:12px">
+            <label>${esc(f)} <span>folder link</span></label>
+            <input type="url" name="folder_${i}" data-farm="${esc(f)}" value="${esc(preview)}" placeholder="https://drive.google.com/drive/folders/...">
+          </div>`;
+        }).join('')}
+        <p class="farm-add-hint">Open <b>Cana Documents → [Farm]</b> in Drive → copy URL from browser.<br>Share <b>Cana Documents</b> with team as Editor.</p>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCloseDriveFolders">Cancel</button>
+          <button type="submit" class="primary">Save folders</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCloseDriveFolders').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#driveFoldersForm').onsubmit = (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const folders = {};
+    list.forEach((f, i)=>{
+      const raw = String(fd.get('folder_' + i) || '').trim();
+      const id = extractDriveFolderId(raw);
+      if(id) folders[f] = id;
+    });
+    state.farmDriveFolders = folders;
+    onDataChanged();
+    close();
+    render();
+    showDocToast('Drive folders saved');
   };
 }
 
@@ -1598,7 +1667,7 @@ function render(){
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
-  else if(currentFarmTab==='documents' && isAdmin()) renderFarmDocuments();
+  else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
 }
@@ -2005,10 +2074,10 @@ function updateDocViewResults(){
   bindDocGridActions(main);
 }
 function renderFarmDocuments(){
-  if(!isAdmin()){ currentFarmTab = 'qc'; renderFarmView(); return; }
   const main = document.getElementById('mainArea');
   const docs = getFilteredFarmDocuments();
-  const linkedCount = docs.filter(d=>d.url).length;
+  const linkedCount = docs.filter(d=> isValidExternalUrl(d.url)).length;
+  const driveReady = hasDriveUploadForFarm(currentFarm);
 
   main.innerHTML = `
     ${farmSubtabsHtml()}
@@ -2017,21 +2086,21 @@ function renderFarmDocuments(){
       <h3>📁 Document Library — ${esc(currentFarm)}</h3>
       <div class="doc-header-meta">
         <span class="doc-badge" id="docCountBadge">${docs.length} document${docs.length===1?'':'s'}</span>
-        <span class="doc-badge" id="docLinkBadge">${linkedCount} team link${linkedCount===1?'':'s'}</span>
-        <span class="doc-badge">↻ Syncs to Google Sheet</span>
+        <span class="doc-badge" id="docLinkBadge">${linkedCount} on Drive</span>
+        <span class="doc-badge">${driveReady ? '☁️ Upload → Cana Documents/' + esc(currentFarm) : '⚠️ Link Drive folder (admin)'}</span>
       </div>
     </div>
 
     <div class="doc-steps">
-      <div class="doc-step"><div class="doc-step-num">1</div><b>Upload to Google Drive</b><span>Save PDF, COA, or invoice in your shared Drive folder.</span></div>
-      <div class="doc-step"><div class="doc-step-num">2</div><b>Add in CANA QC Tracker</b><span>Click + Add Document → paste Drive link in External URL.</span></div>
-      <div class="doc-step"><div class="doc-step-num">3</div><b>Team sees it everywhere</b><span>Appears in app + Google Sheet Documents tab after Save.</span></div>
+      <div class="doc-step"><div class="doc-step-num">1</div><b>Upload in app</b><span>Click <b>Upload File</b> — saves to shared Drive folder for this farm.</span></div>
+      <div class="doc-step"><div class="doc-step-num">2</div><b>Auto team access</b><span>Everyone sees the document after sync (~6 sec).</span></div>
+      <div class="doc-step"><div class="doc-step-num">3</div><b>Open anytime</b><span>Click Open — file opens from Google Drive.</span></div>
     </div>
 
     <div class="doc-toolbar">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <button class="primary" id="btnAddDoc">+ Add Document <span class="bi">/ เพิ่มเอกสาร</span></button>
-        <button id="btnUploadDoc">📎 Upload File <span class="bi">/ อัปโหลดไฟล์</span></button>
+        <button class="primary" id="btnUploadDoc">📎 Upload File <span class="bi">/ อัปโหลดไฟล์</span></button>
+        ${isAdmin() ? `<button id="btnAddDoc">+ Add link <span class="bi">/ เพิ่มลิงก์</span></button>` : ''}
         <input class="search-box" id="docSearchBox" placeholder="Search documents… / ค้นหาเอกสาร…" value="${esc(docSearchText)}">
         <select id="docCategoryFilter">
           <option value="">All categories / ทุกหมวด</option>
@@ -2051,8 +2120,15 @@ function renderFarmDocuments(){
   `;
 
   bindFarmSubtabs(main);
-  document.getElementById('btnAddDoc').onclick = ()=> openDocumentModal(null);
-  document.getElementById('btnUploadDoc').onclick = ()=> document.getElementById('docUploadInput').click();
+  document.getElementById('btnUploadDoc').onclick = ()=>{
+    if(!hasDriveUploadForFarm(currentFarm)){
+      alert('Drive folder not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders → paste folder link.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive สำหรับฟาร์มนี้');
+      return;
+    }
+    document.getElementById('docUploadInput').click();
+  };
+  const btnAdd = document.getElementById('btnAddDoc');
+  if(btnAdd) btnAdd.onclick = ()=> openDocumentModal(null);
   document.getElementById('docSearchBox').oninput = (e)=>{ docSearchText = e.target.value; updateDocViewResults(); };
   document.getElementById('docCategoryFilter').onchange = (e)=>{ docCategoryFilter = e.target.value; updateDocViewResults(); };
   bindDocGridActions(main);
@@ -2064,7 +2140,7 @@ function renderDocCard(doc){
   const hasLink = isValidExternalUrl(doc.url);
   const cardClass = hasLink ? 'has-link' : ((doc._fileInIdb || doc.data || doc.hasLocalFile) ? 'local-only' : '');
   const syncTag = hasLink
-    ? '<span class="doc-sync-tag synced">Team link · Google Sheet ✓</span>'
+    ? '<span class="doc-sync-tag synced">On Google Drive · team access ✓</span>'
     : ((doc._fileInIdb || doc.data || doc.hasLocalFile)
       ? '<span class="doc-sync-tag local">This device only</span>'
       : '<span class="doc-sync-tag synced">Notes sync · Google Sheet ✓</span>');
@@ -2087,8 +2163,8 @@ function renderDocCard(doc){
       ${hasLink ? `<button class="small primary" data-open-doc="${doc.id}">Open / เปิด</button>` : ''}
       ${hasFile && !hasLink ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
       ${hasFile && hasLink ? `<button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
-      <button class="small" data-edit-doc="${doc.id}">Edit / แก้ไข</button>
-        <button class="small danger admin-only" data-delete-doc="${doc.id}">Delete / ลบ</button>
+      ${isAdmin() ? `<button class="small admin-only" data-edit-doc="${doc.id}">Edit / แก้ไข</button>` : ''}
+      ${isAdmin() ? `<button class="small danger admin-only" data-delete-doc="${doc.id}">Delete / ลบ</button>` : ''}
     </div>
   </div>`;
 }
@@ -2169,34 +2245,48 @@ function openDocumentModal(id, prefill){
 }
 
 async function handleDocUploadInput(evt){
-  if(!requireAdmin('upload documents')){ evt.target.value = ''; return; }
   const files = Array.from(evt.target.files || []);
   evt.target.value = '';
   if(!files.length) return;
+  if(!hasDriveUploadForFarm(currentFarm)){
+    alert('Drive folder not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive');
+    return;
+  }
+  let ok = 0, fail = 0;
   for(const file of files){
     if(file.size > MAX_DOC_BYTES){
-      alert('Skipped "' + file.name + '" — too large (max 8 MB).\nข้ามไฟล์นี้ — ใหญ่เกิน 8 MB');
+      alert('Skipped "' + file.name + '" — too large (max 8 MB).');
+      fail++;
       continue;
     }
-    const data = await readFileAsBase64(file);
-    state.documents[currentFarm].push({
-      id: uid(),
-      title: file.name.replace(/\.[^.]+$/,''),
-      category: DOCUMENT_CATEGORIES[DOCUMENT_CATEGORIES.length - 1],
-      fileName: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      size: file.size,
-      notes: '',
-      uploadedBy: '',
-      uploadedAt: new Date().toISOString().slice(0,10),
-      url: '',
-      data
-    });
+    try{
+      showDocToast('Uploading ' + file.name + ' to Drive…');
+      const res = await uploadFileToFarmDrive(file, currentFarm);
+      state.documents[currentFarm].push({
+        id: uid(),
+        title: file.name.replace(/\.[^.]+$/,''),
+        category: DOCUMENT_CATEGORIES[DOCUMENT_CATEGORIES.length - 1],
+        fileName: res.fileName || file.name,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+        notes: '',
+        uploadedBy: '',
+        uploadedAt: new Date().toISOString().slice(0,10),
+        url: res.url || '',
+        data: ''
+      });
+      ok++;
+    }catch(e){
+      alert('Upload failed for "' + file.name + '":\n' + e.message);
+      fail++;
+    }
   }
-  onDataChanged();
-  currentFarmTab = 'documents';
-  render();
-  showDocToast('File saved on this device · add Google Drive link for team access');
+  if(ok){
+    onDataChanged();
+    currentFarmTab = 'documents';
+    render();
+    showDocToast(ok + ' file(s) uploaded to Cana Documents/' + currentFarm);
+  }
 }
 
 function deleteDocument(id){
@@ -2702,6 +2792,7 @@ async function init(){
   document.getElementById('btnAdmin').onclick = toggleAdminSession;
   document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
   document.getElementById('btnManageFarms').onclick = ()=>{ toggleMoreMenu(false); openManageFarmsModal(); };
+  document.getElementById('btnDriveFolders').onclick = ()=>{ toggleMoreMenu(false); openDriveFoldersModal(); };
   document.getElementById('btnOpenSheet').onclick = openGoogleSheetInBrowser;
   document.getElementById('btnReconnect').onclick = reconnectFile;
   document.getElementById('btnReload').onclick = ()=>{

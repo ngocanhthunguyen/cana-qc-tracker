@@ -134,6 +134,9 @@ function doPost(e) {
       writeAllFarms(data.state);
       return jsonOut({ ok: true, updatedAt: new Date().toISOString() });
     }
+    if (data.action === 'uploadDoc') {
+      return jsonOut(uploadDocumentToFarm(data.farm, data.fileName, data.mimeType, data.data));
+    }
     return jsonOut({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err) });
@@ -209,6 +212,70 @@ function writeFarmConfig(ss, farmList, farmCodes) {
     meta.getRange('A5').setValue('farmCodes');
     meta.getRange('B5').setValue(JSON.stringify(farmCodes));
   }
+}
+
+function readFarmDriveFoldersFromMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return {};
+  var raw = meta.getRange('B6').getValue();
+  if (!raw) return {};
+  try {
+    var obj = JSON.parse(String(raw));
+    return (obj && typeof obj === 'object') ? obj : {};
+  } catch (e) {}
+  return {};
+}
+
+function writeFarmDriveFolders(ss, folders) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) {
+    meta = ss.insertSheet('_Meta');
+    meta.hideSheet();
+    meta.getRange('A1').setValue('CANA QC Tracker — do not delete');
+  }
+  meta.getRange('A6').setValue('farmDriveFolders');
+  meta.getRange('B6').setValue(JSON.stringify(folders || {}));
+}
+
+function extractDriveFolderId(url) {
+  var s = String(url || '').trim();
+  var m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : '';
+}
+
+function uploadDocumentToFarm(farm, fileName, mimeType, dataB64) {
+  farm = String(farm || '').trim();
+  if (!farm) return { ok: false, error: 'Farm name required' };
+  if (!dataB64) return { ok: false, error: 'No file data' };
+  var folders = readFarmDriveFoldersFromMeta(getSpreadsheet());
+  var folderId = folders[farm];
+  if (!folderId) {
+    return { ok: false, error: 'No Drive folder configured for "' + farm + '". Admin: More → Drive Folders.' };
+  }
+  var folder;
+  try {
+    folder = DriveApp.getFolderById(String(folderId));
+  } catch (e) {
+    return { ok: false, error: 'Cannot open Drive folder for "' + farm + '". Check folder link and that you own the folder.' };
+  }
+  var bytes;
+  try {
+    bytes = Utilities.base64Decode(String(dataB64));
+  } catch (e) {
+    return { ok: false, error: 'Invalid file data' };
+  }
+  if (bytes.length > 8 * 1024 * 1024) {
+    return { ok: false, error: 'File too large (max 8 MB)' };
+  }
+  var blob = Utilities.newBlob(bytes, mimeType || 'application/octet-stream', fileName || 'document');
+  var file = folder.createFile(blob);
+  var fileId = file.getId();
+  return {
+    ok: true,
+    url: 'https://drive.google.com/file/d/' + fileId + '/view',
+    fileId: fileId,
+    fileName: file.getName()
+  };
 }
 
 function deleteOrphanFarmSheet(ss, farmName, farmList) {
@@ -502,6 +569,7 @@ function readAllFarms() {
     documents: readDocuments(ss, farmList),
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
+    farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
     readAt: new Date().toISOString()
   };
 }
@@ -548,6 +616,9 @@ function writeAllFarms(state) {
   var farmList = (state.farmList && state.farmList.length) ? state.farmList : getFarmList(ss);
   if (state.farmList && state.farmList.length) {
     writeFarmConfig(ss, state.farmList, state.farmCodes || {});
+  }
+  if (state.farmDriveFolders && typeof state.farmDriveFolders === 'object') {
+    writeFarmDriveFolders(ss, state.farmDriveFolders);
   }
   farmList.forEach(function(farm) {
     var records = (state.farms && state.farms[farm]) ? state.farms[farm] : [];
