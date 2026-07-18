@@ -1803,6 +1803,7 @@ function updateStatusLine(msg){
 }
 
 function exportJSON(){
+  if(!requireAdmin('export data')) return;
   const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1929,6 +1930,7 @@ function parseWorkbookToState(wb){
 }
 
 function exportExcel(){
+  if(!requireAdmin('export Excel copy')) return;
   const wb = buildWorkbook();
   XLSX.writeFile(wb, 'CANA_QC_Tracker_export.xlsx');
 }
@@ -2052,6 +2054,7 @@ function buildAllFarmsSheetRows(items, month){
   return allRows;
 }
 function exportTotalExcel(month, items){
+  if(!requireAdmin('export monthly totals')) return;
   const m = month || dashMonth || currentMonthLabel();
   const selected = items || requireExportSelection(m);
   if(!selected) return;
@@ -2064,6 +2067,7 @@ function exportTotalExcel(month, items){
   showDocToast('Exported ' + fileName);
 }
 function exportMonthExcel(month, items){
+  if(!requireAdmin('export monthly package')) return;
   const m = month || dashMonth || currentMonthLabel();
   const selected = items || requireExportSelection(m);
   if(!selected) return;
@@ -2086,6 +2090,7 @@ function exportMonthExcel(month, items){
   showDocToast('Exported ' + fileName);
 }
 function exportCompanyExcel(companyId, month, items){
+  if(!requireAdmin('export company report')) return;
   const company = getExportCompanies().find(c=>c.id === companyId);
   if(!company) return;
   const m = month || dashMonth || currentMonthLabel();
@@ -3699,6 +3704,7 @@ function renderCompanyPreviewTable(company, month, items){
 }
 
 function renderDashboard(){
+  if(!isManager() && dashSubTab === 'exports') dashSubTab = 'overview';
   if(!dashMonth) dashMonth = currentMonthLabel();
   const months = allMonths();
   if(!months.includes(dashMonth)) months.push(dashMonth);
@@ -3712,16 +3718,16 @@ function renderDashboard(){
         <select id="monthInput" class="dash-select">
           ${months.map(m=>`<option value="${esc(m)}" ${m===dashMonth?'selected':''}>${esc(m)}</option>`).join('')}
         </select>
-        <button class="primary" id="btnExportMonth">⬇ Quick full export</button>
+        <button class="primary admin-only" id="btnExportMonth">⬇ Quick full export</button>
         <button id="btnViewAllFarms">🌐 View all batches</button>
       </div>
       <div class="dash-tabs">
         <button class="${dashSubTab==='overview'?'active':''}" id="dashTabOverview">Overview / ภาพรวม</button>
-        <button class="${dashSubTab==='exports'?'active':''}" id="dashTabExports">Export Builder / ส่งออกรายเดือน</button>
+        <button class="${dashSubTab==='exports'?'active':''} admin-only" id="dashTabExports">Export Builder / ส่งออกรายเดือน</button>
       </div>
     </div>
 
-    ${dashSubTab === 'overview' ? `
+    ${dashSubTab === 'overview' || !isManager() ? `
     <div class="kpi-row">
       <div class="kpi"><div class="v">${summary.total.batches}</div><div class="l">Total Batches</div></div>
       <div class="kpi"><div class="v">${fmtNum(summary.total.totalFlower)} g</div><div class="l">Total Flower</div></div>
@@ -3748,10 +3754,16 @@ function renderDashboard(){
   `;
   document.getElementById('monthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderDashboard(); };
   document.getElementById('dashTabOverview').onclick = ()=>{ dashSubTab='overview'; renderDashboard(); };
-  document.getElementById('dashTabExports').onclick = ()=>{ dashSubTab='exports'; renderDashboard(); };
-  document.getElementById('btnExportMonth').onclick = ()=> exportMonthExcel(dashMonth);
+  const dashExportsTab = document.getElementById('dashTabExports');
+  if(dashExportsTab) dashExportsTab.onclick = ()=>{
+    if(!requireAdmin('monthly exports', ()=>{ dashSubTab='exports'; renderDashboard(); })) return;
+    dashSubTab='exports';
+    renderDashboard();
+  };
+  const btnExportMonth = document.getElementById('btnExportMonth');
+  if(btnExportMonth) btnExportMonth.onclick = ()=> exportMonthExcel(dashMonth);
   document.getElementById('btnViewAllFarms').onclick = ()=>{ currentView='allFarms'; farmMonthFilter=dashMonth; render(); };
-  if(dashSubTab === 'exports') bindExportBuilderEvents(main, dashMonth);
+  if(dashSubTab === 'exports' && isManager()) bindExportBuilderEvents(main, dashMonth);
   main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{ row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth); });
 }
 
