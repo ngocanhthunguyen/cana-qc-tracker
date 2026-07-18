@@ -237,27 +237,135 @@ function writeFarmDriveFolders(ss, folders) {
   meta.getRange('B6').setValue(JSON.stringify(folders || {}));
 }
 
+function readDriveParentFolderFromMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return '';
+  return normalizeDriveFolderId(meta.getRange('B7').getValue());
+}
+
+function writeDriveParentFolder(ss, parentId) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) {
+    meta = ss.insertSheet('_Meta');
+    meta.hideSheet();
+    meta.getRange('A1').setValue('CANA QC Tracker — do not delete');
+  }
+  meta.getRange('A7').setValue('driveParentFolderId');
+  meta.getRange('B7').setValue(normalizeDriveFolderId(parentId) || String(parentId || '').trim());
+}
+
+function normalizeFolderMatchName(name) {
+  return String(name || '').trim().toLowerCase().replace(/\sfarm$/i, '').replace(/\s+/g, '');
+}
+
+function findFarmFolderInParent(parentFolder, farmName) {
+  var target = String(farmName || '').trim().toLowerCase();
+  var targetCore = normalizeFolderMatchName(farmName);
+  var it = parentFolder.getFolders();
+  var fuzzy = null;
+  while (it.hasNext()) {
+    var f = it.next();
+    var n = String(f.getName()).trim();
+    var nl = n.toLowerCase();
+    if (nl === target) return f;
+    if (normalizeFolderMatchName(n) === targetCore) return f;
+    if (nl.replace(/\s+/g, '') === target.replace(/\s+/g, '')) return f;
+    if (nl.indexOf(targetCore) >= 0 || targetCore.indexOf(normalizeFolderMatchName(n)) >= 0) fuzzy = f;
+  }
+  return fuzzy;
+}
+
 function extractDriveFolderId(url) {
   var s = String(url || '').trim();
+  if (!s) return '';
   var m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   return m ? m[1] : '';
+}
+
+function normalizeDriveFolderId(id) {
+  id = String(id || '').trim();
+  if (!id) return '';
+  if (/^https?:\/\//i.test(id)) return extractDriveFolderId(id);
+  return id.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+function getDriveFolderForFarm(farm) {
+  var ss = getSpreadsheet();
+  var folders = readFarmDriveFoldersFromMeta(ss);
+  var folderId = normalizeDriveFolderId(folders[farm]);
+  if (folderId && folderId.length >= 20) {
+    try {
+      var direct = DriveApp.getFolderById(folderId);
+      return { ok: true, folder: direct, folderId: folderId, source: 'override' };
+    } catch (e) { /* try parent lookup below */ }
+  }
+  var parentId = readDriveParentFolderFromMeta(ss);
+  if (!parentId) {
+    return {
+      ok: false,
+      error: 'Drive not configured for "' + farm + '". Admin: More → Drive Folders → paste the Cana Documents parent folder link.'
+    };
+  }
+  if (parentId.length < 20) {
+    return { ok: false, error: 'Cana Documents parent folder link looks incomplete — paste the full URL again.' };
+  }
+  try {
+    var parent = DriveApp.getFolderById(parentId);
+    var sub = findFarmFolderInParent(parent, farm);
+    if (!sub) {
+      return {
+        ok: false,
+        error: 'No subfolder for "' + farm + '" inside Cana Documents. Create a folder named "' + farm + '" (or similar, e.g. Kenny) in Drive.'
+      };
+    }
+    return { ok: true, folder: sub, folderId: sub.getId(), source: 'parent', parentId: parentId };
+  } catch (e) {
+    var who = '';
+    try { who = Session.getEffectiveUser().getEmail(); } catch (err) {}
+    return {
+      ok: false,
+      error: 'Cannot open Cana Documents folder (ID: ' + parentId + '). '
+        + 'Apps Script account: ' + (who || 'deploy owner') + '. '
+        + 'Open that folder link while logged in as that account, then paste it again in More → Drive Folders.'
+    };
+  }
+}
+
+/** Run in Apps Script to test folder access — check Execution log */
+function verifyDriveFolders() {
+  var ss = getSpreadsheet();
+  var farmList = getFarmList(ss);
+  var who = Session.getEffectiveUser().getEmail();
+  var parentId = readDriveParentFolderFromMeta(ss);
+  Logger.log('Apps Script account: ' + who);
+  Logger.log('Cana Documents parent ID: ' + (parentId || '(not set)'));
+  if (parentId) {
+    try {
+      var p = DriveApp.getFolderById(parentId);
+      Logger.log('Parent folder OK: ' + p.getName());
+    } catch (e) {
+      Logger.log('Parent folder FAIL — cannot open ID ' + parentId);
+    }
+  }
+  farmList.forEach(function(farm) {
+    var res = getDriveFolderForFarm(farm);
+    if (res.ok) {
+      Logger.log(farm + ': OK — ' + res.folder.getName() + ' (' + res.folderId + ') via ' + (res.source || '?'));
+    } else {
+      Logger.log(farm + ': FAIL — ' + res.error);
+    }
+  });
 }
 
 function uploadDocumentToFarm(farm, fileName, mimeType, dataB64) {
   farm = String(farm || '').trim();
   if (!farm) return { ok: false, error: 'Farm name required' };
   if (!dataB64) return { ok: false, error: 'No file data' };
-  var folders = readFarmDriveFoldersFromMeta(getSpreadsheet());
-  var folderId = folders[farm];
-  if (!folderId) {
-    return { ok: false, error: 'No Drive folder configured for "' + farm + '". Admin: More → Drive Folders.' };
-  }
-  var folder;
-  try {
-    folder = DriveApp.getFolderById(String(folderId));
-  } catch (e) {
-    return { ok: false, error: 'Cannot open Drive folder for "' + farm + '". Check folder link and that you own the folder.' };
-  }
+  var folderRes = getDriveFolderForFarm(farm);
+  if (!folderRes.ok) return folderRes;
+  var folder = folderRes.folder;
   var bytes;
   try {
     bytes = Utilities.base64Decode(String(dataB64));
@@ -570,6 +678,7 @@ function readAllFarms() {
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
+    driveParentFolderId: readDriveParentFolderFromMeta(ss),
     readAt: new Date().toISOString()
   };
 }
@@ -619,6 +728,9 @@ function writeAllFarms(state) {
   }
   if (state.farmDriveFolders && typeof state.farmDriveFolders === 'object') {
     writeFarmDriveFolders(ss, state.farmDriveFolders);
+  }
+  if (state.driveParentFolderId) {
+    writeDriveParentFolder(ss, state.driveParentFolderId);
   }
   farmList.forEach(function(farm) {
     var records = (state.farms && state.farms[farm]) ? state.farms[farm] : [];

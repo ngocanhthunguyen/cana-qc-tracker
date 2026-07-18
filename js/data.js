@@ -110,6 +110,7 @@ function defaultState(){
     farmList: DEFAULT_FARMS.slice(),
     farmCodes: {...DEFAULT_FARM_CODES},
     farmDriveFolders: {},
+    driveParentFolderId: '',
     farms,
     documents
   };

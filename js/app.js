@@ -434,6 +434,7 @@ function ensureStateShape(){
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
+  if(state.driveParentFolderId === undefined) state.driveParentFolderId = '';
   getFarmList().forEach(f=>{
     if(!state.farms[f]) state.farms[f] = [];
     if(!state.documents[f]) state.documents[f] = [];
@@ -457,11 +458,11 @@ function docFileIcon(doc){
 }
 function farmSubtabsHtml(){
   const docCount = (state.documents[currentFarm]||[]).length;
-  const driveOk = !!getFarmDriveFolderId(currentFarm);
+  const driveOk = hasDriveUploadForFarm(currentFarm);
   return `<div class="farm-subtabs">
     <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
     <button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>
-  </div>${driveOk ? '' : '<p class="doc-staff-hint">📁 Drive folder not linked for this farm yet — admin: <b>More → Drive Folders</b>.</p>'}`;
+  </div>${driveOk ? '' : '<p class="doc-staff-hint">📁 Admin: <b>More → Drive Folders</b> → paste <b>Cana Documents</b> parent folder link once.</p>'}`;
 }
 function bindFarmSubtabs(root){
   const qc = root.querySelector('#btnFarmQc');
@@ -470,18 +471,31 @@ function bindFarmSubtabs(root){
   if(docs) docs.onclick = ()=>{ currentFarmTab='documents'; render(); };
 }
 function extractDriveFolderId(url){
-  const m = String(url || '').trim().match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  const s = String(url || '').trim();
+  if(!s) return '';
+  let m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if(m) return m[1];
+  m = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   return m ? m[1] : '';
 }
+function normalizeDriveFolderId(raw){
+  let id = String(raw || '').trim();
+  if(!id) return '';
+  if(/^https?:\/\//i.test(id)) return extractDriveFolderId(id);
+  return id.replace(/[^a-zA-Z0-9_-]/g, '');
+}
 function getFarmDriveFolderId(farm){
-  return (state.farmDriveFolders && state.farmDriveFolders[farm]) || '';
+  return normalizeDriveFolderId((state.farmDriveFolders && state.farmDriveFolders[farm]) || '');
+}
+function getDriveParentFolderId(){
+  return normalizeDriveFolderId(state.driveParentFolderId || '');
 }
 function hasDriveUploadForFarm(farm){
-  return !!(appsScriptUrl && getFarmDriveFolderId(farm));
+  return !!(appsScriptUrl && (getDriveParentFolderId() || getFarmDriveFolderId(farm)));
 }
 async function uploadFileToFarmDrive(file, farm){
   if(!appsScriptUrl) throw new Error('Google Sheet not connected');
-  if(!getFarmDriveFolderId(farm)) throw new Error('No Drive folder configured for ' + farm);
+  if(!hasDriveUploadForFarm(farm)) throw new Error('Drive not configured for ' + farm + ' — admin: More → Drive Folders → paste Cana Documents parent folder');
   const data = await readFileAsBase64(file);
   const payload = {
     action: 'uploadDoc',
@@ -696,7 +710,8 @@ function stateFingerprint(){
     documents: stripDocsForSheet(state.documents),
     farmList: getFarmList(),
     farmCodes: state.farmCodes || {},
-    farmDriveFolders: state.farmDriveFolders || {}
+    farmDriveFolders: state.farmDriveFolders || {},
+    driveParentFolderId: state.driveParentFolderId || ''
   });
 }
 function debouncedPushToSheet(){
@@ -788,13 +803,15 @@ async function pullFromGoogleSheet(silent){
       documents: data.documents || {},
       farmList: data.farmList || getFarmList(),
       farmCodes: data.farmCodes || {},
-      farmDriveFolders: data.farmDriveFolders || {}
+      farmDriveFolders: data.farmDriveFolders || {},
+      driveParentFolderId: data.driveParentFolderId || ''
     });
     if(fp === lastRemoteJson) return;
     state.farms = data.farms;
     if(data.farmList && data.farmList.length) state.farmList = data.farmList;
     if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
     if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
+    if(data.driveParentFolderId !== undefined) state.driveParentFolderId = data.driveParentFolderId || '';
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -822,7 +839,8 @@ async function pushToGoogleSheet(silent){
         documents: stripDocsForSheet(state.documents),
         farmList: getFarmList(),
         farmCodes: state.farmCodes || {},
-        farmDriveFolders: state.farmDriveFolders || {}
+        farmDriveFolders: state.farmDriveFolders || {},
+        driveParentFolderId: state.driveParentFolderId || ''
       }
     };
     const data = await callAppsScript(payload);
@@ -990,26 +1008,23 @@ function openDriveFoldersModal(){
   if(!requireAdmin('Drive folder setup', ()=> openDriveFoldersModal())) return;
   modalDirty = true;
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
-  const list = getFarmList();
+  const parentId = getDriveParentFolderId();
+  const parentPreview = parentId ? ('https://drive.google.com/drive/folders/' + parentId) : '';
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
   <div class="overlay" id="overlay">
     <div class="modal" style="max-width:640px">
       <h2>📁 Drive Folders / โฟลเดอร์ Google Drive</h2>
-      <div class="sub">Paste the Google Drive <b>folder link</b> for each farm. Uploads from the app go into that folder automatically.</div>
+      <div class="sub">Paste the <b>Cana Documents</b> parent folder once. Uploads go to the matching subfolder (Kenny, BB Farm, …) automatically.</div>
       <form id="driveFoldersForm">
-        ${list.map((f, i)=>{
-          const id = getFarmDriveFolderId(f);
-          const preview = id ? ('https://drive.google.com/drive/folders/' + id) : '';
-          return `<div class="field full" style="margin-bottom:12px">
-            <label>${esc(f)} <span>folder link</span></label>
-            <input type="url" name="folder_${i}" data-farm="${esc(f)}" value="${esc(preview)}" placeholder="https://drive.google.com/drive/folders/...">
-          </div>`;
-        }).join('')}
-        <p class="farm-add-hint">Open <b>Cana Documents → [Farm]</b> in Drive → copy URL from browser.<br>Share <b>Cana Documents</b> with team as Editor.</p>
+        <div class="field full">
+          <label>Cana Documents <span>parent folder link</span></label>
+          <input type="url" name="parentFolder" value="${esc(parentPreview)}" placeholder="https://drive.google.com/drive/folders/..." required>
+        </div>
+        <p class="farm-add-hint">Subfolders inside must match farm names, e.g. <b>Kenny</b>, <b>BB farm</b>, <b>VT farm</b>. Share <b>Cana Documents</b> with team as Editor.<br>Clear old per-farm links — only the parent link is needed now.</p>
         <div class="modal-actions">
           <button type="button" class="ghost" id="btnCloseDriveFolders">Cancel</button>
-          <button type="submit" class="primary">Save folders</button>
+          <button type="submit" class="primary">Save</button>
         </div>
       </form>
     </div>
@@ -1019,18 +1034,18 @@ function openDriveFoldersModal(){
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   root.querySelector('#driveFoldersForm').onsubmit = (e)=>{
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const folders = {};
-    list.forEach((f, i)=>{
-      const raw = String(fd.get('folder_' + i) || '').trim();
-      const id = extractDriveFolderId(raw);
-      if(id) folders[f] = id;
-    });
-    state.farmDriveFolders = folders;
+    const raw = String(new FormData(e.target).get('parentFolder') || '').trim();
+    const parent = normalizeDriveFolderId(raw);
+    if(!parent || parent.length < 20){
+      alert('Paste the full Cana Documents folder URL from Drive.');
+      return;
+    }
+    state.driveParentFolderId = parent;
+    state.farmDriveFolders = {};
     onDataChanged();
     close();
     render();
-    showDocToast('Drive folders saved');
+    showDocToast('Cana Documents folder saved');
   };
 }
 
@@ -2122,7 +2137,7 @@ function renderFarmDocuments(){
   bindFarmSubtabs(main);
   document.getElementById('btnUploadDoc').onclick = ()=>{
     if(!hasDriveUploadForFarm(currentFarm)){
-      alert('Drive folder not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders → paste folder link.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive สำหรับฟาร์มนี้');
+      alert('Drive not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders → paste the Cana Documents parent folder link.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive');
       return;
     }
     document.getElementById('docUploadInput').click();
@@ -2249,7 +2264,7 @@ async function handleDocUploadInput(evt){
   evt.target.value = '';
   if(!files.length) return;
   if(!hasDriveUploadForFarm(currentFarm)){
-    alert('Drive folder not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive');
+    alert('Drive not configured for ' + currentFarm + '.\n\nAdmin: Log in → More → Drive Folders → paste the Cana Documents parent folder link.\n\nยังไม่ได้ตั้งค่าโฟลเดอร์ Drive');
     return;
   }
   let ok = 0, fail = 0;
