@@ -549,6 +549,10 @@ function openDocument(doc){
     }
   });
 }
+function isValidExternalUrl(raw){
+  const url = normalizeExternalUrl(raw);
+  return !!url && /^https?:\/\//i.test(url);
+}
 function extractDriveFileId(url){
   const s = String(url || '').trim();
   let m = s.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
@@ -560,6 +564,7 @@ function extractDriveFileId(url){
 function normalizeExternalUrl(raw){
   let url = String(raw || '').trim();
   if(!url) return '';
+  if(/^open link/i.test(url)) return '';
   if(!/^https?:\/\//i.test(url)){
     if(/^(drive\.google\.com|docs\.google\.com|www\.)/i.test(url)) url = 'https://' + url;
     else if(url.includes('drive.google.com') || url.includes('docs.google.com')) url = 'https://' + url.replace(/^\/+/, '');
@@ -589,6 +594,10 @@ function openExternalLink(url){
   return true;
 }
 function openExternalDocUrl(url){
+  if(!isValidExternalUrl(url)){
+    alert('This document has no valid link.\n\nEdit the document and paste the full Google Drive FILE link:\nhttps://drive.google.com/file/d/...../view\n\nลิงก์ไม่ถูกต้อง — แก้ไขเอกสารแล้วใส่ลิงก์ไฟล์ Google Drive');
+    return false;
+  }
   return openExternalLink(url);
 }
 function b64ToBlob(b64, mime){
@@ -645,10 +654,16 @@ function mergeDocumentsFromRemote(remoteDocs){
     const localById = Object.fromEntries(local.map(d=>[d.id, d]));
     const merged = remote.map(rd=>{
       const localDoc = localById[rd.id];
-      if(localDoc && (localDoc.data || localDoc._fileInIdb)){
-        return {...rd, _fileInIdb: true, data: localDoc.data || ''};
+      let doc = {...rd};
+      if(!isValidExternalUrl(doc.url) && localDoc && isValidExternalUrl(localDoc.url)){
+        doc.url = localDoc.url;
+      } else if(!isValidExternalUrl(doc.url)){
+        doc.url = '';
       }
-      return rd;
+      if(localDoc && (localDoc.data || localDoc._fileInIdb)){
+        doc = {...doc, _fileInIdb: true, data: localDoc.data || ''};
+      }
+      return doc;
     });
     const remoteIds = new Set(remote.map(d=>d.id));
     local.forEach(ld=>{
@@ -2046,7 +2061,7 @@ function renderFarmDocuments(){
 function renderDocCard(doc){
   const icon = docFileIcon(doc);
   const hasFile = !!(doc.data || doc.url || doc._fileInIdb || doc.hasLocalFile);
-  const hasLink = !!doc.url;
+  const hasLink = isValidExternalUrl(doc.url);
   const cardClass = hasLink ? 'has-link' : ((doc._fileInIdb || doc.data || doc.hasLocalFile) ? 'local-only' : '');
   const syncTag = hasLink
     ? '<span class="doc-sync-tag synced">Team link · Google Sheet ✓</span>'
@@ -2066,12 +2081,12 @@ function renderDocCard(doc){
         </div>
       </div>
     </div>
-    ${doc.url ? `<div class="doc-link-row"><a href="${esc(normalizeExternalUrl(doc.url))}" target="_blank" rel="noopener" data-open-doc-link="${doc.id}">Open in Google Drive ↗</a></div>` : ''}
+    ${hasLink ? `<div class="doc-link-row"><a href="${esc(normalizeExternalUrl(doc.url))}" target="_blank" rel="noopener" data-open-doc-link="${doc.id}">Open in Google Drive ↗</a></div>` : (doc.url ? `<div class="doc-link-row doc-link-broken">Link needs update — edit document and paste full Drive file URL</div>` : '')}
     ${doc.notes ? `<div class="doc-notes">${esc(doc.notes)}</div>` : ''}
     <div class="doc-actions">
-      ${doc.url ? `<button class="small primary" data-open-doc="${doc.id}">Open / เปิด</button>` : ''}
-      ${hasFile && !doc.url ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
-      ${hasFile && doc.url ? `<button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
+      ${hasLink ? `<button class="small primary" data-open-doc="${doc.id}">Open / เปิด</button>` : ''}
+      ${hasFile && !hasLink ? `<button class="small" data-open-doc="${doc.id}">Open / เปิด</button><button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
+      ${hasFile && hasLink ? `<button class="small" data-download-doc="${doc.id}">Download / ดาวน์โหลด</button>` : ''}
       <button class="small" data-edit-doc="${doc.id}">Edit / แก้ไข</button>
         <button class="small danger admin-only" data-delete-doc="${doc.id}">Delete / ลบ</button>
     </div>

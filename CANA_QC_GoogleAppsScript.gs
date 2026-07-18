@@ -626,13 +626,36 @@ function hasFarmDocSection(sheet) {
   return String(sheet.getRange(HEADER_ROW, FARM_DOC_START_COL + 1).getValue() || '') === 'Title';
 }
 
-function parseDocRow(row) {
+function getCellUrl(range) {
+  if (!range) return '';
+  try {
+    var rt = range.getRichTextValue();
+    if (rt) {
+      var runs = rt.getRuns();
+      for (var i = 0; i < runs.length; i++) {
+        var link = runs[i].getLinkUrl();
+        if (link && String(link).indexOf('http') === 0) return String(link);
+      }
+    }
+  } catch (e) {}
+  var formula = String(range.getFormula() || '');
+  if (formula.indexOf('HYPERLINK') >= 0) {
+    var m = formula.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
+    if (m) return m[1];
+  }
+  var val = String(range.getDisplayValue() || range.getValue() || '');
+  if (val.indexOf('http') === 0) return val;
+  return '';
+}
+
+function parseDocRow(row, urlOverride) {
   if (!row[0] && !row[1]) return null;
-  var urlVal = String(row[4] || '');
+  var urlVal = urlOverride != null ? String(urlOverride) : String(row[4] || '');
   if (urlVal.indexOf('HYPERLINK') >= 0) {
     var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
     if (m) urlVal = m[1];
   }
+  if (/^open link/i.test(urlVal)) urlVal = '';
   return {
     id: String(row[0] || newId()),
     title: String(row[1] || ''),
@@ -657,10 +680,13 @@ function readFarmDocuments(sheet) {
   var numRows = lastRow - HEADER_ROW;
   var values = sheet.getRange(DATA_START_ROW, FARM_DOC_START_COL, numRows, FARM_DOC_NUM_COLS).getValues();
   var docs = [];
-  values.forEach(function(row) {
-    var doc = parseDocRow(row);
+  for (var i = 0; i < numRows; i++) {
+    var row = values[i];
+    var rowNum = DATA_START_ROW + i;
+    var urlCell = sheet.getRange(rowNum, FARM_DOC_START_COL + 4);
+    var doc = parseDocRow(row, getCellUrl(urlCell));
     if (doc) docs.push(doc);
-  });
+  }
   return docs;
 }
 
@@ -782,15 +808,13 @@ function readDocuments(ss, farmList) {
   if (!sheet || sheet.getLastRow() < DOC_DATA_START) return documents;
   var numRows = sheet.getLastRow() - DOC_HEADER_ROW;
   var values = sheet.getRange(DOC_DATA_START, 1, numRows, DOC_NUM_COLS).getValues();
-  values.forEach(function(row) {
-    if (!row[0] && !row[2]) return;
+  for (var i = 0; i < numRows; i++) {
+    var row = values[i];
+    if (!row[0] && !row[2]) continue;
     var farm = String(row[1] || '');
-    if (farmList.indexOf(farm) === -1) return;
-    var urlVal = String(row[5] || '');
-    if (urlVal.indexOf('HYPERLINK') >= 0) {
-      var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
-      if (m) urlVal = m[1];
-    }
+    if (farmList.indexOf(farm) === -1) continue;
+    var rowNum = DOC_DATA_START + i;
+    var urlVal = getCellUrl(sheet.getRange(rowNum, 6));
     documents[farm].push({
       id: String(row[0] || newId()),
       title: String(row[2] || ''),
@@ -806,7 +830,7 @@ function readDocuments(ss, farmList) {
       mimeType: String(row[10] || ''),
       hasLocalFile: String(row[11] || '').toLowerCase() === 'yes'
     });
-  });
+  }
   return documents;
 }
 

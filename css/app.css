@@ -310,6 +310,7 @@
   .doc-link-row{font-size:11.5px;color:#1d4ed8;background:#eff6ff;border-radius:8px;padding:7px 10px;word-break:break-all;line-height:1.4;}
   .doc-link-row a{color:#1d4ed8;font-weight:600;text-decoration:none;}
   .doc-link-row a:hover{text-decoration:underline;}
+  .doc-link-broken{color:var(--fail)!important;background:var(--fail-bg)!important;border:1px solid #fecaca;}
   .doc-sync-tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:100px;display:inline-flex;margin-top:4px;}
   .doc-sync-tag.synced{background:#dcfce7;color:#166534;}
   .doc-sync-tag.local{background:#fef3c7;color:#b45309;}
