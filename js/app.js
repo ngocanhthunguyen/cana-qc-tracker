@@ -2832,6 +2832,10 @@ function deleteTrimmingRecord(id){
   if(!confirm('Delete this trimming record?\nลบรายการทริมนี้?')) return;
   state.trimming = (state.trimming||[]).filter(r=>r.id!==id);
   onDataChanged();
+  if(appsScriptUrl){
+    clearTimeout(sheetSaveTimer);
+    pushToGoogleSheet(true);
+  }
   renderTrimmingView();
 }
 
@@ -3466,6 +3470,10 @@ function deleteRecord(id){
   }
   state.farms[currentFarm] = state.farms[currentFarm].filter(r=>r.id!==id);
   onDataChanged();
+  if(appsScriptUrl){
+    clearTimeout(sheetSaveTimer);
+    pushToGoogleSheet(true);
+  }
   if(currentView === 'allFarms') renderAllFarmsView();
   else renderFarmView();
 }

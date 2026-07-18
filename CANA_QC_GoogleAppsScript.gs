@@ -671,13 +671,16 @@ function writeFarmSheet(sheet, records, docRecords) {
   sheet.getRange(HEADER_ROW, 25, 1, 5).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
   sheet.setRowHeight(HEADER_ROW, 42);
 
+  var clearRows = Math.max(sheet.getLastRow() - HEADER_ROW, records.length, 20);
+  sheet.getRange(DATA_START_ROW, 1, clearRows, NUM_COLS).clearContent();
+
   if (records.length) {
     var rows = records.map(function(rec) { return recordToRow(rec); });
     sheet.getRange(DATA_START_ROW, 1, rows.length, NUM_COLS).setValues(rows);
   }
 
   writeFarmDocumentsSection(sheet, docRecords);
-  formatFarmSheet(sheet);
+  formatFarmSheet(sheet, records.length);
   formatFarmDocumentsSection(sheet, docRecords.length);
 }
 
@@ -689,19 +692,20 @@ function styleSectionBand(sheet, row, col, numCols, label, bg) {
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
 }
 
-function formatFarmSheet(sheet) {
+function formatFarmSheet(sheet, numRecords) {
   if (!sheet) return;
   sheet.setTabColor(THEME.greenMid);
   sheet.setFrozenRows(HEADER_ROW);
   // Cannot freeze columns — row 1 is merged across all columns
 
+  numRecords = numRecords === undefined ? Math.max(sheet.getLastRow() - DATA_START_ROW + 1, 0) : (numRecords || 0);
+  var dataRows = numRecords;
+  var lastRow = dataRows > 0 ? DATA_START_ROW + dataRows - 1 : HEADER_ROW;
+
   var widths = [72, 108, 92, 118, 68, 68, 82, 128, 98, 98, 88, 88, 132, 92, 92, 82, 68, 68, 68, 68, 62, 62, 62, 118, 88, 82, 82, 62, 72, 78];
   for (var c = 0; c < widths.length && c < NUM_COLS; c++) {
     sheet.setColumnWidth(c + 1, widths[c]);
   }
-
-  var lastRow = Math.max(sheet.getLastRow(), DATA_START_ROW + 20);
-  var dataRows = lastRow - DATA_START_ROW + 1;
 
   // Data area tints
   if (dataRows > 0) {
