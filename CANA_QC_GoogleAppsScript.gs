@@ -405,7 +405,20 @@ function uploadDocumentToFarm(farm, fileName, mimeType, dataB64) {
     return { ok: false, error: 'File too large (max 8 MB)' };
   }
   var blob = Utilities.newBlob(bytes, mimeType || 'application/octet-stream', fileName || 'document');
-  var file = folder.createFile(blob);
+  var file;
+  try {
+    file = folder.createFile(blob);
+  } catch (e) {
+    var msg = String(e);
+    if (/do not have permission to call DriveApp|Required permissions.*drive/i.test(msg)) {
+      return {
+        ok: false,
+        error: 'Drive upload not authorized for the web app. '
+          + 'Apps Script owner: run authorizeDriveUploadOnce() → Allow → Deploy → Manage deployments → New version → Deploy.'
+      };
+    }
+    return { ok: false, error: msg };
+  }
   var fileId = file.getId();
   return {
     ok: true,
@@ -1360,11 +1373,29 @@ function authorizeDriveOnce() {
   Logger.log('Account: ' + who);
   Logger.log('If prompted, click Review permissions → Allow (includes Google Drive).');
   var rootName = DriveApp.getRootFolder().getName();
-  Logger.log('Drive access OK. Root: ' + rootName);
+  Logger.log('Drive read OK. Root: ' + rootName);
   var id = readDriveParentFolderFromMeta(getSpreadsheet());
   if (id) {
     var f = DriveApp.getFolderById(id);
     Logger.log('Cana Documents OK: ' + f.getName());
   }
-  Logger.log('Next: Run verifyDriveFolders');
+  Logger.log('Next: Run authorizeDriveUploadOnce (tests createFile), then redeploy web app.');
+}
+
+/** Run once — tests file upload permission (createFile). Required before app upload works. */
+function authorizeDriveUploadOnce() {
+  var who = Session.getEffectiveUser().getEmail();
+  Logger.log('Account: ' + who);
+  Logger.log('If prompted, Review permissions → Allow (must include Google Drive edit access).');
+  var farmList = getFarmList(getSpreadsheet());
+  var farm = farmList.length ? farmList[0] : 'Kenny';
+  var folderRes = getDriveFolderForFarm(farm);
+  if (!folderRes.ok) throw new Error(folderRes.error);
+  var test = folderRes.folder.createFile('cana-qc-upload-test.txt', 'safe to delete', MimeType.PLAIN_TEXT);
+  Logger.log('createFile OK in ' + farm + ': ' + test.getName());
+  test.setTrashed(true);
+  Logger.log('Test file trashed.');
+  Logger.log('');
+  Logger.log('>>> IMPORTANT: Deploy → Manage deployments → Edit → New version → Deploy');
+  Logger.log('>>> Without redeploy, the live app URL still uses the old permission set.');
 }
