@@ -315,8 +315,8 @@ function updateAdminUI(){
   document.body.classList.toggle('admin-mode', isAdmin());
   const btn = document.getElementById('btnAdmin');
   if(btn){
-    btn.textContent = isAdmin() ? 'Manager ✓' : 'Manager';
-    btn.title = isAdmin() ? 'Manager mode active (click to lock)' : 'Sign in as manager';
+    btn.textContent = isAdmin() ? 'Log out' : 'Log in';
+    btn.title = isAdmin() ? 'End manager session' : 'Log in as manager';
   }
   document.querySelectorAll('.admin-only').forEach(el=>{
     el.style.display = isAdmin() ? '' : 'none';
@@ -414,7 +414,7 @@ function openAdminUnlockModal(onSuccess, reason){
 }
 function toggleAdminSession(){
   if(isAdmin()){
-    if(confirm('Lock manager mode?\nล็อกโหมดผู้จัดการ?')) setAdminSession(false);
+    if(confirm('Log out of manager mode?\nออกจากโหมดผู้จัดการ?')) setAdminSession(false);
     return;
   }
   openAdminUnlockModal();
