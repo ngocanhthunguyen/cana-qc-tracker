@@ -12,6 +12,8 @@ let trimSearchText = '';
 let trimMonth = '';
 let exportSelection = {};
 let exportSelectionMonth = '';
+let exportWeights = {}; // batchKey -> export kg (string)
+let exportWeightsMonth = '';
 let currentFarmTab = 'qc'; // 'qc' | 'documents'
 let docCategoryFilter = '';
 let docSearchText = '';
@@ -198,10 +200,19 @@ function recordsForMonth(month, farmFilter){
     return (rec.date ? formatMonth(rec.date) : '') === month;
   });
 }
-function exportRowValue(rec, farm, col){
+function exportRowValue(rec, farm, col, ctx){
+  ctx = ctx || {};
   const c = computeRow(rec);
   if(col.key === 'batchId') return getBatchId(rec, farm);
   if(col.key === 'farm') return farm;
+  if(col.key === 'exportKg'){
+    const kg = ctx.exportKg;
+    return kg === null || kg === undefined ? '' : Number(Number(kg).toFixed(3));
+  }
+  if(col.key === 'qcFlowerKg'){
+    const g = c.totalFlower;
+    return g === null ? '' : Number((g / 1000).toFixed(3));
+  }
   if(col.computed){
     const v = c[col.key];
     if(col.pct) return v===null ? '' : Number((v*100).toFixed(2));
@@ -209,6 +220,77 @@ function exportRowValue(rec, farm, col){
   }
   if(col.num) return numOrBlank(rec[col.key]);
   return rec[col.key] || '';
+}
+function getExportCompanies(){
+  const list = (state && state.exportCompanies && state.exportCompanies.length)
+    ? state.exportCompanies
+    : [{ id:'bls', name:'BLS', templateId:'bls' }];
+  return list.map(entry=>{
+    const tpl = EXPORT_COMPANY_TEMPLATES[entry.templateId || 'bls'] || EXPORT_COMPANY_TEMPLATES.bls;
+    const name = entry.name || tpl.name;
+    return {
+      ...tpl,
+      id: entry.id || tpl.id,
+      name,
+      label: name + ' Monthly Report',
+      labelTh: 'รายงานรายเดือน ' + name,
+      templateId: entry.templateId || 'bls'
+    };
+  });
+}
+function defaultExportKg(item){
+  const c = computeRow(item.rec);
+  if(c.totalFlower === null) return '';
+  return (c.totalFlower / 1000).toFixed(3);
+}
+function ensureExportWeights(month){
+  if(exportWeightsMonth !== month){
+    exportWeightsMonth = month;
+    exportWeights = {};
+    recordsForMonth(month).forEach(item=>{
+      exportWeights[exportBatchKey(item)] = defaultExportKg(item);
+    });
+  }
+}
+function getExportKgValue(key, item){
+  ensureExportWeights(exportSelectionMonth || dashMonth || currentMonthLabel());
+  const raw = exportWeights[key];
+  if(raw !== undefined && raw !== ''){
+    const n = num(raw);
+    if(n !== null) return n;
+  }
+  if(item){
+    const n = num(defaultExportKg(item));
+    return n;
+  }
+  return null;
+}
+function setExportKgValue(key, val){
+  exportWeights[key] = val;
+}
+function computeExportSummary(month){
+  const items = getSelectedExportItems(month);
+  const byFarm = {};
+  let grandExportKg = 0, grandQcKg = 0, grandBatches = 0;
+  items.forEach(item=>{
+    const key = exportBatchKey(item);
+    const farm = item.farm;
+    const exportKg = getExportKgValue(key, item) || 0;
+    const c = computeRow(item.rec);
+    const qcKg = c.totalFlower !== null ? c.totalFlower / 1000 : 0;
+    if(!byFarm[farm]) byFarm[farm] = { farm, batches:0, exportKg:0, qcKg:0, strains:[] };
+    byFarm[farm].batches++;
+    byFarm[farm].exportKg += exportKg;
+    byFarm[farm].qcKg += qcKg;
+    byFarm[farm].strains.push(item.rec.strain || '—');
+    grandExportKg += exportKg;
+    grandQcKg += qcKg;
+    grandBatches++;
+  });
+  return {
+    perFarm: Object.keys(byFarm).sort().map(f=> byFarm[f]),
+    total: { batches: grandBatches, exportKg: grandExportKg, qcKg: grandQcKg }
+  };
 }
 function countPendingFarm(farm){
   return (state.farms[farm]||[]).filter(isPending).length;
@@ -647,6 +729,9 @@ function ensureStateShape(){
   if(!state.documents) state.documents = {};
   if(!state.trimming) state.trimming = [];
   if(!state.exportLog) state.exportLog = [];
+  if(!state.exportCompanies || !state.exportCompanies.length){
+    state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
+  }
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
@@ -929,7 +1014,8 @@ function stateFingerprint(){
     farmDriveFolders: state.farmDriveFolders || {},
     driveParentFolderId: state.driveParentFolderId || '',
     trimming: state.trimming || [],
-    exportLog: state.exportLog || []
+    exportLog: state.exportLog || [],
+    exportCompanies: state.exportCompanies || []
   });
 }
 function debouncedPushToSheet(){
@@ -1025,7 +1111,8 @@ async function pullFromGoogleSheet(silent){
       farmDriveFolders: data.farmDriveFolders || {},
       driveParentFolderId: data.driveParentFolderId || '',
       trimming: data.trimming || [],
-      exportLog: data.exportLog || []
+      exportLog: data.exportLog || [],
+      exportCompanies: data.exportCompanies || []
     });
     if(fp === lastRemoteJson) return;
     state.farms = data.farms;
@@ -1035,6 +1122,7 @@ async function pullFromGoogleSheet(silent){
     if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
     if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice();
     if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
+    if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     lastRemoteJson = fp;
@@ -1080,7 +1168,8 @@ async function pushToGoogleSheet(silent){
         farmDriveFolders: state.farmDriveFolders || {},
         driveParentFolderId: state.driveParentFolderId || '',
         trimming: state.trimming || [],
-        exportLog: state.exportLog || []
+        exportLog: state.exportLog || [],
+        exportCompanies: state.exportCompanies || []
       }
     };
     const data = await callAppsScript(payload);
@@ -1852,8 +1941,10 @@ function ensureExportSelection(month){
   if(exportSelectionMonth !== month){
     exportSelectionMonth = month;
     exportSelection = {};
+    exportWeightsMonth = '';
     recordsForMonth(month).forEach(item=>{ exportSelection[exportBatchKey(item)] = true; });
   }
+  ensureExportWeights(month);
 }
 function getSelectedExportItems(month){
   ensureExportSelection(month);
@@ -1905,7 +1996,7 @@ function appendExportLog(entry){
   onDataChanged();
   if(currentView === 'dashboard' && dashSubTab === 'exports') renderDashboard();
 }
-function buildExportLogEntry({ month, exportType, company, items, fileName }){
+function buildExportLogEntry({ month, exportType, company, items, fileName, exportKgTotal }){
   const batchIds = items.map(({rec,farm})=> getBatchId(rec, farm)).sort();
   return {
     id: uid(),
@@ -1914,6 +2005,7 @@ function buildExportLogEntry({ month, exportType, company, items, fileName }){
     company: company || '',
     batchCount: items.length,
     batchIds: batchIds.join(', '),
+    exportKgTotal: exportKgTotal === undefined || exportKgTotal === null ? '' : Number(exportKgTotal.toFixed(3)),
     fileName,
     exportedAt: new Date().toISOString(),
     exportedBy: getExportActorLabel()
@@ -1934,23 +2026,27 @@ function sortExportItems(items){
   return items.slice().sort((a,b)=>(a.rec.date||'').localeCompare(b.rec.date||'') || a.farm.localeCompare(b.farm));
 }
 function buildSummarySheetRows(month, summary){
-  const dashHeader = ['Farm','Batches','Total Start (g)','Total Bigs (g)','Total Pops (g)','Total Flower (g)','Avg Yield %','Total Mold (g)','Pass','Fail','Conditional'];
-  const dashRows = [['CANA QC Tracker — Month:', month], ['Selected batches only'], [], dashHeader];
+  const header = ['Farm','Strains','Batches','Export (kg)','QC Flower (kg)'];
+  const rows = [['CANA QC Tracker — Month:', month], ['Manager export totals — editable kg per strain in app'], [], header];
   summary.perFarm.forEach(r=>{
-    dashRows.push([r.farm, r.batches, r.totalStart, r.totalBigs, r.totalPops, r.totalFlower, r.avgYield===null?'':Number((r.avgYield*100).toFixed(2)), r.totalMold, r.pass, r.fail, r.cond]);
+    rows.push([r.farm, r.strains.join(', '), r.batches, Number(r.exportKg.toFixed(3)), Number(r.qcKg.toFixed(3))]);
   });
-  dashRows.push(['TOTAL', summary.total.batches, summary.total.totalStart, summary.total.totalBigs, summary.total.totalPops, summary.total.totalFlower, summary.total.avgYield===null?'':Number((summary.total.avgYield*100).toFixed(2)), summary.total.totalMold, summary.total.pass, summary.total.fail, summary.total.cond]);
-  return dashRows;
+  rows.push(['TOTAL', '', summary.total.batches, Number(summary.total.exportKg.toFixed(3)), Number(summary.total.qcKg.toFixed(3))]);
+  return rows;
 }
-function buildAllFarmsSheetRows(items){
-  const allHeader = ['Batch ID','Farm','Date','Strain','Gross Wt (g)','Physical Condition','Eurofins','TNR','Start Wt (g)','Total Flower (g)','Diff (g)','Yield %','Pass/Fail','QC by','Invoice'];
+function buildAllFarmsSheetRows(items, month){
+  const allHeader = ['Batch ID','Farm','Strain','Delivery Date','Export (kg)','QC Flower (kg)','Pass/Fail','Start Wt (g)','Gross Wt (g)'];
   const allRows = [allHeader];
-  sortExportItems(items).forEach(({rec,farm})=>{
+  sortExportItems(items).forEach(item=>{
+    const {rec, farm} = item;
+    const key = exportBatchKey(item);
+    const exportKg = getExportKgValue(key, item);
     const c = computeRow(rec);
     allRows.push([
-      getBatchId(rec,farm), farm, rec.date||'', rec.strain||'', numOrBlank(rec.grossWt), rec.condition||'', rec.eurofinsTest||'', rec.tnrTest||'',
-      numOrBlank(rec.startWt), c.totalFlower===null?'':c.totalFlower, c.diff===null?'':c.diff, c.yieldPct===null?'':Number((c.yieldPct*100).toFixed(2)),
-      rec.passFail||'', rec.qcBy||'', rec.invoice||''
+      getBatchId(rec,farm), farm, rec.strain||'', rec.date||'',
+      exportKg === null ? '' : Number(exportKg.toFixed(3)),
+      c.totalFlower === null ? '' : Number((c.totalFlower/1000).toFixed(3)),
+      rec.passFail||'', numOrBlank(rec.startWt), numOrBlank(rec.grossWt)
     ]);
   });
   return allRows;
@@ -1959,49 +2055,54 @@ function exportTotalExcel(month, items){
   const m = month || dashMonth || currentMonthLabel();
   const selected = items || requireExportSelection(m);
   if(!selected) return;
-  const summary = computeSummaryFromItems(selected);
+  const summary = computeExportSummary(m);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildSummarySheetRows(m, summary)), 'Total Summary');
   const fileName = 'CANA_Total_' + monthFileTag(m) + '.xlsx';
   XLSX.writeFile(wb, fileName);
-  appendExportLog(buildExportLogEntry({ month: m, exportType: 'total', items: selected, fileName }));
+  appendExportLog(buildExportLogEntry({ month: m, exportType: 'total', items: selected, fileName, exportKgTotal: summary.total.exportKg }));
   showDocToast('Exported ' + fileName);
 }
 function exportMonthExcel(month, items){
   const m = month || dashMonth || currentMonthLabel();
   const selected = items || requireExportSelection(m);
   if(!selected) return;
-  const summary = computeSummaryFromItems(selected);
+  const summary = computeExportSummary(m);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildSummarySheetRows(m, summary)), 'Summary');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAllFarmsSheetRows(selected)), 'All Farms');
-  EXPORT_COMPANIES.forEach(company=>{
-    const rows = [company.columns.map(c=>c.label)];
-    sortExportItems(selected).forEach(({rec,farm})=>{
-      rows.push(company.columns.map(col=> exportRowValue(rec, farm, col)));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(buildAllFarmsSheetRows(selected, m)), 'All Farms');
+  getExportCompanies().forEach(company=>{
+    const rows = [['Report for:', company.name], ['Month:', m], ['Total export kg:', Number(summary.total.exportKg.toFixed(3))], [], company.columns.map(c=>c.label)];
+    sortExportItems(selected).forEach(item=>{
+      const key = exportBatchKey(item);
+      const ctx = { exportKg: getExportKgValue(key, item) };
+      rows.push(company.columns.map(col=> exportRowValue(item.rec, item.farm, col, ctx)));
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), company.name.slice(0,31));
   });
   const fileName = 'CANA_' + monthFileTag(m) + '.xlsx';
   XLSX.writeFile(wb, fileName);
-  appendExportLog(buildExportLogEntry({ month: m, exportType: 'full', items: selected, fileName }));
+  appendExportLog(buildExportLogEntry({ month: m, exportType: 'full', items: selected, fileName, exportKgTotal: summary.total.exportKg }));
   showDocToast('Exported ' + fileName);
 }
 function exportCompanyExcel(companyId, month, items){
-  const company = EXPORT_COMPANIES.find(c=>c.id === companyId);
+  const company = getExportCompanies().find(c=>c.id === companyId);
   if(!company) return;
   const m = month || dashMonth || currentMonthLabel();
   const selected = items || requireExportSelection(m);
   if(!selected) return;
+  const summary = computeExportSummary(m);
   const wb = XLSX.utils.book_new();
-  const rows = [['Report for:', company.name], ['Month:', m], ['Batches selected:', selected.length], [], company.columns.map(c=>c.label)];
-  sortExportItems(selected).forEach(({rec,farm})=>{
-    rows.push(company.columns.map(col=> exportRowValue(rec, farm, col)));
+  const rows = [['Report for:', company.name], ['Month:', m], ['Batches selected:', selected.length], ['Total export kg:', Number(summary.total.exportKg.toFixed(3))], [], company.columns.map(c=>c.label)];
+  sortExportItems(selected).forEach(item=>{
+    const key = exportBatchKey(item);
+    const ctx = { exportKg: getExportKgValue(key, item) };
+    rows.push(company.columns.map(col=> exportRowValue(item.rec, item.farm, col, ctx)));
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), company.name.slice(0,31));
   const fileName = 'CANA_' + company.name + '_' + monthFileTag(m) + '.xlsx';
   XLSX.writeFile(wb, fileName);
-  appendExportLog(buildExportLogEntry({ month: m, exportType: 'company', company: company.name, items: selected, fileName }));
+  appendExportLog(buildExportLogEntry({ month: m, exportType: 'company', company: company.name, items: selected, fileName, exportKgTotal: summary.total.exportKg }));
   showDocToast('Exported ' + fileName);
 }
 function renderExportBatchPicker(month){
@@ -2010,27 +2111,33 @@ function renderExportBatchPicker(month){
   if(!monthItems.length){
     return `<div class="panel empty-state">No batches with delivery date in <b>${esc(month)}</b>. Add QC records first or pick another month.</div>`;
   }
-  const selectedCount = getSelectedExportItems(month).length;
+  const selected = getSelectedExportItems(month);
+  const summary = computeExportSummary(month);
   const farmsWithData = getFarmList().filter(f=> monthItems.some(({farm})=> farm === f));
   const groups = farmsWithData.map(farm=>{
     const items = monthItems.filter(({farm})=> farm === f);
-    const rows = items.map(({rec,farm})=>{
-      const key = exportBatchKey({rec,farm});
+    const farmSummary = summary.perFarm.find(r=> r.farm === farm);
+    const rows = items.map(item=>{
+      const {rec, farm: f} = item;
+      const key = exportBatchKey(item);
       const c = computeRow(rec);
       const checked = exportSelection[key] ? 'checked' : '';
       const pf = passFailBadgeClass(rec);
-      return `<label class="export-batch-row">
+      const kgVal = exportWeights[key] !== undefined ? exportWeights[key] : defaultExportKg(item);
+      return `<div class="export-batch-row ${exportSelection[key]?'':'export-row-off'}">
         <input type="checkbox" class="export-batch-cb" data-export-key="${esc(key)}" ${checked}>
-        <span class="batch-id">${esc(getBatchId(rec,farm))}</span>
-        <span>${esc(rec.strain||'—')}</span>
+        <span class="batch-id">${esc(getBatchId(rec,f))}</span>
+        <span class="strain-cell"><b>${esc(rec.strain||'—')}</b></span>
         <span class="muted">${esc(rec.date||'—')}</span>
-        <span>${fmtNum(rec.startWt)||'—'} g</span>
+        <span class="qc-ref" title="QC flower from system">${c.totalFlower !== null ? fmtNum(c.totalFlower/1000, 3)+' kg' : '—'}</span>
+        <label class="export-kg-field"><span>Export kg</span><input type="number" step="0.001" min="0" class="export-kg-input" data-export-key="${esc(key)}" value="${esc(kgVal)}" ${exportSelection[key]?'':'disabled'}></label>
         <span class="status-chip ${pf||'pending'}">${esc((rec.passFail||'—').split(' / ')[0])}</span>
-        <span>${fmtPct(c.yieldPct)||'—'}</span>
-      </label>`;
+      </div>`;
     }).join('');
+    const farmKg = farmSummary ? farmSummary.exportKg : 0;
     return `<div class="export-farm-group">
-      <div class="export-farm-head"><b>${esc(farm)}</b> <span class="muted">${items.length} batch${items.length===1?'':'es'}</span></div>
+      <div class="export-farm-head"><b>${esc(farm)}</b> <span class="muted">${items.length} strain${items.length===1?'':'s'}</span> <span class="farm-subtotal">Subtotal: <b id="exportFarmKg_${esc(farm).replace(/\s/g,'_')}">${fmtNum(farmKg, 3)}</b> kg</span></div>
+      <div class="export-batch-head"><span></span><span>Batch</span><span>Strain</span><span>Date</span><span>QC ref</span><span>Export kg</span><span>Status</span></div>
       <div class="export-batch-list">${rows}</div>
     </div>`;
   }).join('');
@@ -2038,8 +2145,8 @@ function renderExportBatchPicker(month){
     <div class="panel export-batch-picker">
       <div class="export-picker-head">
         <div>
-          <h3 style="margin:0 0 4px;font-size:15px;">Step 2 — Select batches <span class="bi">/ เลือก batch</span></h3>
-          <p class="sub" style="margin:0;font-size:12px;color:var(--muted);">${monthItems.length} in month · <b id="exportSelectedCount">${selectedCount}</b> selected for export</p>
+          <h3 style="margin:0 0 4px;font-size:15px;">Step 2 — Pick strains & set export kg <span class="bi">/ เลือกสายพันธุ์ + น้ำหนักส่งออก</span></h3>
+          <p class="sub" style="margin:0;font-size:12px;color:var(--muted);">Tick strains to include · edit <b>Export kg</b> per line · QC ref is from system (read-only)</p>
         </div>
         <div class="export-picker-actions">
           <button type="button" class="small" id="btnExportSelectAll">Select all</button>
@@ -2047,7 +2154,81 @@ function renderExportBatchPicker(month){
         </div>
       </div>
       ${groups}
+      <div class="export-grand-total" id="exportGrandTotal">
+        <span>Month total export</span>
+        <b>${fmtNum(summary.total.exportKg, 3)} kg</b>
+        <span class="muted">· ${selected.length} strain${selected.length===1?'':'s'} · QC ref ${fmtNum(summary.total.qcKg, 3)} kg</span>
+      </div>
     </div>`;
+}
+function renderExportTotalsBar(month){
+  const summary = computeExportSummary(month);
+  const rows = summary.perFarm.map(r=>`<tr><td><b>${esc(r.farm)}</b></td><td>${esc(r.strains.join(', '))}</td><td>${r.batches}</td><td><b>${fmtNum(r.exportKg, 3)}</b></td><td>${fmtNum(r.qcKg, 3)}</td></tr>`).join('');
+  return `<div class="panel export-totals-panel">
+    <h3 style="margin:0 0 10px;font-size:14px;">Totals preview — ${esc(month)}</h3>
+    <div class="table-wrap"><table class="compact-table">
+      <thead><tr><th>Farm</th><th>Strains</th><th>Lines</th><th>Export kg</th><th>QC ref kg</th></tr></thead>
+      <tbody>${rows}
+        <tr class="export-total-row"><td><b>TOTAL</b></td><td></td><td>${summary.total.batches}</td><td><b>${fmtNum(summary.total.exportKg, 3)}</b></td><td>${fmtNum(summary.total.qcKg, 3)}</td></tr>
+      </tbody>
+    </table></div>
+  </div>`;
+}
+function openManageExportCompaniesModal(){
+  if(!requireAdmin('manage export companies', ()=> openManageExportCompaniesModal())) return;
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const list = getExportCompanies();
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:520px">
+      <h2>🏢 Export companies / บริษัทที่ส่ง export</h2>
+      <div class="sub">Add companies you send monthly reports to (uses BLS column layout for now)<br>เพิ่มบริษัทใหม่ — ใช้รูปแบบคอลัมน์ BLS</div>
+      <div class="farm-manage-list">
+        ${list.map(c=>`<div class="farm-manage-row">
+          <div><strong>${esc(c.name)}</strong><span class="farm-manage-meta">Template: BLS · ID: ${esc(c.id)}</span></div>
+          ${c.id !== 'bls' ? `<button type="button" class="small danger admin-only" data-remove-company="${esc(c.id)}">Remove</button>` : '<span class="muted" style="font-size:11px;">Default</span>'}
+        </div>`).join('')}
+      </div>
+      <form id="addExportCompanyForm" class="farm-add-form">
+        <label>Company name / ชื่อบริษัท
+          <input type="text" name="name" placeholder="e.g. Green Leaf Supply" required maxlength="40" autocomplete="off">
+        </label>
+        <p class="farm-add-hint">File name: <b>CANA_CompanyName_Jul_2026.xlsx</b></p>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCloseExportCompanies">Close</button>
+          <button type="submit" class="primary">+ Add company</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); renderDashboard(); };
+  root.querySelector('#btnCloseExportCompanies').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelectorAll('[data-remove-company]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const id = btn.dataset.removeCompany;
+      if(!confirm('Remove export company "' + id + '"?\nลบบริษัท export นี้?')) return;
+      state.exportCompanies = (state.exportCompanies||[]).filter(c=> c.id !== id);
+      if(!state.exportCompanies.length) state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
+      onDataChanged();
+      close();
+    };
+  });
+  root.querySelector('#addExportCompanyForm').onsubmit = (e)=>{
+    e.preventDefault();
+    const name = String(new FormData(e.target).get('name')||'').trim();
+    if(!name) return;
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,24) || ('co-'+Date.now());
+    if((state.exportCompanies||[]).some(c=> c.id === id || c.name.toLowerCase() === name.toLowerCase())){
+      alert('Company already exists / มีบริษัทนี้แล้ว');
+      return;
+    }
+    if(!state.exportCompanies) state.exportCompanies = [];
+    state.exportCompanies.push({ id, name, templateId:'bls' });
+    onDataChanged();
+    close();
+  };
 }
 function formatExportType(t){
   if(t === 'company') return 'Company';
@@ -2089,51 +2270,72 @@ function renderExportLogPanel(month){
 }
 function renderExportBuilderPanel(month){
   const selected = getSelectedExportItems(month);
-  const summary = computeSummaryFromItems(selected);
-  const previewCompany = EXPORT_COMPANIES[0];
+  const summary = computeExportSummary(month);
+  const companies = getExportCompanies();
+  const previewCompany = companies[0];
   return `
     <div class="panel export-builder-intro">
-      <p style="margin:0 0 6px;font-size:13px;"><b>Step 1 — Month</b> is set above. All exports use batches from <b>${esc(month)}</b> only.</p>
-      <p style="margin:0;font-size:12px;color:var(--muted);">${recordsForMonth(month).length} batches in month · ${selected.length} selected · ${summary.total.pass} pass · ${summary.total.fail} fail</p>
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;">
+        <div>
+          <p style="margin:0 0 6px;font-size:13px;"><b>Step 1 — Month:</b> ${esc(month)} · Manager picks strains + export kg (not auto dump from QC)</p>
+          <p style="margin:0;font-size:12px;color:var(--muted);">${selected.length} strain${selected.length===1?'':'s'} selected · <b>${fmtNum(summary.total.exportKg, 3)} kg</b> total export</p>
+        </div>
+        <button type="button" class="small purple admin-only" id="btnManageExportCompanies">+ Manage export companies</button>
+      </div>
     </div>
     ${renderExportBatchPicker(month)}
+    ${renderExportTotalsBar(month)}
     <div class="panel" style="margin-bottom:16px;">
       <h3 style="margin:0 0 12px;font-size:15px;">Step 3 — Download <span class="bi">/ ส่งออก</span></h3>
       <div class="export-grid">
         <div class="export-card">
           <h3>📊 Total export</h3>
-          <p>Summary only — per farm subtotals + grand total. <b>${selected.length}</b> batch${selected.length===1?'':'es'}.</p>
+          <p>Per farm + month grand total in <b>kg</b> (manager amounts). <b>${fmtNum(summary.total.exportKg, 3)} kg</b> · ${selected.length} lines.</p>
           <div class="actions"><button class="primary" id="btnExportTotal">⬇ Total — ${esc(month)}</button></div>
         </div>
-        ${EXPORT_COMPANIES.map(company=>`<div class="export-card">
+        ${companies.map(company=>`<div class="export-card">
           <h3>${esc(company.name)} detail</h3>
-          <p>${esc(company.description)} Selected: <b>${selected.length}</b> batches.</p>
+          <p>Strain list with export kg per line. Total: <b>${fmtNum(summary.total.exportKg, 3)} kg</b></p>
           <div class="actions"><button class="primary" data-export-company="${company.id}">⬇ ${esc(company.name)} — ${esc(month)}</button></div>
         </div>`).join('')}
         <div class="export-card">
-          <h3>📦 Full month package</h3>
-          <p>Summary + All Farms + company sheets. <b>${selected.length}</b> selected batches.</p>
+          <h3>📦 Full package</h3>
+          <p>Totals + detail + all company sheets. <b>${fmtNum(summary.total.exportKg, 3)} kg</b></p>
           <div class="actions"><button class="primary" id="btnExportMonthCard">⬇ Full package — ${esc(month)}</button></div>
         </div>
       </div>
     </div>
-    ${previewCompany ? `<div class="panel"><h3 style="margin:0 0 8px;font-size:14px;">Preview — ${esc(previewCompany.label)} (${selected.length} selected)</h3>${renderCompanyPreviewTable(previewCompany, month, selected)}</div>` : ''}
+    ${previewCompany ? `<div class="panel"><h3 style="margin:0 0 8px;font-size:14px;">Preview — ${esc(previewCompany.label)}</h3>${renderCompanyPreviewTable(previewCompany, month, selected)}</div>` : ''}
     ${renderExportLogPanel(month)}`;
 }
 function bindExportBuilderEvents(main, month){
   const refreshExportUi = ()=>{
+    const summary = computeExportSummary(month);
     const sel = getSelectedExportItems(month).length;
-    const countEl = document.getElementById('exportSelectedCount');
-    if(countEl) countEl.textContent = String(sel);
+    const grand = document.getElementById('exportGrandTotal');
+    if(grand) grand.innerHTML = `<span>Month total export</span><b>${fmtNum(summary.total.exportKg, 3)} kg</b><span class="muted">· ${sel} strain${sel===1?'':'s'} · QC ref ${fmtNum(summary.total.qcKg, 3)} kg</span>`;
+    summary.perFarm.forEach(r=>{
+      const el = document.getElementById('exportFarmKg_' + r.farm.replace(/\s/g,'_'));
+      if(el) el.textContent = fmtNum(r.exportKg, 3);
+    });
     const intro = main.querySelector('.export-builder-intro p:last-child');
-    if(intro){
-      const s = computeSummaryFromItems(getSelectedExportItems(month));
-      intro.innerHTML = `${recordsForMonth(month).length} batches in month · ${sel} selected · ${s.total.pass} pass · ${s.total.fail} fail`;
-    }
+    if(intro) intro.innerHTML = `${sel} strain${sel===1?'':'s'} selected · <b>${fmtNum(summary.total.exportKg, 3)} kg</b> total export`;
+    const totalsPanel = main.querySelector('.export-totals-panel');
+    if(totalsPanel) totalsPanel.outerHTML = renderExportTotalsBar(month);
   };
   main.querySelectorAll('.export-batch-cb').forEach(cb=>{
     cb.onchange = ()=>{
       exportSelection[cb.dataset.exportKey] = cb.checked;
+      const row = cb.closest('.export-batch-row');
+      const input = row && row.querySelector('.export-kg-input');
+      if(row) row.classList.toggle('export-row-off', !cb.checked);
+      if(input) input.disabled = !cb.checked;
+      refreshExportUi();
+    };
+  });
+  main.querySelectorAll('.export-kg-input').forEach(input=>{
+    input.oninput = ()=>{
+      setExportKgValue(input.dataset.exportKey, input.value);
       refreshExportUi();
     };
   });
@@ -2141,11 +2343,14 @@ function bindExportBuilderEvents(main, month){
   const clrAll = main.querySelector('#btnExportClearAll');
   if(selAll) selAll.onclick = ()=>{ setAllExportSelection(month, true); renderDashboard(); };
   if(clrAll) clrAll.onclick = ()=>{ setAllExportSelection(month, false); renderDashboard(); };
+  const btnManage = main.querySelector('#btnManageExportCompanies');
+  if(btnManage) btnManage.onclick = ()=> openManageExportCompaniesModal();
   const btnTotal = main.querySelector('#btnExportTotal');
   if(btnTotal) btnTotal.onclick = ()=> exportTotalExcel(month);
   const btnFull = main.querySelector('#btnExportMonthCard');
   if(btnFull) btnFull.onclick = ()=> exportMonthExcel(month);
   main.querySelectorAll('[data-export-company]').forEach(btn=> btn.onclick = ()=> exportCompanyExcel(btn.dataset.exportCompany, month));
+  updateAdminUI();
 }
 
 /* ============ DASHBOARD COMPUTE ============ */
@@ -3480,11 +3685,15 @@ function deleteRecord(id){
 
 /* ============ DASHBOARD RENDER ============ */
 function renderCompanyPreviewTable(company, month, items){
-  const monthItems = items || recordsForMonth(month);
-  if(!monthItems.length) return `<div class="empty-state" style="padding:24px;">No batches selected for ${esc(month)}.</div>`;
-  const previewCols = company.columns.slice(0, 8);
+  const monthItems = items || getSelectedExportItems(month);
+  if(!monthItems.length) return `<div class="empty-state" style="padding:24px;">No strains selected for ${esc(month)}.</div>`;
+  const previewCols = company.columns.slice(0, 6);
   return `<div class="table-wrap"><table><thead><tr>${previewCols.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody>
-    ${monthItems.slice(0,12).map(({rec,farm})=>`<tr>${previewCols.map(col=>`<td>${esc(String(exportRowValue(rec,farm,col)))}</td>`).join('')}</tr>`).join('')}
+    ${monthItems.slice(0,12).map(item=>{
+      const key = exportBatchKey(item);
+      const ctx = { exportKg: getExportKgValue(key, item) };
+      return `<tr>${previewCols.map(col=>`<td>${esc(String(exportRowValue(item.rec, item.farm, col, ctx)))}</td>`).join('')}</tr>`;
+    }).join('')}
     ${monthItems.length > 12 ? `<tr><td colspan="${previewCols.length}" style="color:var(--muted);font-size:12px;">+ ${monthItems.length-12} more in export file…</td></tr>` : ''}
   </tbody></table></div>`;
 }
@@ -3537,7 +3746,7 @@ function renderDashboard(){
       </table></div>
     </div>` : renderExportBuilderPanel(dashMonth)}
   `;
-  document.getElementById('monthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; renderDashboard(); };
+  document.getElementById('monthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderDashboard(); };
   document.getElementById('dashTabOverview').onclick = ()=>{ dashSubTab='overview'; renderDashboard(); };
   document.getElementById('dashTabExports').onclick = ()=>{ dashSubTab='exports'; renderDashboard(); };
   document.getElementById('btnExportMonth').onclick = ()=> exportMonthExcel(dashMonth);

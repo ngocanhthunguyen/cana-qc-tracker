@@ -278,11 +278,23 @@
   .export-farm-head{padding:10px 14px;background:var(--grey-bg);border-bottom:1px solid var(--line);font-size:13px;}
   .export-farm-head .muted{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px;}
   .export-batch-list{display:flex;flex-direction:column;}
-  .export-batch-row{display:grid;grid-template-columns:24px 120px 1fr 90px 80px 90px 60px;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;cursor:pointer;}
+  .export-batch-row{display:grid;grid-template-columns:24px 110px 1fr 88px 88px 120px 80px;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px;}
+  .export-batch-row.export-row-off{opacity:.45;}
+  .export-batch-head{display:grid;grid-template-columns:24px 110px 1fr 88px 88px 120px 80px;gap:8px;padding:8px 14px;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--muted);background:var(--grey-bg);border-bottom:1px solid var(--line);}
   .export-batch-row:last-child{border-bottom:0;}
   .export-batch-row:hover{background:var(--blue-50);}
-  .export-batch-row input{margin:0;}
+  .export-batch-row input[type=checkbox]{margin:0;}
   .export-batch-row .muted{color:var(--muted);}
+  .export-kg-field{display:flex;flex-direction:column;gap:2px;}
+  .export-kg-field span{font-size:10px;color:var(--muted);}
+  .export-kg-input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font-size:12px;}
+  .export-kg-input:disabled{background:#f1f5f9;}
+  .farm-subtotal{margin-left:auto;font-size:12px;}
+  .export-grand-total{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px;padding:14px 16px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;}
+  .export-grand-total b{font-size:18px;color:#047857;}
+  .export-totals-panel{margin-bottom:16px;}
+  .export-total-row td{background:#f0fdf4;font-weight:700;}
+  .export-totals-panel .export-total-row td{background:#ecfdf5;}
   .export-log-panel{margin-top:0;}
   .export-log-table td{font-size:11px;}
   .export-log-batches{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -291,8 +303,8 @@
   .export-type-chip.full{background:#fef3c7;color:#b45309;}
   .export-type-chip.company{background:#ede9fe;color:#5b21b6;}
   @media (max-width:900px){
-    .export-batch-row{grid-template-columns:24px 1fr;grid-template-rows:auto;}
-    .export-batch-row span:nth-child(n+3){grid-column:2;}
+    .export-batch-row,.export-batch-head{grid-template-columns:24px 1fr;}
+    .export-batch-row span:nth-child(n+3),.export-batch-head span:nth-child(n+3){grid-column:2;}
   }
   .company-badge{display:inline-flex;padding:3px 10px;border-radius:100px;font-size:10px;font-weight:800;background:var(--purple-100);color:var(--purple-700);margin-left:8px;}
   .farm-pill{display:inline-flex;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:700;background:var(--blue-100);color:var(--blue-700);}

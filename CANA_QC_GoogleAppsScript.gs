@@ -337,6 +337,29 @@ function writeDriveParentFolder(ss, parentId) {
   meta.getRange('B7').setValue(normalizeDriveFolderId(parentId) || String(parentId || '').trim());
 }
 
+function readExportCompaniesFromMeta(ss) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) return null;
+  var raw = meta.getRange('B8').getValue();
+  if (!raw) return null;
+  try {
+    var list = JSON.parse(String(raw));
+    if (Array.isArray(list) && list.length) return list;
+  } catch (e) {}
+  return null;
+}
+
+function writeExportCompanies(ss, exportCompanies) {
+  var meta = ss.getSheetByName('_Meta');
+  if (!meta) {
+    meta = ss.insertSheet('_Meta');
+    meta.hideSheet();
+    meta.getRange('A1').setValue('CANA QC Tracker — do not delete');
+  }
+  meta.getRange('A8').setValue('exportCompanies');
+  meta.getRange('B8').setValue(JSON.stringify(exportCompanies || [{ id: 'bls', name: 'BLS', templateId: 'bls' }]));
+}
+
 function normalizeFolderMatchName(name) {
   return String(name || '').trim().toLowerCase().replace(/\sfarm$/i, '').replace(/\s+/g, '');
 }
@@ -777,6 +800,7 @@ function readAllFarms() {
     documents: readDocuments(ss, farmList),
     trimming: readTrimming(ss),
     exportLog: readExportLog(ss),
+    exportCompanies: readExportCompaniesFromMeta(ss) || [{ id: 'bls', name: 'BLS', templateId: 'bls' }],
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
@@ -847,6 +871,7 @@ function writeAllFarms(state) {
   if (state.documents) writeDocuments(ss, state.documents, farmList);
   if (state.trimming) writeTrimming(ss, state.trimming);
   if (state.exportLog) writeExportLog(ss, state.exportLog);
+  if (state.exportCompanies) writeExportCompanies(ss, state.exportCompanies);
   updateMeta(ss);
   updateDashboard(ss);
   orderTabs(ss);

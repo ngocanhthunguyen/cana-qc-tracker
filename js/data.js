@@ -11,36 +11,34 @@ const DEFAULT_FARM_CODES = {
   'Kenny':'KN','ZaZa':'ZZ','Yang':'YG','Cana':'CA'
 };
 
-const EXPORT_COMPANIES = [
-  {
+const EXPORT_COMPANY_TEMPLATES = {
+  bls: {
     id: 'bls',
     name: 'BLS',
     label: 'BLS Monthly Report',
     labelTh: 'รายงานรายเดือน BLS',
-    description: 'Monthly batch summary for BLS — all farms combined for the selected month.',
+    description: 'Monthly report for BLS — manager sets export kg per strain.',
     columns: [
       {key:'batchId', label:'Batch ID'},
       {key:'farm', label:'Farm'},
       {key:'date', label:'Delivery Date'},
       {key:'strain', label:'Strain'},
+      {key:'exportKg', label:'Export (kg)', num:true, exportField:true},
+      {key:'qcFlowerKg', label:'QC Flower (kg)', num:true, exportField:true},
       {key:'grossWt', label:'Gross Wt (g)', num:true},
       {key:'startWt', label:'Start Wt (g)', num:true},
-      {key:'totalFlower', label:'Total Flower (g)', num:true, computed:true},
-      {key:'totalOut', label:'Total Out (g)', num:true, computed:true},
-      {key:'diff', label:'Diff (g)', num:true, computed:true},
-      {key:'yieldPct', label:'Yield %', pct:true, computed:true},
+      {key:'passFail', label:'Pass/Fail'},
       {key:'condition', label:'Physical Condition'},
       {key:'eurofinsTest', label:'Eurofins Test'},
       {key:'tnrTest', label:'TNR Test'},
-      {key:'passFail', label:'Pass/Fail'},
       {key:'qcBy', label:'QC by'},
-      {key:'qcStart', label:'QC Start'},
-      {key:'qcEnd', label:'QC End'},
       {key:'invoice', label:'Invoice'},
       {key:'notes', label:'Notes'},
     ]
   }
-];
+};
+/** @deprecated use getExportCompanies() in app.js */
+const EXPORT_COMPANIES = [EXPORT_COMPANY_TEMPLATES.bls];
 const LAB_TEST_OPTIONS = [
   'Pending / รอผล',
   'Pass / ผ่าน',
@@ -116,7 +114,8 @@ function defaultState(){
     farms,
     documents,
     trimming: [],
-    exportLog: []
+    exportLog: [],
+    exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }]
   };
 }
 
