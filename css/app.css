@@ -117,6 +117,21 @@
   .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--blue-300);box-shadow:0 0 0 3px var(--blue-100);background:#fff;}
   .field textarea{resize:vertical;min-height:38px;}
   .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px;}
+  .admin-login-modal{max-width:400px;padding:32px 28px 26px;text-align:center;}
+  .admin-login-brand{margin-bottom:8px;}
+  .admin-login-icon{width:52px;height:52px;margin:0 auto 14px;border-radius:14px;background:linear-gradient(135deg,#14532d 0%,#15803d 100%);display:flex;align-items:center;justify-content:center;color:#fff;box-shadow:0 10px 28px rgba(21,128,61,.22);}
+  .admin-login-icon svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+  .admin-login-modal h2{margin:0 0 6px;font-size:20px;font-weight:700;letter-spacing:-.02em;}
+  .admin-login-sub{font-size:13px;color:var(--muted);margin:0;line-height:1.45;}
+  .admin-login-reason{margin:18px 0 0;padding:10px 13px;border-radius:10px;background:#f0fdf4;border:1px solid #bbf7d0;font-size:12.5px;color:#166534;text-align:left;line-height:1.4;}
+  .admin-login-modal .field{text-align:left;margin-top:22px;}
+  .admin-login-modal .field label{font-size:11px;}
+  .admin-login-modal .field input{font-size:17px;letter-spacing:.12em;text-align:center;padding:12px 14px;}
+  .admin-login-error{margin-top:12px;padding:9px 12px;border-radius:9px;background:var(--fail-bg);border:1px solid #fecaca;color:var(--fail);font-size:12.5px;text-align:left;line-height:1.4;}
+  .admin-login-actions{margin-top:22px;gap:10px;}
+  .admin-login-actions button{flex:1;padding:10px 14px;}
+  .admin-login-actions button.primary{background:linear-gradient(135deg,#15803d,#166534);border-color:#166534;}
+  .admin-login-actions button.primary:hover{background:linear-gradient(135deg,#166534,#14532d);}
   @media (max-width:560px){.form-grid{grid-template-columns:1fr;}}
 
   /* dashboard */

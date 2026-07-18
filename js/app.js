@@ -315,8 +315,8 @@ function updateAdminUI(){
   document.body.classList.toggle('admin-mode', isAdmin());
   const btn = document.getElementById('btnAdmin');
   if(btn){
-    btn.textContent = isAdmin() ? '🔒 Admin ✓' : '🔓 Admin';
-    btn.title = isAdmin() ? 'Manager mode active (click to lock)' : 'Unlock manager settings';
+    btn.textContent = isAdmin() ? 'Manager ✓' : 'Manager';
+    btn.title = isAdmin() ? 'Manager mode active (click to lock)' : 'Sign in as manager';
   }
   document.querySelectorAll('.admin-only').forEach(el=>{
     el.style.display = isAdmin() ? '' : 'none';
@@ -357,31 +357,48 @@ async function checkAdminPinConfigured(){
 function openAdminUnlockModal(onSuccess, reason){
   modalDirty = true;
   const root = document.getElementById('modalRoot');
-  const why = reason ? `<div class="ctx">Required for: <b>${esc(reason)}</b></div>` : '';
+  const why = reason
+    ? `<div class="admin-login-reason">Access required for: <b>${esc(reason)}</b></div>`
+    : '';
   root.innerHTML = `
   <div class="overlay" id="overlay">
-    <div class="modal" style="max-width:400px">
-      <h2>🔓 Manager unlock</h2>
-      <div class="sub">Staff mode is active — enter admin PIN for settings &amp; delete actions<br>โหมดทั่วไป — ใส่ PIN ผู้จัดการสำหรับการตั้งค่า</div>
+    <div class="modal admin-login-modal">
+      <div class="admin-login-brand">
+        <div class="admin-login-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+        </div>
+        <h2>Manager Access</h2>
+        <p class="admin-login-sub">Enter your manager PIN to continue<br><span class="bi">ใส่รหัส PIN ผู้จัดการเพื่อดำเนินการต่อ</span></p>
+      </div>
       ${why}
       <form id="adminPinForm">
-        <label>PIN
-          <input type="password" name="pin" inputmode="numeric" autocomplete="off" required minlength="4" placeholder="••••" autofocus>
-        </label>
-        <div class="modal-actions">
+        <div class="field">
+          <label>PIN <span>รหัสผู้จัดการ</span></label>
+          <input type="password" name="pin" inputmode="numeric" autocomplete="off" required minlength="4" placeholder="Enter PIN" autofocus>
+        </div>
+        <div class="admin-login-error" id="adminPinError" hidden></div>
+        <div class="modal-actions admin-login-actions">
           <button type="button" class="ghost" id="btnCancelAdmin">Cancel</button>
           <button type="submit" class="primary">Unlock</button>
         </div>
       </form>
-      <p class="farm-add-hint" style="margin-top:14px">First time? In Apps Script run <b>setAdminPin('your-pin')</b> then redeploy.</p>
     </div>
   </div>`;
   const close = ()=>{ modalDirty = false; closeModal(); };
+  const pinInput = root.querySelector('[name=pin]');
+  const errEl = root.querySelector('#adminPinError');
+  const showPinError = (msg)=>{
+    if(!errEl) return;
+    errEl.textContent = msg;
+    errEl.hidden = !msg;
+  };
+  pinInput.oninput = ()=> showPinError('');
   root.querySelector('#btnCancelAdmin').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   root.querySelector('#adminPinForm').onsubmit = async (e)=>{
     e.preventDefault();
-    const pin = root.querySelector('[name=pin]').value;
+    showPinError('');
+    const pin = pinInput.value;
     try{
       await verifyAdminPinRemote(pin);
       setAdminSession(true);
@@ -389,13 +406,15 @@ function openAdminUnlockModal(onSuccess, reason){
       if(typeof onSuccess === 'function') onSuccess();
       else updateAdminUI();
     }catch(err){
-      alert(err.message || 'Incorrect PIN');
+      showPinError(err.message || 'Incorrect PIN. Please try again.');
+      pinInput.focus();
+      pinInput.select();
     }
   };
 }
 function toggleAdminSession(){
   if(isAdmin()){
-    if(confirm('Lock manager mode?\nล็อกโหมde ผู้จัดการ?')) setAdminSession(false);
+    if(confirm('Lock manager mode?\nล็อกโหมดผู้จัดการ?')) setAdminSession(false);
     return;
   }
   openAdminUnlockModal();
