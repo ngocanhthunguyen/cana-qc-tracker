@@ -561,7 +561,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Cana'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -865,7 +865,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1181,9 +1181,11 @@ function writeDocuments(ss, documents, farmList) {
 
 /* ---------- Trimming — separate Rework / Cana sheet tabs ---------- */
 
-var TRIM_REWORK_SHEET = 'Trim Rework';
+var TRIM_DAILY_SHEET = 'Trim Record';
+var TRIM_LEGACY_DAILY_SHEET = 'Trim Rework';
 var TRIM_CANA_SHEET = 'Trim Cana';
-var TRIM_TYPE_REWORK = 'Rework flower';
+var TRIM_TYPE_DAILY = 'Trimming record';
+var TRIM_TYPE_LEGACY_DAILY = 'Rework flower';
 var TRIM_TYPE_CANA = 'Cana flower';
 var TRIM_HEADERS = ['_id', 'Date', 'Harvest Date', 'Source Farm', 'Room', 'Batch ID', 'Strain', 'Input Wt (g)', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
 var TRIM_NUM_COLS = TRIM_HEADERS.length;
@@ -1197,7 +1199,8 @@ function computeTrimRow(rec) {
     return isNaN(n) ? null : n;
   }
   var isCana = String(rec.type || '').indexOf('Cana') >= 0;
-  var inputWt = isCana ? null : num(rec.inputWt);
+  var isDaily = String(rec.type || '').indexOf('Trimming record') >= 0 || String(rec.type || '').indexOf('Rework') >= 0;
+  var inputWt = (isCana || isDaily) ? null : num(rec.inputWt);
   var finished = num(rec.finishedFlowerG);
   var bigs = num(rec.outputBigsG);
   var pops = num(rec.outputPopsG);
@@ -1214,8 +1217,8 @@ function computeTrimRow(rec) {
   if (totalFlower !== null || mold || seeds || stems || waste) {
     totalOut = (totalFlower || 0) + mold + seeds + stems + waste;
   }
-  if (!isCana && inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
-  if (!isCana && inputWt && totalFlower !== null) yieldPct = Math.round(totalFlower / inputWt * 10000) / 100;
+  if (!isCana && !isDaily && inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
+  if (!isCana && !isDaily && inputWt && totalFlower !== null) yieldPct = Math.round(totalFlower / inputWt * 10000) / 100;
   return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct };
 }
 
@@ -1400,7 +1403,7 @@ function readLegacyTrimmingSheet(ss) {
     } else {
       var useLegacy = trimSheetUsesLegacyHeaders(sheet);
       var off = trimMetaOffsets(sheet);
-      var rec = useLegacy ? parseTrimRowValuesLegacy(row, TRIM_TYPE_REWORK) : parseTrimRowValues(row, TRIM_TYPE_REWORK, off);
+      var rec = useLegacy ? parseTrimRowValuesLegacy(row, TRIM_TYPE_DAILY) : parseTrimRowValues(row, TRIM_TYPE_DAILY, off);
       if (rec) list.push(rec);
     }
   });
@@ -1408,24 +1411,29 @@ function readLegacyTrimmingSheet(ss) {
 }
 
 function readTrimming(ss) {
-  var rework = readTrimmingFromSheet(ss, TRIM_REWORK_SHEET, TRIM_TYPE_REWORK);
+  var daily = readTrimmingFromSheet(ss, TRIM_DAILY_SHEET, TRIM_TYPE_DAILY);
+  if (!daily.length) {
+    daily = readTrimmingFromSheet(ss, TRIM_LEGACY_DAILY_SHEET, TRIM_TYPE_DAILY);
+    daily.forEach(function(r) { if (String(r.type).indexOf('Rework') >= 0) r.type = TRIM_TYPE_DAILY; });
+  }
   var cana = readTrimmingFromSheet(ss, TRIM_CANA_SHEET, TRIM_TYPE_CANA);
-  if (rework.length || cana.length) return rework.concat(cana);
+  if (daily.length || cana.length) return daily.concat(cana);
   return readLegacyTrimmingSheet(ss);
 }
 
 function trimRowToValues(rec) {
   var c = computeTrimRow(rec);
   var isCana = String(rec.type || '').indexOf('Cana') >= 0;
+  var isDaily = String(rec.type || '').indexOf('Trimming record') >= 0 || String(rec.type || '').indexOf('Rework') >= 0;
   return [
     rec.id || newId(),
     rec.date || '',
-    rec.harvestDate || '',
-    rec.sourceFarm || '',
+    isDaily ? '' : (rec.harvestDate || ''),
+    isDaily ? '' : (rec.sourceFarm || ''),
     isCana ? (rec.room || '') : '',
-    isCana ? '' : (rec.batchId || ''),
-    rec.strain || '',
-    isCana ? '' : (rec.inputWt || ''),
+    (isCana || isDaily) ? '' : (rec.batchId || ''),
+    isDaily ? '' : (rec.strain || ''),
+    (isCana || isDaily) ? '' : (rec.inputWt || ''),
     rec.finishedFlowerG || '',
     rec.outputBigsG || '',
     rec.outputPopsG || '',
@@ -1460,22 +1468,33 @@ function writeTrimmingSheet(ss, sheetName, subtitle, tabColor, records) {
 
 function writeTrimming(ss, trimming) {
   var all = trimming || [];
-  var rework = all.filter(function(r) { return String(r.type || '').indexOf('Rework') >= 0; });
+  var daily = all.filter(function(r) {
+    var t = String(r.type || '');
+    return t.indexOf('Trimming record') >= 0 || t.indexOf('Rework') >= 0;
+  }).map(function(r) {
+    if (String(r.type).indexOf('Rework') >= 0) r.type = TRIM_TYPE_DAILY;
+    return r;
+  });
   var cana = all.filter(function(r) { return String(r.type || '').indexOf('Cana') >= 0; });
-  writeTrimmingSheet(ss, TRIM_REWORK_SHEET, 'Rework flower — clean incoming batches (mold, seeds, stems)', '#d97706', rework);
-  writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — in-house grow trimming', '#16a34a', cana);
+  writeTrimmingSheet(ss, TRIM_DAILY_SHEET, 'Trimming record — manager daily log (total g, strains in notes)', '#2563eb', daily);
+  writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — in-house grow trimming (log when finished)', '#16a34a', cana);
+  var legacyRework = ss.getSheetByName(TRIM_LEGACY_DAILY_SHEET);
+  if (legacyRework) ss.deleteSheet(legacyRework);
   var legacy = ss.getSheetByName('Trimming');
   if (legacy) ss.deleteSheet(legacy);
 }
 
-/** Run once — creates Trim Rework + Trim Cana tabs (migrates old Trimming tab if present) */
+/** Run once — creates Trim Record + Trim Cana tabs (migrates old Trim Rework tab if present) */
 function upgradeTrimmingTab() {
   var ss = getSpreadsheet();
   var data = readTrimming(ss);
+  data.forEach(function(r) {
+    if (String(r.type).indexOf('Rework') >= 0) r.type = TRIM_TYPE_DAILY;
+  });
   writeTrimming(ss, data);
   orderTabs(ss);
   SpreadsheetApp.flush();
-  Logger.log('Trim Rework: ' + data.filter(function(r) { return String(r.type).indexOf('Rework') >= 0; }).length);
+  Logger.log('Trim Record: ' + data.filter(function(r) { return String(r.type).indexOf('Trimming record') >= 0; }).length);
   Logger.log('Trim Cana: ' + data.filter(function(r) { return String(r.type).indexOf('Cana') >= 0; }).length);
   Logger.log('Trimming tabs ready.');
 }

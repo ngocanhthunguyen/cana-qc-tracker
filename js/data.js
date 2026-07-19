@@ -122,7 +122,7 @@ function defaultState(){
 const DOCUMENT_CATEGORIES = ['Invoice / ใบเสร็จ','COA / Lab Report / ใบรายงานแล็บ','Photos / รูปภาพ','Contract / สัญญา','QC Report / รายงาน QC','Other / อื่นๆ'];
 const MAX_DOC_BYTES = 8 * 1024 * 1024;
 
-const TRIM_TYPES = ['Rework flower', 'Cana flower'];
+const TRIM_TYPES = ['Trimming record', 'Cana flower'];
 const TRIM_STATUS_OPTIONS = ['In progress / กำลังทำ', 'Complete / เสร็จ'];
 const TRIMMING_COLS = [
   {key:'date', label:'Date', labelTh:'วันที่', type:'date'},

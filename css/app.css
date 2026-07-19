@@ -408,6 +408,7 @@
   .trim-subtabs button.active{background:#fff;color:#5b21b6;box-shadow:0 2px 8px rgba(15,23,42,.08);}
   .trim-badge{display:inline-block;font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em;}
   .trim-badge.rework{background:#fef3c7;color:#b45309;}
+  .trim-badge.record{background:#dbeafe;color:#1d4ed8;}
   .trim-badge.cana{background:var(--pass-bg);color:var(--pass);}
   .trim-toolbar{align-items:center;flex-wrap:wrap;gap:10px;}
   .trim-toolbar .month-filter{font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:8px;}
