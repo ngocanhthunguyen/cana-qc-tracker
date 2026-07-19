@@ -64,17 +64,122 @@ function computeRow(rec){
 }
 
 function computeTrimRow(rec){
-  const inputWt = num(rec.inputWt);
+  const isCana = String(rec.type || '').indexOf('Cana') >= 0;
+  const inputWt = isCana ? null : num(rec.inputWt);
+  const finished = num(rec.finishedFlowerG);
   const bigs = num(rec.outputBigsG), pops = num(rec.outputPopsG);
   const mold = num(rec.moldG)||0, seeds = num(rec.seedsG)||0, stems = num(rec.stemsG)||0, waste = num(rec.wasteG)||0;
   let totalFlower = null, totalOut = null, diff = null, yieldPct = null;
-  if(bigs !== null) totalFlower = bigs + (pops||0);
-  if(bigs !== null || pops !== null || mold || seeds || stems || waste){
-    totalOut = (bigs||0) + (pops||0) + mold + seeds + stems + waste;
+  if(finished !== null) totalFlower = finished;
+  else if(bigs !== null || pops !== null) totalFlower = (bigs||0) + (pops||0);
+  if(totalFlower !== null || mold || seeds || stems || waste){
+    totalOut = (totalFlower||0) + mold + seeds + stems + waste;
   }
-  if(inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
-  if(inputWt && totalFlower !== null) yieldPct = totalFlower / inputWt;
+  if(!isCana && inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
+  if(!isCana && inputWt && totalFlower !== null) yieldPct = totalFlower / inputWt;
   return { totalFlower, totalOut, diff, yieldPct };
+}
+
+function isCanaTrimRecord(rec){
+  return String(rec && rec.type || '').indexOf('Cana') >= 0;
+}
+function normalizeTrimRecord(rec){
+  if(!rec) return rec;
+  if(isCanaTrimRecord(rec)){
+    if(!rec.room && rec.batchId) rec.room = rec.batchId;
+    if(rec.room && !rec.batchId) rec.batchId = '';
+  }
+  if(rec.harvestDate === undefined) rec.harvestDate = '';
+  if(rec.room === undefined) rec.room = '';
+  if(rec.finishedFlowerG === undefined) rec.finishedFlowerG = '';
+  if(rec.hoursWorked === undefined) rec.hoursWorked = '';
+  return rec;
+}
+function computeTrimStaffDaily(records){
+  const map = {};
+  records.forEach(rec=>{
+    const date = rec.date || '—';
+    const staff = String(rec.trimmedBy || '').trim() || '—';
+    const key = date + '\0' + staff;
+    if(!map[key]) map[key] = { date, staff, sessions:0, flower:0, mold:0, seeds:0, stems:0, waste:0, hours:0, hasHours:false };
+    const row = map[key];
+    const c = computeTrimRow(rec);
+    row.sessions++;
+    if(c.totalFlower !== null) row.flower += c.totalFlower;
+    if(num(rec.moldG) !== null) row.mold += num(rec.moldG);
+    if(num(rec.seedsG) !== null) row.seeds += num(rec.seedsG);
+    if(num(rec.stemsG) !== null) row.stems += num(rec.stemsG);
+    if(num(rec.wasteG) !== null) row.waste += num(rec.wasteG);
+    const h = num(rec.hoursWorked);
+    if(h !== null){ row.hours += h; row.hasHours = true; }
+  });
+  return Object.values(map).sort((a,b)=>{
+    const dc = String(b.date).localeCompare(String(a.date));
+    if(dc) return dc;
+    return b.flower - a.flower;
+  });
+}
+function renderTrimStaffDailyPanel(records, isCana){
+  const rows = computeTrimStaffDaily(records);
+  const flowerLabel = isCana ? 'Finished flower' : 'Flower out';
+  if(!rows.length){
+    return `<div class="panel trim-staff-panel empty-state" id="trimStaffDailyWrap" style="padding:18px;margin-bottom:16px;">
+      <b>Daily staff output</b> · <span class="bi">ผลงานรายวันต่อคน</span><br>
+      <span style="font-size:12px;color:var(--muted);">Log sessions with <b>Trimmed by</b> and trim date — totals group here automatically.</span>
+    </div>`;
+  }
+  const body = rows.map(r=>{
+    const gph = r.hasHours && r.hours ? r.flower / r.hours : null;
+    return `<tr>
+      <td>${esc(r.date)}</td>
+      <td><b>${esc(r.staff)}</b></td>
+      <td>${r.sessions}</td>
+      <td>${fmtWeight(r.flower)}</td>
+      <td>${r.hasHours ? fmtNum(r.hours, 1) : '—'}</td>
+      <td>${gph !== null ? fmtWeight(gph) + '/hr' : '—'}</td>
+      <td>${fmtWeight(r.mold)}</td>
+      <td>${fmtWeight(r.seeds)}</td>
+      <td>${fmtWeight(r.stems)}</td>
+      <td>${fmtWeight(r.waste)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="panel trim-staff-panel" id="trimStaffDailyWrap" style="margin-bottom:16px;padding:16px 18px;">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;margin-bottom:12px;">
+      <div>
+        <b>Daily staff output</b> · <span class="bi">ผลงานรายวันต่อคน</span>
+        <div class="sub" style="margin:4px 0 0;font-size:12px;">Totals by trim date + staff · optional <b>Hours worked</b> per session for g/hr speed</div>
+      </div>
+    </div>
+    <div class="table-wrap desktop-table"><table class="compact-table trim-table trim-staff-table">
+      <thead><tr>
+        <th>Date</th><th>Staff</th><th>Sessions</th><th>${flowerLabel}</th><th>Hours</th><th>Speed</th><th>Mold</th><th>Seeds</th><th>Stems</th><th>Waste</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+  </div>`;
+}
+function getTrimColsForTab(tab){
+  const isCana = tab === 'cana';
+  if(isCana){
+    return [
+      {key:'date', label:'Trim date', labelTh:'วันที่ทริม', type:'date'},
+      {key:'harvestDate', label:'Harvest date', labelTh:'วันที่เก็บเกี่ยว', type:'date'},
+      {key:'room', label:'Room', labelTh:'ห้อง', type:'text'},
+      {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
+      {key:'finishedFlowerG', label:'Total finished flower (g)', labelTh:'ดอกสำเร็จริปรวม (กรัม)', type:'number'},
+      {key:'outputBigsG', label:'Out Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
+      {key:'outputPopsG', label:'Out Pops (g)', labelTh:'ดอกเล็ก (กรัม)', type:'number'},
+      {key:'moldG', label:'Mold removed (g)', labelTh:'รา (กรัม)', type:'number'},
+      {key:'seedsG', label:'Seeds removed (g)', labelTh:'เมล็ด (กรัม)', type:'number'},
+      {key:'stemsG', label:'Stems / scraps (g)', labelTh:'ก้าน/เศษ (กรัม)', type:'number'},
+      {key:'wasteG', label:'Waste (g)', labelTh:'ของเสีย (กรัม)', type:'number'},
+      {key:'hoursWorked', label:'Hours worked', labelTh:'ชั่วโมงทำงาน (ต่อ session)', type:'number'},
+      {key:'trimmedBy', label:'Trimmed by', labelTh:'ทำโดย', type:'text'},
+      {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: TRIM_STATUS_OPTIONS},
+      {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
+    ];
+  }
+  return TRIMMING_COLS.filter(c=> !['harvestDate','room','finishedFlowerG'].includes(c.key));
 }
 
 function trimTypeForSubTab(tab){
@@ -728,6 +833,7 @@ function ensureStateShape(){
   if(!state.farms) state.farms = {};
   if(!state.documents) state.documents = {};
   if(!state.trimming) state.trimming = [];
+  state.trimming = state.trimming.map(normalizeTrimRecord);
   if(!state.exportLog) state.exportLog = [];
   if(!state.exportCompanies || !state.exportCompanies.length){
     state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
@@ -1120,7 +1226,7 @@ async function pullFromGoogleSheet(silent){
     if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
     if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
     if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
-    if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice();
+    if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
     if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
     if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
     mergeDocumentsFromRemote(data.documents);
@@ -2783,15 +2889,16 @@ function getFilteredTrimmingRecords(){
     if(rec.type !== type) return false;
     if((rec.date ? formatMonth(rec.date) : '') !== month) return false;
     if(!q) return true;
-    const hay = [rec.batchId, rec.sourceFarm, rec.strain, rec.trimmedBy, rec.notes].join(' ').toLowerCase();
+    const hay = [rec.batchId, rec.room, rec.sourceFarm, rec.strain, rec.trimmedBy, rec.notes, rec.harvestDate].join(' ').toLowerCase();
     return hay.includes(q);
   }).slice().sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 }
 function renderTrimStats(records){
+  const isCana = trimSubTab === 'cana';
   let input = 0, flower = 0, mold = 0, seeds = 0, stems = 0, waste = 0, n = 0;
   records.forEach(rec=>{
     const c = computeTrimRow(rec);
-    if(num(rec.inputWt) !== null) input += num(rec.inputWt);
+    if(!isCana && num(rec.inputWt) !== null) input += num(rec.inputWt);
     if(c.totalFlower !== null) flower += c.totalFlower;
     if(num(rec.moldG) !== null) mold += num(rec.moldG);
     if(num(rec.seedsG) !== null) seeds += num(rec.seedsG);
@@ -2799,10 +2906,19 @@ function renderTrimStats(records){
     if(num(rec.wasteG) !== null) waste += num(rec.wasteG);
     n++;
   });
-  const avgYield = input ? flower / input : null;
-  return { count: n, input, flower, mold, seeds, stems, waste, avgYield };
+  const avgYield = !isCana && input ? flower / input : null;
+  return { count: n, input, flower, mold, seeds, stems, waste, avgYield, isCana };
 }
 function renderTrimStatsMeta(stats){
+  if(stats.isCana){
+    return `
+    <span class="doc-badge">${stats.count} session${stats.count===1?'':'s'}</span>
+    <span class="doc-badge">${fmtWeight(stats.flower)} finished</span>
+    <span class="doc-badge">${fmtWeight(stats.mold)} mold</span>
+    <span class="doc-badge">${fmtWeight(stats.seeds)} seeds</span>
+    <span class="doc-badge">${fmtWeight(stats.stems)} stems</span>
+    <span class="doc-badge">${fmtWeight(stats.waste)} waste</span>`;
+  }
   return `
     <span class="doc-badge">${stats.count} session${stats.count===1?'':'s'}</span>
     <span class="doc-badge">${fmtWeight(stats.input)} in</span>
@@ -2812,6 +2928,16 @@ function renderTrimStatsMeta(stats){
     <span class="doc-badge">${fmtPct(stats.avgYield)||'—'} yield</span>`;
 }
 function renderTrimStatsKpi(stats){
+  if(stats.isCana){
+    return `<div class="trim-kpi-row">
+      <div class="kpi"><span>Sessions</span><b>${stats.count}</b></div>
+      <div class="kpi"><span>Finished flower</span><b>${fmtWeight(stats.flower)}</b></div>
+      <div class="kpi"><span>Mold removed</span><b>${fmtWeight(stats.mold)}</b></div>
+      <div class="kpi"><span>Seeds removed</span><b>${fmtWeight(stats.seeds)}</b></div>
+      <div class="kpi"><span>Stems / scraps</span><b>${fmtWeight(stats.stems)}</b></div>
+      <div class="kpi"><span>Waste</span><b>${fmtWeight(stats.waste)}</b></div>
+    </div>`;
+  }
   return `<div class="trim-kpi-row">
     <div class="kpi"><span>Sessions</span><b>${stats.count}</b></div>
     <div class="kpi"><span>Input</span><b>${fmtWeight(stats.input)}</b></div>
@@ -2824,13 +2950,36 @@ function renderTrimStatsKpi(stats){
 }
 function renderTrimmingTable(records){
   if(!records.length){
-    return `<div class="panel empty-state"><b>No trimming records for this month.</b><br>Click <b>+ New session</b> to log ${esc(trimTypeForSubTab(trimSubTab))} weights (strain, input, mold, seeds, etc.).</div>`;
+    return `<div class="panel empty-state"><b>No trimming records for this month.</b><br>Click <b>+ New session</b> to log ${esc(trimTypeForSubTab(trimSubTab))}.</div>`;
   }
-  const head = `<thead><tr>
-    <th>Date</th><th>Strain</th><th>Batch / Farm</th><th>Input</th><th>Flower out</th><th>Mold</th><th>Seeds</th><th>Stems</th><th>Waste</th><th>Yield</th><th>By</th><th>Status</th><th>Actions</th>
+  const isCana = trimSubTab === 'cana';
+  const head = isCana ? `<thead><tr>
+    <th>Trim date</th><th>Harvest</th><th>Room</th><th>Strain</th><th>Finished flower</th><th>Mold</th><th>Seeds</th><th>Stems</th><th>Waste</th><th>Hours</th><th>By</th><th>Status</th><th>Actions</th>
+  </tr></thead>` : `<thead><tr>
+    <th>Date</th><th>Strain</th><th>Batch / Farm</th><th>Input</th><th>Flower out</th><th>Mold</th><th>Seeds</th><th>Stems</th><th>Waste</th><th>Yield</th><th>Hours</th><th>By</th><th>Status</th><th>Actions</th>
   </tr></thead>`;
   const body = records.map(rec=>{
     const c = computeTrimRow(rec);
+    if(isCana){
+      return `<tr>
+        <td>${esc(rec.date||'—')}</td>
+        <td>${esc(rec.harvestDate||'—')}</td>
+        <td><b>${esc(rec.room||'—')}</b></td>
+        <td><b>${esc(rec.strain||'—')}</b></td>
+        <td>${fmtWeight(c.totalFlower)}</td>
+        <td>${fmtWeight(rec.moldG)}</td>
+        <td>${fmtWeight(rec.seedsG)}</td>
+        <td>${fmtWeight(rec.stemsG)}</td>
+        <td>${fmtWeight(rec.wasteG)}</td>
+        <td>${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</td>
+        <td>${esc(rec.trimmedBy||'—')}</td>
+        <td><span class="status-chip ${(rec.status||'').indexOf('Complete')>=0?'pass':'pending'}">${esc((rec.status||'—').split(' / ')[0])}</span></td>
+        <td><div class="action-group">
+          <button class="small purple" data-edit-trim="${rec.id}">Edit</button>
+          <button class="small danger admin-only" data-delete-trim="${rec.id}">Del</button>
+        </div></td>
+      </tr>`;
+    }
     return `<tr>
       <td>${esc(rec.date||'—')}</td>
       <td><b>${esc(rec.strain||'—')}</b></td>
@@ -2842,6 +2991,7 @@ function renderTrimmingTable(records){
       <td>${fmtWeight(rec.stemsG)}</td>
       <td>${fmtWeight(rec.wasteG)}</td>
       <td>${fmtPct(c.yieldPct)||'—'}</td>
+      <td>${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</td>
       <td>${esc(rec.trimmedBy||'—')}</td>
       <td><span class="status-chip ${(rec.status||'').indexOf('Complete')>=0?'pass':'pending'}">${esc((rec.status||'—').split(' / ')[0])}</span></td>
       <td><div class="action-group">
@@ -2867,7 +3017,7 @@ function renderTrimmingView(){
     <div class="trim-header">
       <div>
         <h2>✂️ Trimming — ${esc(isRework ? 'Rework flower' : 'Cana flower')}</h2>
-        <p class="sub">${isRework ? 'Track each rework session: strain, input weight, flower out, mold, seeds, stems' : 'Track each Cana trim session: strain, weights in/out, mold, seeds'} · Syncs to Google Sheet tab <b>${esc(sheetTab)}</b> · <span class="bi">${isRework ? 'ทำความสะอาดดอกจากฟาร์มอื่น' : 'ดอก Cana ปลูกเอง'}</span></p>
+        <p class="sub">${isRework ? 'Track each rework session: strain, input weight, flower out, mold, seeds, stems' : 'Track each Cana trim: room, strain, harvest date, finished flower, mold, seeds'} · Syncs to Google Sheet tab <b>${esc(sheetTab)}</b> · <span class="bi">${isRework ? 'ทำความสะอาดดอกจากฟาร์มอื่น' : 'ดอก Cana ปลูกเอง · ห้องละหลายสายพันธุ์ได้'}</span></p>
       </div>
       <div class="trim-header-meta" id="trimStatsMeta">${renderTrimStatsMeta(stats)}</div>
     </div>
@@ -2884,10 +3034,12 @@ function renderTrimmingView(){
           ${months.map(m=>`<option value="${esc(m)}" ${m===trimMonth?'selected':''}>${esc(m)}</option>`).join('')}
         </select>
       </label>
-      <input class="search-box" id="trimSearchBox" placeholder="Search batch, strain, name…" value="${esc(trimSearchText)}">
+      <input class="search-box" id="trimSearchBox" placeholder="${isRework ? 'Search batch, strain, name…' : 'Search room, strain, harvest…'}" value="${esc(trimSearchText)}">
     </div>
 
     ${renderTrimStatsKpi(stats)}
+
+    ${renderTrimStaffDailyPanel(records, !isRework)}
 
     <div id="trimResultsWrap">${renderTrimmingTable(records)}</div>
   `;
@@ -2907,6 +3059,8 @@ function updateTrimViewResults(){
   if(meta) meta.innerHTML = renderTrimStatsMeta(stats);
   const kpi = main.querySelector('.trim-kpi-row');
   if(kpi) kpi.outerHTML = renderTrimStatsKpi(stats);
+  const staffWrap = document.getElementById('trimStaffDailyWrap');
+  if(staffWrap) staffWrap.outerHTML = renderTrimStaffDailyPanel(records, trimSubTab === 'cana');
   const wrap = document.getElementById('trimResultsWrap');
   if(wrap) wrap.innerHTML = renderTrimmingTable(records);
   bindTrimActions(main);
@@ -2919,11 +3073,11 @@ function bindTrimActions(root){
 function openTrimmingModal(id){
   if(!requireLogin()) return;
   const type = trimTypeForSubTab(trimSubTab);
-  const rec = id ? (state.trimming||[]).find(r=>r.id===id) : {
-    id: uid(), type, date: todayISO(), sourceFarm: type === 'Cana flower' ? 'Cana' : '',
-    batchId:'', linkedRecordId:'', strain:'', inputWt:'', outputBigsG:'', outputPopsG:'',
-    moldG:'', seedsG:'', stemsG:'', wasteG:'', trimmedBy:'', status: TRIM_STATUS_OPTIONS[0], notes:''
-  };
+  const rec = id ? normalizeTrimRecord({...(state.trimming||[]).find(r=>r.id===id)}) : normalizeTrimRecord({
+    id: uid(), type, date: todayISO(), harvestDate: '', sourceFarm: type === 'Cana flower' ? 'Cana' : '',
+    room:'', batchId:'', linkedRecordId:'', strain:'', inputWt:'', finishedFlowerG:'', outputBigsG:'', outputPopsG:'',
+    moldG:'', seedsG:'', stemsG:'', wasteG:'', hoursWorked:'', trimmedBy:'', status: TRIM_STATUS_OPTIONS[0], notes:''
+  });
   if(!rec) return;
   const isNew = !id;
   const batchOpts = getAllQcBatchOptions();
@@ -2935,19 +3089,21 @@ function openTrimmingModal(id){
         ${batchOpts.map(o=>`<option value="${esc(o.recordId)}" data-farm="${esc(o.farm)}" data-batch="${esc(o.batchId)}" data-strain="${esc(o.strain)}" ${rec.linkedRecordId===o.recordId?'selected':''}>${esc(o.label)}</option>`).join('')}
       </select>
     </div>` : '';
-  const fields = TRIMMING_COLS.filter(c=> !(trimSubTab === 'cana' && c.key === 'sourceFarm'))
-    .map(c=> fieldHtml(c, rec[c.key])).join('');
+  const fields = getTrimColsForTab(trimSubTab).map(c=> fieldHtml(c, rec[c.key] || '')).join('');
   const c = computeTrimRow(rec);
-  modalDirty = !isNew;
-  const root = document.getElementById('modalRoot');
-  root.innerHTML = `
-  <div class="overlay" id="overlay">
-    <div class="modal" style="max-width:720px">
-      <h2>${isNew?'+ New':'Edit'} trimming — ${esc(type)}</h2>
-      <form id="trimForm" class="form-grid">
-        <input type="hidden" name="type" value="${esc(type)}">
-        ${batchSelect}
-        ${fields}
+  const isCana = trimSubTab === 'cana';
+  const previewHtml = isCana ? `
+        <div class="live-preview full">
+          <div class="preview-grid trim-preview">
+            <div><span>Finished flower</span><b id="tpFlower">${fmtWeight(c.totalFlower)}</b></div>
+            <div><span>Mold</span><b id="tpMold">${fmtWeight(rec.moldG)}</b></div>
+            <div><span>Seeds</span><b id="tpSeeds">${fmtWeight(rec.seedsG)}</b></div>
+            <div><span>Stems</span><b id="tpStems">${fmtWeight(rec.stemsG)}</b></div>
+            <div><span>Waste</span><b id="tpWaste">${fmtWeight(rec.wasteG)}</b></div>
+            <div><span>Total out</span><b id="tpOut">${fmtWeight(c.totalOut)}</b></div>
+          </div>
+          <p class="sub" style="margin:10px 0 0;font-size:11px;color:var(--muted);">Finished flower = total you enter, or Bigs + Pops if left blank.</p>
+        </div>` : `
         <div class="live-preview full">
           <div class="preview-grid trim-preview">
             <div><span>Input</span><b id="tpInput">${fmtWeight(rec.inputWt)}</b></div>
@@ -2960,7 +3116,18 @@ function openTrimmingModal(id){
             <div><span>Diff</span><b id="tpDiff">${c.diff!==null?fmtWeight(c.diff):'—'}</b></div>
             <div><span>Yield</span><b id="tpYield">${fmtPct(c.yieldPct)||'—'}</b></div>
           </div>
-        </div>
+        </div>`;
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>${isNew?'+ New':'Edit'} trimming — ${esc(type)}</h2>
+      <form id="trimForm" class="form-grid">
+        <input type="hidden" name="type" value="${esc(type)}">
+        ${batchSelect}
+        ${fields}
+        ${previewHtml}
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelTrim">Cancel</button>
           <button type="submit" class="primary">Save</button>
@@ -2994,8 +3161,11 @@ function openTrimmingModal(id){
     const fd = new FormData(form);
     const updated = { ...rec };
     updated.type = type;
-    TRIMMING_COLS.forEach(col=>{
+    getTrimColsForTab(trimSubTab).forEach(col=>{
       updated[col.key] = String(fd.get(col.key) ?? '').trim();
+    });
+    TRIM_SAVE_KEYS.forEach(key=>{
+      if(updated[key] === undefined) updated[key] = String(rec[key] ?? '').trim();
     });
     updated.linkedRecordId = batchSel ? String(fd.get('linkedBatch')||'') : (rec.linkedRecordId||'');
     if(trimSubTab === 'rework' && batchSel && updated.linkedRecordId){
@@ -3006,7 +3176,12 @@ function openTrimmingModal(id){
         updated.strain = opt.dataset.strain || updated.strain;
       }
     }
-    if(trimSubTab === 'cana') updated.sourceFarm = 'Cana';
+    if(trimSubTab === 'cana'){
+      updated.sourceFarm = 'Cana';
+      updated.batchId = '';
+      updated.inputWt = '';
+    }
+    normalizeTrimRecord(updated);
     if(!state.trimming) state.trimming = [];
     if(isNew) state.trimming.push(updated);
     else {
@@ -3021,10 +3196,22 @@ function openTrimmingModal(id){
   };
 }
 function updateTrimPreview(form){
-  const rec = {};
-  TRIMMING_COLS.forEach(col=>{ rec[col.key] = form.querySelector(`[name=${col.key}]`)?.value || ''; });
+  const rec = { type: trimTypeForSubTab(trimSubTab) };
+  getTrimColsForTab(trimSubTab).forEach(col=>{ rec[col.key] = form.querySelector(`[name=${col.key}]`)?.value || ''; });
+  TRIM_SAVE_KEYS.forEach(key=>{
+    if(rec[key] === undefined) rec[key] = form.querySelector(`[name=${key}]`)?.value || '';
+  });
   const c = computeTrimRow(rec);
   const set = (id, val)=>{ const el = document.getElementById(id); if(el) el.textContent = val; };
+  if(trimSubTab === 'cana'){
+    set('tpFlower', fmtWeight(c.totalFlower));
+    set('tpMold', fmtWeight(rec.moldG));
+    set('tpSeeds', fmtWeight(rec.seedsG));
+    set('tpStems', fmtWeight(rec.stemsG));
+    set('tpWaste', fmtWeight(rec.wasteG));
+    set('tpOut', fmtWeight(c.totalOut));
+    return;
+  }
   set('tpInput', fmtWeight(rec.inputWt));
   set('tpFlower', fmtWeight(c.totalFlower));
   set('tpMold', fmtWeight(rec.moldG));

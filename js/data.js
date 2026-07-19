@@ -126,20 +126,25 @@ const TRIM_TYPES = ['Rework flower', 'Cana flower'];
 const TRIM_STATUS_OPTIONS = ['In progress / กำลังทำ', 'Complete / เสร็จ'];
 const TRIMMING_COLS = [
   {key:'date', label:'Date', labelTh:'วันที่', type:'date'},
+  {key:'harvestDate', label:'Harvest date', labelTh:'วันที่เก็บเกี่ยว', type:'date'},
   {key:'sourceFarm', label:'Source farm', labelTh:'ฟาร์มต้นทาง', type:'text'},
+  {key:'room', label:'Room', labelTh:'ห้อง', type:'text'},
   {key:'batchId', label:'Batch ID', labelTh:'Batch ID', type:'text'},
   {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
   {key:'inputWt', label:'Input Wt (g)', labelTh:'น้ำหนักเข้า (กรัม)', type:'number'},
+  {key:'finishedFlowerG', label:'Total finished flower (g)', labelTh:'ดอกสำเร็จริปรวม (กรัม)', type:'number'},
   {key:'outputBigsG', label:'Out Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
   {key:'outputPopsG', label:'Out Pops (g)', labelTh:'ดอกเล็ก (กรัม)', type:'number'},
   {key:'moldG', label:'Mold removed (g)', labelTh:'รา (กรัม)', type:'number'},
   {key:'seedsG', label:'Seeds removed (g)', labelTh:'เมล็ด (กรัม)', type:'number'},
   {key:'stemsG', label:'Stems / scraps (g)', labelTh:'ก้าน/เศษ (กรัม)', type:'number'},
   {key:'wasteG', label:'Waste (g)', labelTh:'ของเสีย (กรัม)', type:'number'},
+  {key:'hoursWorked', label:'Hours worked', labelTh:'ชั่วโมงทำงาน', type:'number'},
   {key:'trimmedBy', label:'Trimmed by', labelTh:'ทำโดย', type:'text'},
   {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: TRIM_STATUS_OPTIONS},
   {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
 ];
+const TRIM_SAVE_KEYS = ['date','harvestDate','sourceFarm','room','batchId','strain','inputWt','finishedFlowerG','outputBigsG','outputPopsG','moldG','seedsG','stemsG','wasteG','hoursWorked','trimmedBy','status','notes'];
 const TRIMMING_GREY = [
   {key:'totalFlower', label:'Total flower out (g)', labelTh:'ดอกรวม (กรัม)'},
   {key:'totalOut', label:'Total out (g)', labelTh:'รวมออก (กรัม)'},

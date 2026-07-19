@@ -1185,7 +1185,7 @@ var TRIM_REWORK_SHEET = 'Trim Rework';
 var TRIM_CANA_SHEET = 'Trim Cana';
 var TRIM_TYPE_REWORK = 'Rework flower';
 var TRIM_TYPE_CANA = 'Cana flower';
-var TRIM_HEADERS = ['_id', 'Date', 'Source Farm', 'Batch ID', 'Strain', 'Input Wt (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
+var TRIM_HEADERS = ['_id', 'Date', 'Harvest Date', 'Source Farm', 'Room', 'Batch ID', 'Strain', 'Input Wt (g)', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
 var TRIM_NUM_COLS = TRIM_HEADERS.length;
 var TRIM_HEADER_ROW = 3;
 var TRIM_DATA_START = 4;
@@ -1196,7 +1196,9 @@ function computeTrimRow(rec) {
     var n = Number(v);
     return isNaN(n) ? null : n;
   }
-  var inputWt = num(rec.inputWt);
+  var isCana = String(rec.type || '').indexOf('Cana') >= 0;
+  var inputWt = isCana ? null : num(rec.inputWt);
+  var finished = num(rec.finishedFlowerG);
   var bigs = num(rec.outputBigsG);
   var pops = num(rec.outputPopsG);
   var mold = num(rec.moldG) || 0;
@@ -1207,12 +1209,13 @@ function computeTrimRow(rec) {
   var totalOut = null;
   var diff = null;
   var yieldPct = null;
-  if (bigs !== null) totalFlower = bigs + (pops || 0);
-  if (bigs !== null || pops !== null || mold || seeds || stems || waste) {
-    totalOut = (bigs || 0) + (pops || 0) + mold + seeds + stems + waste;
+  if (finished !== null) totalFlower = finished;
+  else if (bigs !== null || pops !== null) totalFlower = (bigs || 0) + (pops || 0);
+  if (totalFlower !== null || mold || seeds || stems || waste) {
+    totalOut = (totalFlower || 0) + mold + seeds + stems + waste;
   }
-  if (inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
-  if (inputWt && totalFlower !== null) yieldPct = Math.round(totalFlower / inputWt * 10000) / 100;
+  if (!isCana && inputWt !== null && totalOut !== null) diff = inputWt - totalOut;
+  if (!isCana && inputWt && totalFlower !== null) yieldPct = Math.round(totalFlower / inputWt * 10000) / 100;
   return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct };
 }
 
@@ -1235,10 +1238,10 @@ function setupTrimmingTab(ss, sheetName, subtitle, tabColor) {
   sheet.getRange(TRIM_HEADER_ROW, 1, 1, TRIM_NUM_COLS).setValues([TRIM_HEADERS])
     .setFontWeight('bold').setFontSize(9).setWrap(true)
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
-  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 5).setBackground(THEME.blueBg).setFontColor('#1e40af');
-  sheet.getRange(TRIM_HEADER_ROW, 6, 1, 7).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
-  sheet.getRange(TRIM_HEADER_ROW, 13, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
-  sheet.getRange(TRIM_HEADER_ROW, 17, 1, 4).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 7).setBackground(THEME.blueBg).setFontColor('#1e40af');
+  sheet.getRange(TRIM_HEADER_ROW, 8, 1, 8).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+  sheet.getRange(TRIM_HEADER_ROW, 16, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.getRange(TRIM_HEADER_ROW, 20, 1, 5).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
   sheet.setRowHeight(TRIM_HEADER_ROW, 36);
   sheet.setTabColor(tabColor);
   sheet.setFrozenRows(TRIM_HEADER_ROW);
@@ -1253,31 +1256,90 @@ function formatTrimmingSheet(sheet, numRows) {
     var bg = r % 2 === 0 ? THEME.white : THEME.purplePale;
     sheet.getRange(rowNum, 1, 1, TRIM_NUM_COLS).setBackground(bg).setFontSize(10).setWrap(true);
   }
-  sheet.getRange(TRIM_DATA_START, 6, numRows, 11).setNumberFormat('#,##0.##');
-  sheet.getRange(TRIM_DATA_START, 16, numRows, 1).setNumberFormat('0.00"%"');
+  sheet.getRange(TRIM_DATA_START, 8, numRows, 11).setNumberFormat('#,##0.##');
+  sheet.getRange(TRIM_DATA_START, 19, numRows, 1).setNumberFormat('0.00"%"');
+  sheet.getRange(TRIM_DATA_START, 20, numRows, 1).setNumberFormat('0.0');
 }
 
-function parseTrimRowValues(row, type) {
-  if (!row[0] && !row[2] && !row[5]) return null;
-  return {
+function trimSheetHeaderText(sheet, col) {
+  return String(sheet.getRange(TRIM_HEADER_ROW, col).getValue() || '');
+}
+
+function trimSheetHasHoursColumn(sheet) {
+  return trimSheetHeaderText(sheet, 20) === 'Hours Worked';
+}
+
+function trimSheetUsesLegacyHeaders(sheet) {
+  if (!sheet) return true;
+  return trimSheetHeaderText(sheet, 2) !== 'Harvest Date';
+}
+
+function trimMetaOffsets(sheet) {
+  if (trimSheetUsesLegacyHeaders(sheet)) return { mode: 'legacy', hours: -1, trimmedBy: 16, status: 17, notes: 18, linked: 19 };
+  if (trimSheetHasHoursColumn(sheet)) return { mode: 'full', hours: 19, trimmedBy: 20, status: 21, notes: 22, linked: 23 };
+  return { mode: 'mid', hours: -1, trimmedBy: 19, status: 20, notes: 21, linked: 22 };
+}
+
+function parseTrimRowValues(row, type, offsets) {
+  offsets = offsets || { hours: 19, trimmedBy: 20, status: 21, notes: 22, linked: 23 };
+  if (!row[0] && !row[1] && !row[6] && !row[8]) return null;
+  var isCana = String(type || '').indexOf('Cana') >= 0;
+  var rec = {
     id: String(row[0] || '') || newId(),
     type: type,
     date: formatSheetDate(row[1]),
+    harvestDate: formatSheetDate(row[2]),
+    sourceFarm: String(row[3] || ''),
+    room: String(row[4] || ''),
+    batchId: String(row[5] || ''),
+    strain: String(row[6] || ''),
+    inputWt: cellStr(row[7]),
+    finishedFlowerG: cellStr(row[8]),
+    outputBigsG: cellStr(row[9]),
+    outputPopsG: cellStr(row[10]),
+    moldG: cellStr(row[11]),
+    seedsG: cellStr(row[12]),
+    stemsG: cellStr(row[13]),
+    wasteG: cellStr(row[14]),
+    hoursWorked: offsets.hours >= 0 ? cellStr(row[offsets.hours]) : '',
+    trimmedBy: String(row[offsets.trimmedBy] || ''),
+    status: String(row[offsets.status] || ''),
+    notes: String(row[offsets.notes] || ''),
+    linkedRecordId: String(row[offsets.linked] || '')
+  };
+  if (isCana && !rec.room && rec.batchId) rec.room = rec.batchId;
+  if (isCana) rec.batchId = '';
+  return rec;
+}
+
+function parseTrimRowValuesLegacy(row, type) {
+  if (!row[0] && !row[2] && !row[5]) return null;
+  var isCana = String(type || '').indexOf('Cana') >= 0;
+  var rec = {
+    id: String(row[0] || '') || newId(),
+    type: type,
+    date: formatSheetDate(row[1]),
+    harvestDate: '',
     sourceFarm: String(row[2] || ''),
-    batchId: String(row[3] || ''),
+    room: isCana ? String(row[3] || '') : '',
+    batchId: isCana ? '' : String(row[3] || ''),
     strain: String(row[4] || ''),
-    inputWt: cellStr(row[5]),
+    inputWt: isCana ? '' : cellStr(row[5]),
+    finishedFlowerG: '',
     outputBigsG: cellStr(row[6]),
     outputPopsG: cellStr(row[7]),
     moldG: cellStr(row[8]),
     seedsG: cellStr(row[9]),
     stemsG: cellStr(row[10]),
     wasteG: cellStr(row[11]),
+    hoursWorked: '',
     trimmedBy: String(row[16] || ''),
     status: String(row[17] || ''),
     notes: String(row[18] || ''),
     linkedRecordId: String(row[19] || '')
   };
+  if (isCana && !rec.room && row[3]) rec.room = String(row[3] || '');
+  return rec;
 }
 
 function readTrimmingFromSheet(ss, sheetName, type) {
@@ -1286,9 +1348,11 @@ function readTrimmingFromSheet(ss, sheetName, type) {
   var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
   if (numRows < 1) return [];
   var values = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_NUM_COLS).getValues();
+  var legacy = trimSheetUsesLegacyHeaders(sheet);
+  var offsets = trimMetaOffsets(sheet);
   var list = [];
   values.forEach(function(row) {
-    var rec = parseTrimRowValues(row, type);
+    var rec = legacy ? parseTrimRowValuesLegacy(row, type) : parseTrimRowValues(row, type, offsets);
     if (rec) list.push(rec);
   });
   return list;
@@ -1308,27 +1372,35 @@ function readLegacyTrimmingSheet(ss) {
   values.forEach(function(row) {
     if (hasTypeCol) {
       if (!row[1] && !row[3] && !row[6]) return;
+      var typeStr = String(row[1] || '');
+      var isCana = typeStr.indexOf('Cana') >= 0;
       list.push({
         id: String(row[0] || '') || newId(),
-        type: String(row[1] || ''),
+        type: typeStr,
         date: formatSheetDate(row[2]),
+        harvestDate: '',
         sourceFarm: String(row[3] || ''),
-        batchId: String(row[4] || ''),
+        room: isCana ? String(row[4] || '') : '',
+        batchId: isCana ? '' : String(row[4] || ''),
         strain: String(row[5] || ''),
-        inputWt: cellStr(row[6]),
+        inputWt: isCana ? '' : cellStr(row[6]),
+        finishedFlowerG: '',
         outputBigsG: cellStr(row[7]),
         outputPopsG: cellStr(row[8]),
         moldG: cellStr(row[9]),
         seedsG: cellStr(row[10]),
         stemsG: cellStr(row[11]),
         wasteG: cellStr(row[12]),
+        hoursWorked: '',
         trimmedBy: String(row[17] || ''),
         status: String(row[18] || ''),
         notes: String(row[19] || ''),
         linkedRecordId: String(row[20] || '')
       });
     } else {
-      var rec = parseTrimRowValues(row, TRIM_TYPE_REWORK);
+      var useLegacy = trimSheetUsesLegacyHeaders(sheet);
+      var off = trimMetaOffsets(sheet);
+      var rec = useLegacy ? parseTrimRowValuesLegacy(row, TRIM_TYPE_REWORK) : parseTrimRowValues(row, TRIM_TYPE_REWORK, off);
       if (rec) list.push(rec);
     }
   });
@@ -1344,13 +1416,17 @@ function readTrimming(ss) {
 
 function trimRowToValues(rec) {
   var c = computeTrimRow(rec);
+  var isCana = String(rec.type || '').indexOf('Cana') >= 0;
   return [
     rec.id || newId(),
     rec.date || '',
+    rec.harvestDate || '',
     rec.sourceFarm || '',
-    rec.batchId || '',
+    isCana ? (rec.room || '') : '',
+    isCana ? '' : (rec.batchId || ''),
     rec.strain || '',
-    rec.inputWt || '',
+    isCana ? '' : (rec.inputWt || ''),
+    rec.finishedFlowerG || '',
     rec.outputBigsG || '',
     rec.outputPopsG || '',
     rec.moldG || '',
@@ -1361,6 +1437,7 @@ function trimRowToValues(rec) {
     c.totalOut === null ? '' : c.totalOut,
     c.diff === null ? '' : c.diff,
     c.yieldPct === null ? '' : c.yieldPct,
+    rec.hoursWorked || '',
     rec.trimmedBy || '',
     rec.status || '',
     rec.notes || '',
