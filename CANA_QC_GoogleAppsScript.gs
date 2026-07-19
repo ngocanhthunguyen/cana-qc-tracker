@@ -1187,8 +1187,13 @@ var TRIM_CANA_SHEET = 'Trim Cana';
 var TRIM_TYPE_DAILY = 'Trimming record';
 var TRIM_TYPE_LEGACY_DAILY = 'Rework flower';
 var TRIM_TYPE_CANA = 'Cana flower';
-var TRIM_HEADERS = ['_id', 'Date', 'Harvest Date', 'Source Farm', 'Room', 'Batch ID', 'Strain', 'Input Wt (g)', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
-var TRIM_NUM_COLS = TRIM_HEADERS.length;
+var TRIM_DAILY_HEADERS = ['_id', 'Date', 'Total Trimmed (g)', 'Hours Worked', 'Trimmed By', 'Strains / Notes', 'Status', 'Speed (g/hr)'];
+var TRIM_DAILY_NUM_COLS = TRIM_DAILY_HEADERS.length;
+var TRIM_CANA_HEADERS = ['_id', 'Date', 'Harvest Date', 'Room', 'Strain', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Hours Worked', 'Trimmed By', 'Status', 'Notes'];
+var TRIM_CANA_NUM_COLS = TRIM_CANA_HEADERS.length;
+/** Legacy unified headers — read-only for migration */
+var TRIM_FULL_HEADERS = ['_id', 'Date', 'Harvest Date', 'Source Farm', 'Room', 'Batch ID', 'Strain', 'Input Wt (g)', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
+var TRIM_FULL_NUM_COLS = TRIM_FULL_HEADERS.length;
 var TRIM_HEADER_ROW = 3;
 var TRIM_DATA_START = 4;
 
@@ -1222,50 +1227,81 @@ function computeTrimRow(rec) {
   return { totalFlower: totalFlower, totalOut: totalOut, diff: diff, yieldPct: yieldPct };
 }
 
-function setupTrimmingTab(ss, sheetName, subtitle, tabColor) {
+function setupTrimmingTab(ss, sheetName, subtitle, tabColor, kind) {
+  kind = kind || 'daily';
+  var headers = kind === 'cana' ? TRIM_CANA_HEADERS : TRIM_DAILY_HEADERS;
+  var numCols = headers.length;
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) sheet = ss.insertSheet(sheetName);
   sheet.clear();
-  sheet.getRange(1, 1, 1, TRIM_NUM_COLS).merge()
+  sheet.getRange(1, 1, 1, numCols).merge()
     .setValue('CANA QC TRACKER  ·  ' + sheetName.toUpperCase())
     .setBackground(THEME.greenDark).setFontColor(THEME.white)
     .setFontSize(15).setFontWeight('bold')
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
   sheet.setRowHeight(1, 46);
-  sheet.getRange(2, 1, 1, TRIM_NUM_COLS).merge()
+  sheet.getRange(2, 1, 1, numCols).merge()
     .setValue(subtitle + ' · Synced from web app · weights in grams (g)')
     .setBackground(tabColor).setFontColor(THEME.white)
     .setFontSize(10).setFontWeight('bold')
     .setHorizontalAlignment('center');
   sheet.setRowHeight(2, 28);
-  sheet.getRange(TRIM_HEADER_ROW, 1, 1, TRIM_NUM_COLS).setValues([TRIM_HEADERS])
+  sheet.getRange(TRIM_HEADER_ROW, 1, 1, numCols).setValues([headers])
     .setFontWeight('bold').setFontSize(9).setWrap(true)
     .setHorizontalAlignment('center').setVerticalAlignment('middle');
-  sheet.getRange(TRIM_HEADER_ROW, 1, 1, 7).setBackground(THEME.blueBg).setFontColor('#1e40af');
-  sheet.getRange(TRIM_HEADER_ROW, 8, 1, 8).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
-  sheet.getRange(TRIM_HEADER_ROW, 16, 1, 4).setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
-  sheet.getRange(TRIM_HEADER_ROW, 20, 1, 5).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  if (kind === 'daily') {
+    sheet.getRange(TRIM_HEADER_ROW, 1, 1, 2).setBackground(THEME.blueBg).setFontColor('#1e40af');
+    sheet.getRange(TRIM_HEADER_ROW, 3, 1, 4).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+    sheet.getRange(TRIM_HEADER_ROW, 7, 1, 2).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  } else {
+    sheet.getRange(TRIM_HEADER_ROW, 1, 1, 5).setBackground(THEME.blueBg).setFontColor('#1e40af');
+    sheet.getRange(TRIM_HEADER_ROW, 6, 1, 9).setBackground(THEME.purpleBg).setFontColor('#5b21b6');
+    sheet.getRange(TRIM_HEADER_ROW, 15, 1, 4).setBackground(THEME.greenLight).setFontColor(THEME.greenDark);
+  }
   sheet.setRowHeight(TRIM_HEADER_ROW, 36);
   sheet.setTabColor(tabColor);
   sheet.setFrozenRows(TRIM_HEADER_ROW);
   sheet.hideColumns(1);
-  sheet.hideColumns(TRIM_NUM_COLS);
+  if (kind === 'daily') {
+    sheet.setColumnWidth(2, 100);
+    sheet.setColumnWidth(3, 120);
+    sheet.setColumnWidth(4, 90);
+    sheet.setColumnWidth(5, 110);
+    sheet.setColumnWidth(6, 260);
+  }
 }
 
-function formatTrimmingSheet(sheet, numRows) {
+function formatTrimmingSheet(sheet, numRows, kind) {
   if (!sheet || numRows < 1) return;
+  kind = kind || 'daily';
+  var numCols = kind === 'cana' ? TRIM_CANA_NUM_COLS : TRIM_DAILY_NUM_COLS;
   for (var r = 0; r < numRows; r++) {
     var rowNum = TRIM_DATA_START + r;
-    var bg = r % 2 === 0 ? THEME.white : THEME.purplePale;
-    sheet.getRange(rowNum, 1, 1, TRIM_NUM_COLS).setBackground(bg).setFontSize(10).setWrap(true);
+    var bg = r % 2 === 0 ? THEME.white : (kind === 'cana' ? THEME.purplePale : THEME.bluePale);
+    sheet.getRange(rowNum, 1, 1, numCols).setBackground(bg).setFontSize(10).setWrap(true);
   }
-  sheet.getRange(TRIM_DATA_START, 8, numRows, 11).setNumberFormat('#,##0.##');
-  sheet.getRange(TRIM_DATA_START, 19, numRows, 1).setNumberFormat('0.00"%"');
-  sheet.getRange(TRIM_DATA_START, 20, numRows, 1).setNumberFormat('0.0');
+  if (kind === 'daily') {
+    sheet.getRange(TRIM_DATA_START, 3, numRows, 1).setNumberFormat('#,##0.##');
+    sheet.getRange(TRIM_DATA_START, 4, numRows, 1).setNumberFormat('0.0');
+    sheet.getRange(TRIM_DATA_START, 8, numRows, 1).setNumberFormat('#,##0.##');
+  } else {
+    sheet.getRange(TRIM_DATA_START, 6, numRows, 9).setNumberFormat('#,##0.##');
+    sheet.getRange(TRIM_DATA_START, 15, numRows, 1).setNumberFormat('0.0');
+  }
 }
 
 function trimSheetHeaderText(sheet, col) {
   return String(sheet.getRange(TRIM_HEADER_ROW, col).getValue() || '');
+}
+
+function trimSheetLayout(sheet) {
+  if (!sheet) return 'legacy';
+  var h2 = trimSheetHeaderText(sheet, 2);
+  var h3 = trimSheetHeaderText(sheet, 3);
+  if (h2 === 'Total Trimmed (g)') return 'daily';
+  if (h2 === 'Harvest Date' && h3 === 'Room') return 'cana';
+  if (h2 === 'Harvest Date') return 'full';
+  return 'legacy';
 }
 
 function trimSheetHasHoursColumn(sheet) {
@@ -1274,13 +1310,102 @@ function trimSheetHasHoursColumn(sheet) {
 
 function trimSheetUsesLegacyHeaders(sheet) {
   if (!sheet) return true;
-  return trimSheetHeaderText(sheet, 2) !== 'Harvest Date';
+  var layout = trimSheetLayout(sheet);
+  return layout === 'legacy' || layout === 'full' && trimSheetHeaderText(sheet, 2) !== 'Harvest Date';
 }
 
 function trimMetaOffsets(sheet) {
-  if (trimSheetUsesLegacyHeaders(sheet)) return { mode: 'legacy', hours: -1, trimmedBy: 16, status: 17, notes: 18, linked: 19 };
+  if (trimSheetLayout(sheet) === 'legacy') return { mode: 'legacy', hours: -1, trimmedBy: 16, status: 17, notes: 18, linked: 19 };
   if (trimSheetHasHoursColumn(sheet)) return { mode: 'full', hours: 19, trimmedBy: 20, status: 21, notes: 22, linked: 23 };
   return { mode: 'mid', hours: -1, trimmedBy: 19, status: 20, notes: 21, linked: 22 };
+}
+
+function emptyTrimRec(type) {
+  return {
+    harvestDate: '', sourceFarm: '', room: '', batchId: '', strain: '', inputWt: '',
+    outputBigsG: '', outputPopsG: '', moldG: '', seedsG: '', stemsG: '', wasteG: '', linkedRecordId: ''
+  };
+}
+
+function parseTrimDailyRow(row) {
+  if (!row[0] && !row[1] && !row[2] && !row[5]) return null;
+  var rec = emptyTrimRec(TRIM_TYPE_DAILY);
+  rec.id = String(row[0] || '') || newId();
+  rec.type = TRIM_TYPE_DAILY;
+  rec.date = formatSheetDate(row[1]);
+  rec.finishedFlowerG = cellStr(row[2]);
+  rec.hoursWorked = cellStr(row[3]);
+  rec.trimmedBy = String(row[4] || '');
+  rec.notes = String(row[5] || '');
+  rec.status = String(row[6] || '');
+  return rec;
+}
+
+function dailyRowToValues(rec) {
+  var finished = cellStr(rec.finishedFlowerG);
+  var hours = cellStr(rec.hoursWorked);
+  var speed = '';
+  var fg = Number(finished);
+  var h = Number(hours);
+  if (!isNaN(fg) && !isNaN(h) && h > 0) speed = Math.round(fg / h * 100) / 100;
+  return [
+    rec.id || newId(),
+    rec.date || '',
+    finished,
+    hours,
+    rec.trimmedBy || '',
+    rec.notes || '',
+    rec.status || '',
+    speed
+  ];
+}
+
+function parseTrimCanaRow(row) {
+  if (!row[0] && !row[1] && !row[4] && !row[5]) return null;
+  var rec = emptyTrimRec(TRIM_TYPE_CANA);
+  rec.id = String(row[0] || '') || newId();
+  rec.type = TRIM_TYPE_CANA;
+  rec.date = formatSheetDate(row[1]);
+  rec.harvestDate = formatSheetDate(row[2]);
+  rec.room = String(row[3] || '');
+  rec.strain = String(row[4] || '');
+  rec.finishedFlowerG = cellStr(row[5]);
+  rec.outputBigsG = cellStr(row[6]);
+  rec.outputPopsG = cellStr(row[7]);
+  rec.moldG = cellStr(row[8]);
+  rec.seedsG = cellStr(row[9]);
+  rec.stemsG = cellStr(row[10]);
+  rec.wasteG = cellStr(row[11]);
+  rec.hoursWorked = cellStr(row[14]);
+  rec.trimmedBy = String(row[15] || '');
+  rec.status = String(row[16] || '');
+  rec.notes = String(row[17] || '');
+  rec.sourceFarm = 'Cana';
+  return rec;
+}
+
+function canaRowToValues(rec) {
+  var c = computeTrimRow(rec);
+  return [
+    rec.id || newId(),
+    rec.date || '',
+    rec.harvestDate || '',
+    rec.room || '',
+    rec.strain || '',
+    rec.finishedFlowerG || '',
+    rec.outputBigsG || '',
+    rec.outputPopsG || '',
+    rec.moldG || '',
+    rec.seedsG || '',
+    rec.stemsG || '',
+    rec.wasteG || '',
+    c.totalFlower === null ? '' : c.totalFlower,
+    c.totalOut === null ? '' : c.totalOut,
+    rec.hoursWorked || '',
+    rec.trimmedBy || '',
+    rec.status || '',
+    rec.notes || ''
+  ];
 }
 
 function parseTrimRowValues(row, type, offsets) {
@@ -1350,13 +1475,46 @@ function readTrimmingFromSheet(ss, sheetName, type) {
   if (!sheet || sheet.getLastRow() < TRIM_DATA_START) return [];
   var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
   if (numRows < 1) return [];
-  var values = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_NUM_COLS).getValues();
-  var legacy = trimSheetUsesLegacyHeaders(sheet);
-  var offsets = trimMetaOffsets(sheet);
+  var layout = trimSheetLayout(sheet);
   var list = [];
+
+  if (layout === 'daily') {
+    var dailyVals = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_DAILY_NUM_COLS).getValues();
+    dailyVals.forEach(function(row) {
+      var rec = parseTrimDailyRow(row);
+      if (rec) list.push(rec);
+    });
+    return list;
+  }
+
+  if (layout === 'cana') {
+    var canaVals = sheet.getRange(TRIM_DATA_START, 1, numRows, TRIM_CANA_NUM_COLS).getValues();
+    canaVals.forEach(function(row) {
+      var rec = parseTrimCanaRow(row);
+      if (rec) list.push(rec);
+    });
+    return list;
+  }
+
+  var colCount = Math.max(sheet.getLastColumn(), TRIM_FULL_NUM_COLS);
+  var values = sheet.getRange(TRIM_DATA_START, 1, numRows, colCount).getValues();
+  var legacy = layout === 'legacy';
+  var offsets = trimMetaOffsets(sheet);
   values.forEach(function(row) {
     var rec = legacy ? parseTrimRowValuesLegacy(row, type) : parseTrimRowValues(row, type, offsets);
-    if (rec) list.push(rec);
+    if (rec) {
+      if (String(type).indexOf('Trimming record') >= 0 || String(type).indexOf('Rework') >= 0) {
+        rec.type = TRIM_TYPE_DAILY;
+        rec.batchId = '';
+        rec.linkedRecordId = '';
+        rec.inputWt = '';
+        rec.strain = '';
+        rec.sourceFarm = '';
+        rec.room = '';
+        rec.harvestDate = '';
+      }
+      list.push(rec);
+    }
   });
   return list;
 }
@@ -1369,7 +1527,7 @@ function readLegacyTrimmingSheet(ss) {
   var hasTypeCol = header === 'Type' || header.indexOf('Type') >= 0;
   var numRows = sheet.getLastRow() - TRIM_HEADER_ROW;
   if (numRows < 1) return [];
-  var colCount = hasTypeCol ? TRIM_NUM_COLS + 1 : TRIM_NUM_COLS;
+  var colCount = hasTypeCol ? TRIM_FULL_NUM_COLS + 1 : TRIM_FULL_NUM_COLS;
   var values = sheet.getRange(TRIM_DATA_START, 1, numRows, colCount).getValues();
   var list = [];
   values.forEach(function(row) {
@@ -1421,48 +1579,20 @@ function readTrimming(ss) {
   return readLegacyTrimmingSheet(ss);
 }
 
-function trimRowToValues(rec) {
-  var c = computeTrimRow(rec);
-  var isCana = String(rec.type || '').indexOf('Cana') >= 0;
-  var isDaily = String(rec.type || '').indexOf('Trimming record') >= 0 || String(rec.type || '').indexOf('Rework') >= 0;
-  return [
-    rec.id || newId(),
-    rec.date || '',
-    isDaily ? '' : (rec.harvestDate || ''),
-    isDaily ? '' : (rec.sourceFarm || ''),
-    isCana ? (rec.room || '') : '',
-    (isCana || isDaily) ? '' : (rec.batchId || ''),
-    isDaily ? '' : (rec.strain || ''),
-    (isCana || isDaily) ? '' : (rec.inputWt || ''),
-    rec.finishedFlowerG || '',
-    rec.outputBigsG || '',
-    rec.outputPopsG || '',
-    rec.moldG || '',
-    rec.seedsG || '',
-    rec.stemsG || '',
-    rec.wasteG || '',
-    c.totalFlower === null ? '' : c.totalFlower,
-    c.totalOut === null ? '' : c.totalOut,
-    c.diff === null ? '' : c.diff,
-    c.yieldPct === null ? '' : c.yieldPct,
-    rec.hoursWorked || '',
-    rec.trimmedBy || '',
-    rec.status || '',
-    rec.notes || '',
-    rec.linkedRecordId || ''
-  ];
-}
-
-function writeTrimmingSheet(ss, sheetName, subtitle, tabColor, records) {
-  setupTrimmingTab(ss, sheetName, subtitle, tabColor);
+function writeTrimmingSheet(ss, sheetName, subtitle, tabColor, records, kind) {
+  kind = kind || 'daily';
+  setupTrimmingTab(ss, sheetName, subtitle, tabColor, kind);
   var sheet = ss.getSheetByName(sheetName);
-  var rows = (records || []).map(trimRowToValues);
+  var numCols = kind === 'cana' ? TRIM_CANA_NUM_COLS : TRIM_DAILY_NUM_COLS;
+  var rows = (records || []).map(function(r) {
+    return kind === 'cana' ? canaRowToValues(r) : dailyRowToValues(r);
+  });
   if (sheet.getLastRow() >= TRIM_DATA_START) {
-    sheet.getRange(TRIM_DATA_START, 1, sheet.getLastRow() - TRIM_HEADER_ROW, TRIM_NUM_COLS).clearContent();
+    sheet.getRange(TRIM_DATA_START, 1, sheet.getLastRow() - TRIM_HEADER_ROW, numCols).clearContent();
   }
   if (rows.length) {
-    sheet.getRange(TRIM_DATA_START, 1, rows.length, TRIM_NUM_COLS).setValues(rows);
-    formatTrimmingSheet(sheet, rows.length);
+    sheet.getRange(TRIM_DATA_START, 1, rows.length, numCols).setValues(rows);
+    formatTrimmingSheet(sheet, rows.length, kind);
   }
 }
 
@@ -1476,8 +1606,8 @@ function writeTrimming(ss, trimming) {
     return r;
   });
   var cana = all.filter(function(r) { return String(r.type || '').indexOf('Cana') >= 0; });
-  writeTrimmingSheet(ss, TRIM_DAILY_SHEET, 'Trimming record — manager daily log (total g, strains in notes)', '#2563eb', daily);
-  writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — in-house grow trimming (log when finished)', '#16a34a', cana);
+  writeTrimmingSheet(ss, TRIM_DAILY_SHEET, 'Trimming record — one line per day · list strains in Notes column', '#2563eb', daily, 'daily');
+  writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — log when trim is finished (room, strain, weights)', '#16a34a', cana, 'cana');
   var legacyRework = ss.getSheetByName(TRIM_LEGACY_DAILY_SHEET);
   if (legacyRework) ss.deleteSheet(legacyRework);
   var legacy = ss.getSheetByName('Trimming');
