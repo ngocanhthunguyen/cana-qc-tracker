@@ -220,6 +220,9 @@ function doPost(e) {
     if (data.action === 'uploadDoc') {
       return jsonOut(uploadDocumentToFarm(data.farm, data.fileName, data.mimeType, data.data));
     }
+    if (data.action === 'deleteDoc') {
+      return jsonOut(deleteDocumentFromDrive(data.fileId));
+    }
     return jsonOut({ ok: false, error: 'Unknown action' });
   } catch (err) {
     return jsonOut({ ok: false, error: String(err) });
@@ -503,6 +506,30 @@ function uploadDocumentToFarm(farm, fileName, mimeType, dataB64) {
     fileId: fileId,
     fileName: file.getName()
   };
+}
+
+/** Move uploaded file to Drive trash when manager deletes document in app */
+function deleteDocumentFromDrive(fileId) {
+  fileId = String(fileId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!fileId || fileId.length < 10) return { ok: false, error: 'No Drive file ID' };
+  try {
+    var file = DriveApp.getFileById(fileId);
+    var name = file.getName();
+    file.setTrashed(true);
+    return { ok: true, fileId: fileId, fileName: name, trashed: true };
+  } catch (e) {
+    var msg = String(e);
+    if (/not find|Unable to find|404|Invalid argument/i.test(msg)) {
+      return { ok: true, fileId: fileId, missing: true };
+    }
+    if (/do not have permission to call DriveApp|Required permissions.*drive/i.test(msg)) {
+      return {
+        ok: false,
+        error: 'Drive delete not authorized. Run authorizeDriveUploadOnce() in Apps Script, then redeploy the web app.'
+      };
+    }
+    return { ok: false, error: msg };
+  }
 }
 
 function deleteOrphanFarmSheet(ss, farmName, farmList) {

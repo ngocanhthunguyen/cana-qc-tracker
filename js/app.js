@@ -937,6 +937,13 @@ function getDriveParentFolderId(){
 function hasDriveUploadForFarm(farm){
   return !!(appsScriptUrl && (getDriveParentFolderId() || getFarmDriveFolderId(farm)));
 }
+async function deleteDriveDoc(fileId){
+  if(!appsScriptUrl) throw new Error('Google Sheet not connected');
+  if(!fileId) throw new Error('No Drive file ID');
+  const res = await gasPostXHR(appsScriptUrl, JSON.stringify({ action: 'deleteDoc', fileId }));
+  if(!res.ok) throw new Error(res.error || 'Drive delete failed');
+  return res;
+}
 async function uploadFileToFarmDrive(file, farm){
   if(!appsScriptUrl) throw new Error('Google Sheet not connected');
   if(!hasDriveUploadForFarm(farm)) throw new Error('Drive not configured for ' + farm + ' — admin: More → Drive Folders → paste Cana Documents parent folder');
@@ -3519,6 +3526,7 @@ async function handleDocUploadInput(evt){
         uploadedBy: '',
         uploadedAt: new Date().toISOString().slice(0,10),
         url: res.url || '',
+        fileId: res.fileId || extractDriveFileId(res.url || ''),
         data: ''
       });
       ok++;
@@ -3540,11 +3548,28 @@ function deleteDocument(id){
   const doc = state.documents[currentFarm].find(d=>d.id===id);
   if(!doc) return;
   const label = doc.title || doc.fileName || 'this document';
-  if(!confirm('Delete "' + label + '"? This cannot be undone.\nลบ "' + label + '" หรือไม่?')) return;
-  state.documents[currentFarm] = state.documents[currentFarm].filter(d=>d.id!==id);
-  idbDeleteDocData(id);
-  onDataChanged();
-  renderFarmDocuments();
+  const driveHint = isValidExternalUrl(doc.url) ? '\n\nThe linked Google Drive file will be moved to Trash.' : '';
+  if(!confirm('Delete "' + label + '"? This cannot be undone.' + driveHint + '\nลบ "' + label + '" หรือไม่?')) return;
+  (async ()=>{
+    const fileId = doc.fileId || extractDriveFileId(doc.url || '');
+    if(fileId && appsScriptUrl && isValidExternalUrl(doc.url)){
+      try{
+        showDocToast('Moving file to Drive Trash…');
+        await deleteDriveDoc(fileId);
+      }catch(e){
+        if(!confirm('Could not remove file from Google Drive:\n' + e.message + '\n\nRemove from app & sheet anyway?')) return;
+      }
+    }
+    state.documents[currentFarm] = state.documents[currentFarm].filter(d=>d.id!==id);
+    idbDeleteDocData(id);
+    onDataChanged();
+    if(appsScriptUrl){
+      clearTimeout(sheetSaveTimer);
+      pushToGoogleSheet(true);
+    }
+    renderFarmDocuments();
+    showDocToast('Document deleted');
+  })();
 }
 
 function bindRowActions(root, viewMode){
