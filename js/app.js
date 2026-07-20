@@ -325,8 +325,31 @@ function todayBangkokISO(){
   return p.year + '-' + p.month + '-' + p.day;
 }
 function nowBangkokTime(){
-  const p = bangkokDateParts();
-  return p.hour + ':' + p.minute;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: BANGKOK_TZ,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  }).format(new Date());
+}
+function padTimeHm(h, m){
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+/** Display cure log time — always HH:mm, no timezone shift */
+function formatCureLogTime(time){
+  if(time === undefined || time === null || time === '') return '—';
+  let s = String(time).trim();
+  if(s.charAt(0) === "'") s = s.slice(1);
+  const m = s.match(/^(\d{1,2}):(\d{2})/);
+  if(m) return padTimeHm(parseInt(m[1], 10), parseInt(m[2], 10));
+  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
+    try{
+      return new Intl.DateTimeFormat('en-GB', {
+        timeZone: BANGKOK_TZ, hour: '2-digit', minute: '2-digit', hour12: false
+      }).format(new Date(s));
+    }catch(e){}
+  }
+  return s || '—';
 }
 function batchDatePart(dateStr){
   if(dateStr) return dateStr.replace(/-/g,'').slice(2);
@@ -654,7 +677,7 @@ function updateAuthUI(){
     if(loggedIn){
       rolePill.hidden = false;
       rolePill.textContent = isManager() ? 'Manager' : 'Staff';
-      rolePill.title = isManager() ? 'Full access' : 'QC & documents only';
+      rolePill.title = isManager() ? 'Full access' : 'QC & trimming only';
     } else rolePill.hidden = true;
   }
   const btn = document.getElementById('btnAdmin');
@@ -746,7 +769,7 @@ function setAuthGateRole(role){
     if(desc) desc.innerHTML = '<b>Manager</b> — Full access: deliveries, farms, settings, delete records.<br><span class="bi">จัดการทั้งหมด · ตั้งค่า · ลบข้อมูล</span>';
     if(pinLabel) pinLabel.textContent = 'manager PIN';
   } else {
-    if(desc) desc.innerHTML = '<b>Staff</b> — Enter QC results, view records, upload documents.<br><span class="bi">กรอก QC · ดูข้อมูล · อัปโหลดเอกสาร</span>';
+    if(desc) desc.innerHTML = '<b>Staff</b> — Enter QC results, view records, log trim & cure.<br><span class="bi">กรอก QC · ดูข้อมูล · บันทึกทริม & cure</span>';
     if(pinLabel) pinLabel.textContent = 'staff PIN';
   }
 }
@@ -931,12 +954,21 @@ function docFileIcon(doc){
   return {cls:'', icon:'📎'};
 }
 function farmSubtabsHtml(){
+  const qcBtn = `<button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>`;
+  if(!isManager()){
+    return `<div class="farm-subtabs">${qcBtn}</div>`;
+  }
   const docCount = (state.documents[currentFarm]||[]).length;
   const driveOk = hasDriveUploadForFarm(currentFarm);
   return `<div class="farm-subtabs">
-    <button type="button" class="${currentFarmTab==='qc'?'active':''}" id="btnFarmQc">📋 QC Records <span class="bi">/ บันทึก QC</span></button>
+    ${qcBtn}
     <button type="button" class="${currentFarmTab==='documents'?'active':''}" id="btnFarmDocs">📁 Documents <span class="bi">/ เอกสาร</span>${docCount ? ' (' + docCount + ')' : ''}</button>
   </div>${driveOk ? '' : '<p class="doc-staff-hint">📁 Admin: <b>More → Drive Folders</b> → paste <b>Cana Documents</b> parent folder link once.</p>'}`;
+}
+function enforceStaffViewAccess(){
+  if(!isStaff()) return;
+  if(currentView === 'canaStock') currentView = 'dashboard';
+  if(currentFarmTab === 'documents') currentFarmTab = 'qc';
 }
 function bindFarmSubtabs(root){
   const qc = root.querySelector('#btnFarmQc');
@@ -2595,6 +2627,7 @@ function computeDashboard(month){
 /* ============ RENDER: SHELL ============ */
 function render(){
   if(!isLoggedIn()) return;
+  enforceStaffViewAccess();
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
@@ -2637,7 +2670,9 @@ function renderTabs(){
   nav.appendChild(navBtn('🌐 All Farms', currentView === 'allFarms', ()=>{ currentView = 'allFarms'; render(); }));
   nav.appendChild(navBtn('✂️ Trimming', currentView === 'trimming', ()=>{ currentView = 'trimming'; render(); }));
   nav.appendChild(navBtn('🌡️ Curing', currentView === 'curing', ()=>{ currentView = 'curing'; render(); }));
-  nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
+  if(isManager()){
+    nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
+  }
 
   const divider = document.createElement('span');
   divider.className = 'nav-divider';
@@ -2753,7 +2788,7 @@ function renderFarmView(){
   main.innerHTML = `
     ${farmSubtabsHtml()}
 
-    ${isStaff() ? `<p class="staff-hint"><b>Staff mode</b> — You can enter QC and upload documents. Delivery edits and deletes require a manager.<br><span class="bi">โหมดพนักงาน — กรอก QC และอัปโหลดเอกสารได้ · แก้ไขการรับสินค้าต้องใช้ผู้จัดการ</span></p>` : ''}
+    ${isStaff() ? `<p class="staff-hint"><b>Staff mode</b> — You can enter QC results. Delivery edits and deletes require a manager.<br><span class="bi">โหมดพนักงาน — กรอก QC ได้ · แก้ไขการรับสินค้าต้องใช้ผู้จัดการ</span></p>` : ''}
 
     <div class="panel">
       <details>
@@ -3340,6 +3375,10 @@ function normalizeCureLogEntry(log){
     }
   }
   if(log.hours !== undefined) delete log.hours;
+  if(log.time !== undefined && log.time !== null && log.time !== ''){
+    log.time = formatCureLogTime(log.time);
+    if(log.time === '—') log.time = '';
+  }
   return log;
 }
 function getCanaTrimRecords(){
@@ -3463,7 +3502,7 @@ function renderCureLogTable(logs){
     const sess = getCureSession(l.sessionId);
     return `<tr>
       <td>${esc(l.date||'—')}</td>
-      <td>${esc(l.time||'—')}</td>
+      <td>${esc(formatCureLogTime(l.time))}</td>
       <td>${esc(l.room||sess?.room||'—')}</td>
       <td><b>${esc((l.action||'—').split(' / ')[0])}</b></td>
       <td>${l.minutes ? fmtNum(l.minutes, 0) + ' min' : '—'}</td>
@@ -3476,7 +3515,7 @@ function renderCureLogTable(logs){
     </tr>`;
   }).join('');
   return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
-    <thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Action</th><th>Mins</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Date</th><th>Time (ICT)</th><th>Room</th><th>Action</th><th>Mins</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
 }
@@ -3685,6 +3724,7 @@ function openCureLogModal(id, sessionIdPrefill){
           }
           return fieldHtml(c, rec[c.key] || '');
         }).join('')}
+        <p class="sub" style="margin:0;font-size:11px;color:var(--muted);grid-column:1/-1;">Time is <b>Thailand (ICT, UTC+7)</b> — auto-filled when you open this form.</p>
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelCureLog">Cancel</button>
           <button type="submit" class="primary purple">Save log</button>
@@ -3742,6 +3782,7 @@ function deleteCureLogEntry(id){
 }
 function renderCanaStockView(){
   if(!requireLogin()) return;
+  if(!isManager()){ currentView = 'dashboard'; render(); return; }
   const rows = getFilteredCanaStock();
   const main = document.getElementById('mainArea');
   main.innerHTML = `
@@ -3931,6 +3972,7 @@ function updateDocViewResults(){
   bindDocGridActions(main);
 }
 function renderFarmDocuments(){
+  if(!isManager()){ currentFarmTab = 'qc'; renderFarmView(); return; }
   const main = document.getElementById('mainArea');
   const docs = getFilteredFarmDocuments();
   const linkedCount = docs.filter(d=> isValidExternalUrl(d.url)).length;
@@ -4102,6 +4144,7 @@ function openDocumentModal(id, prefill){
 }
 
 async function handleDocUploadInput(evt){
+  if(!requireAdmin('upload documents')) return;
   const files = Array.from(evt.target.files || []);
   evt.target.value = '';
   if(!files.length) return;

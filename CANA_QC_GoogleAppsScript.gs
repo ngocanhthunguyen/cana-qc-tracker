@@ -1673,8 +1673,31 @@ function formatSheetDate(v) {
 }
 
 function formatSheetTime(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Bangkok', 'HH:mm');
-  return String(v || '');
+  if (v === '' || v === null || v === undefined) return '';
+  if (typeof v === 'number' && isFinite(v)) {
+    var totalMin = Math.round(v * 24 * 60) % (24 * 60);
+    var hh = Math.floor(totalMin / 60);
+    var mm = totalMin % 60;
+    return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, 'Asia/Bangkok', 'HH:mm');
+  }
+  var s = String(v).trim();
+  if (s.charAt(0) === "'") s = s.slice(1);
+  var m = s.match(/^(\d{1,2}):(\d{2})/);
+  if (m) {
+    var h = parseInt(m[1], 10);
+    var mi = m[2];
+    return (h < 10 ? '0' : '') + h + ':' + mi;
+  }
+  return s;
+}
+
+function sheetTextTime(t) {
+  t = String(t || '').trim();
+  if (!t) return '';
+  return "'" + t;
 }
 
 /* ---------- Cana flower — Cure + Stock tabs ---------- */
@@ -1793,7 +1816,7 @@ function readCureLog(ss) {
       id: String(row[0] || '') || newId(),
       sessionId: String(row[1] || ''),
       date: formatSheetDate(row[2]),
-      time: row[3] instanceof Date ? formatSheetTime(row[3]) : String(row[3] || ''),
+      time: formatSheetTime(row[3]),
       room: String(row[4] || ''),
       action: String(row[5] || ''),
       minutes: cellStr(row[6]),
@@ -1819,7 +1842,7 @@ function writeCureLog(ss, logs) {
       log.id || newId(),
       log.sessionId || '',
       log.date || '',
-      log.time || '',
+      sheetTextTime(log.time || log.hours || ''),
       log.room || '',
       log.action || '',
       log.minutes || log.hours || '',
@@ -1833,6 +1856,7 @@ function writeCureLog(ss, logs) {
   }
   if (rows.length) {
     sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CURE_LOG_NUM_COLS).setValues(rows);
+    sheet.getRange(CANA_FLOWER_DATA_START, 4, rows.length, 1).setNumberFormat('@');
     for (var r = 0; r < rows.length; r++) {
       sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, CURE_LOG_NUM_COLS)
         .setBackground(r % 2 === 0 ? THEME.white : '#faf5ff')
