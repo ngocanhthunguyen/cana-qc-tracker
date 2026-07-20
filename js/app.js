@@ -5,11 +5,16 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
 let trimMonth = '';
+let cureSubTab = 'sessions'; // 'sessions' | 'log'
+let cureSearchText = '';
+let cureMonth = '';
+let stockSearchText = '';
+let stockStatusFilter = '';
 let exportSelection = {};
 let exportSelectionMonth = '';
 let exportWeights = {}; // batchKey -> export kg (string)
@@ -871,6 +876,9 @@ function ensureStateShape(){
   if(!state.documents) state.documents = {};
   if(!state.trimming) state.trimming = [];
   state.trimming = state.trimming.map(normalizeTrimRecord);
+  if(!state.curingSessions) state.curingSessions = [];
+  if(!state.cureLog) state.cureLog = [];
+  if(!state.canaStock) state.canaStock = [];
   if(!state.exportLog) state.exportLog = [];
   if(!state.exportCompanies || !state.exportCompanies.length){
     state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
@@ -1164,6 +1172,9 @@ function stateFingerprint(){
     farmDriveFolders: state.farmDriveFolders || {},
     driveParentFolderId: state.driveParentFolderId || '',
     trimming: state.trimming || [],
+    curingSessions: state.curingSessions || [],
+    cureLog: state.cureLog || [],
+    canaStock: state.canaStock || [],
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || []
   });
@@ -1261,6 +1272,9 @@ async function pullFromGoogleSheet(silent){
       farmDriveFolders: data.farmDriveFolders || {},
       driveParentFolderId: data.driveParentFolderId || '',
       trimming: data.trimming || [],
+      curingSessions: data.curingSessions || [],
+      cureLog: data.cureLog || [],
+      canaStock: data.canaStock || [],
       exportLog: data.exportLog || [],
       exportCompanies: data.exportCompanies || []
     });
@@ -1271,6 +1285,9 @@ async function pullFromGoogleSheet(silent){
     if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
     if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
     if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
+    if(Array.isArray(data.curingSessions)) state.curingSessions = data.curingSessions.slice();
+    if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice();
+    if(Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
     if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
     if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
     mergeDocumentsFromRemote(data.documents);
@@ -1318,6 +1335,9 @@ async function pushToGoogleSheet(silent){
         farmDriveFolders: state.farmDriveFolders || {},
         driveParentFolderId: state.driveParentFolderId || '',
         trimming: state.trimming || [],
+        curingSessions: state.curingSessions || [],
+        cureLog: state.cureLog || [],
+        canaStock: state.canaStock || [],
         exportLog: state.exportLog || [],
         exportCompanies: state.exportCompanies || []
       }
@@ -2044,7 +2064,7 @@ function buildWorkbook(){
 }
 
 function parseWorkbookToState(wb){
-  const skipSheets = new Set(['Dashboard', 'README', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta']);
+  const skipSheets = new Set(['Dashboard', 'README', 'Documents', 'Export Log', 'Trim Rework', 'Trim Cana', 'Trim Record', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta']);
   const farmNames = new Set(getFarmList());
   wb.SheetNames.forEach(name=>{
     if(!skipSheets.has(name)) farmNames.add(name);
@@ -2557,6 +2577,8 @@ function render(){
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='allFarms') renderAllFarmsView();
   else if(currentView==='trimming') renderTrimmingView();
+  else if(currentView==='curing') renderCuringView();
+  else if(currentView==='canaStock') renderCanaStockView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
@@ -2592,6 +2614,8 @@ function renderTabs(){
   nav.appendChild(navBtn('📊 Dashboard', currentView === 'dashboard', ()=>{ currentView = 'dashboard'; render(); }));
   nav.appendChild(navBtn('🌐 All Farms', currentView === 'allFarms', ()=>{ currentView = 'allFarms'; render(); }));
   nav.appendChild(navBtn('✂️ Trimming', currentView === 'trimming', ()=>{ currentView = 'trimming'; render(); }));
+  nav.appendChild(navBtn('🌡️ Curing', currentView === 'curing', ()=>{ currentView = 'curing'; render(); }));
+  nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
 
   const divider = document.createElement('span');
   divider.className = 'nav-divider';
@@ -3281,6 +3305,551 @@ function deleteTrimmingRecord(id){
     pushToGoogleSheet(true);
   }
   renderTrimmingView();
+}
+
+/* ============ CANA FLOWER — CURING & STOCK ============ */
+function getCanaTrimRecords(){
+  return (state.trimming||[]).filter(isCanaTrimRecord);
+}
+function cureSessionLabel(s){
+  if(!s) return '—';
+  const strains = (s.strains||'').slice(0, 40);
+  return (s.room||'?') + ' · ' + (strains || '—') + (s.startDate ? ' · ' + s.startDate : '');
+}
+function getCureSession(id){
+  return (state.curingSessions||[]).find(s=> s.id === id);
+}
+function daysInCure(session){
+  if(!session || !session.startDate) return null;
+  const end = session.endDate || todayISO();
+  const a = new Date(session.startDate + 'T00:00:00');
+  const b = new Date(end + 'T00:00:00');
+  if(isNaN(a.getTime()) || isNaN(b.getTime())) return null;
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
+function cureStatusClass(status){
+  const s = String(status||'');
+  if(s.indexOf('Complete') >= 0) return 'pass';
+  if(s.indexOf('hold') >= 0) return 'cond';
+  return 'pending';
+}
+function stockStatusClass(status){
+  const s = String(status||'');
+  if(s.indexOf('On hand') >= 0) return 'pass';
+  if(s.indexOf('In cure') >= 0) return 'pending';
+  if(s.indexOf('Reserved') >= 0) return 'cond';
+  if(s.indexOf('Shipped') >= 0) return '';
+  return 'pending';
+}
+function allCureMonths(){
+  const set = new Set();
+  (state.curingSessions||[]).forEach(s=>{
+    const m = s.startDate ? formatMonth(s.startDate) : '';
+    if(m) set.add(m);
+  });
+  (state.cureLog||[]).forEach(l=>{
+    const m = l.date ? formatMonth(l.date) : '';
+    if(m) set.add(m);
+  });
+  return Array.from(set).sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+}
+function getFilteredCureSessions(){
+  const month = cureMonth || currentMonthLabel();
+  const q = cureSearchText.trim().toLowerCase();
+  return (state.curingSessions||[]).filter(s=>{
+    if((s.startDate ? formatMonth(s.startDate) : '') !== month) return false;
+    if(!q) return true;
+    const hay = [s.room, s.strains, s.assignedTo, s.notes, s.processSummary, s.linkedTrimIds].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+}
+function getFilteredCureLogs(){
+  const month = cureMonth || currentMonthLabel();
+  const q = cureSearchText.trim().toLowerCase();
+  return (state.cureLog||[]).filter(l=>{
+    if((l.date ? formatMonth(l.date) : '') !== month) return false;
+    if(!q) return true;
+    const hay = [l.room, l.action, l.description, l.doneBy, l.strainsTouched].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=>{
+    const da = (a.date||'') + ' ' + (a.time||'');
+    const db = (b.date||'') + ' ' + (b.time||'');
+    return db.localeCompare(da);
+  });
+}
+function getFilteredCanaStock(){
+  const q = stockSearchText.trim().toLowerCase();
+  return (state.canaStock||[]).filter(s=>{
+    if(stockStatusFilter && s.status !== stockStatusFilter) return false;
+    if(!q) return true;
+    const hay = [s.strain, s.room, s.notes, s.status, s.linkedTrimId].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=>(b.updatedAt||b.trimDate||'').localeCompare(a.updatedAt||a.trimDate||''));
+}
+function canaTrimOptionLabel(rec){
+  const c = computeTrimRow(rec);
+  const flower = c.totalFlower !== null ? fmtWeight(c.totalFlower) : '—';
+  return (rec.room||'—') + ' · ' + (rec.strain||'—') + ' · ' + (rec.date||'—') + ' · ' + flower;
+}
+function renderCureSessionsTable(sessions){
+  if(!sessions.length){
+    return `<div class="panel empty-state"><b>No cure sessions for this month.</b><br>Start a room cure after <b>Trim Cana</b> is logged.<br><span class="bi">เริ่ม cure หลังทริม Cana · หลายสายพันธุ์ในห้องเดียวได้</span></div>`;
+  }
+  const body = sessions.map(s=>{
+    const days = daysInCure(s);
+    const target = num(s.targetDays);
+    const dayLabel = days !== null ? days + 'd' + (target !== null ? ' / ' + target + 'd target' : '') : '—';
+    const logs = (state.cureLog||[]).filter(l=> l.sessionId === s.id).length;
+    const sc = cureStatusClass(s.status);
+    return `<tr>
+      <td><b>${esc(s.room||'—')}</b></td>
+      <td title="${esc(s.strains||'')}">${esc((s.strains||'—').slice(0, 60))}${(s.strains||'').length > 60 ? '…' : ''}</td>
+      <td>${esc(s.startDate||'—')}</td>
+      <td>${dayLabel}</td>
+      <td>${esc(s.assignedTo||'—')}</td>
+      <td><span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span></td>
+      <td>${logs} log${logs===1?'':'s'}</td>
+      <td><div class="action-group">
+        <button class="small purple" data-log-cure="${s.id}">+ Log</button>
+        <button class="small" data-edit-cure-session="${s.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-cure-session="${s.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
+    <thead><tr><th>Room</th><th>Strains</th><th>Start</th><th>Days</th><th>Assigned</th><th>Status</th><th>Logs</th><th>Actions</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+function renderCureLogTable(logs){
+  if(!logs.length){
+    return `<div class="panel empty-state"><b>No cure log entries this month.</b><br>Each burp / flip = one row · hours + description.<br><span class="bi">แต่ละครั้งเปิดถุง = 1 แถว</span></div>`;
+  }
+  const body = logs.map(l=>{
+    const sess = getCureSession(l.sessionId);
+    return `<tr>
+      <td>${esc(l.date||'—')}</td>
+      <td>${esc(l.time||'—')}</td>
+      <td>${esc(l.room||sess?.room||'—')}</td>
+      <td><b>${esc((l.action||'—').split(' / ')[0])}</b></td>
+      <td>${l.hours ? fmtNum(l.hours, 1) + ' h' : '—'}</td>
+      <td title="${esc(l.description||'')}">${esc((l.description||'—').slice(0, 80))}${(l.description||'').length > 80 ? '…' : ''}</td>
+      <td>${esc(l.doneBy||'—')}</td>
+      <td><div class="action-group">
+        <button class="small" data-edit-cure-log="${l.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-cure-log="${l.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
+    <thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Action</th><th>Hours</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+function renderCanaStockTable(rows){
+  if(!rows.length){
+    return `<div class="panel empty-state"><b>No Cana stock logged yet.</b><br>Add lines manually or <b>From trim</b> after a Trim Cana session.<br><span class="bi">บันทึกดอก Cana ที่มีในบริษัท</span></div>`;
+  }
+  let totalG = 0;
+  const body = rows.map(s=>{
+    const g = num(s.qtyG);
+    if(g !== null) totalG += g;
+    const sc = stockStatusClass(s.status);
+    return `<tr>
+      <td><b>${esc(s.strain||'—')}</b></td>
+      <td>${esc(s.room||'—')}</td>
+      <td><b>${fmtWeight(s.qtyG)}</b></td>
+      <td><span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span></td>
+      <td>${esc(s.harvestDate||'—')}</td>
+      <td>${esc(s.trimDate||'—')}</td>
+      <td>${esc(s.updatedBy||'—')}</td>
+      <td><div class="action-group">
+        <button class="small" data-edit-stock="${s.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-stock="${s.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="cana-stock-summary"><span class="doc-badge">${rows.length} line${rows.length===1?'':'s'}</span><span class="doc-badge"><b>${fmtWeight(totalG)}</b> on list</span></div>
+  <div class="table-wrap desktop-table"><table class="compact-table cana-table">
+    <thead><tr><th>Strain</th><th>Room</th><th>Qty</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+function renderCuringView(){
+  if(!requireLogin()) return;
+  if(!cureMonth) cureMonth = currentMonthLabel();
+  const months = allCureMonths();
+  if(!months.includes(cureMonth)) months.push(cureMonth);
+  months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+  const isSessions = cureSubTab === 'sessions';
+  const sessions = getFilteredCureSessions();
+  const logs = getFilteredCureLogs();
+  const activeCount = (state.curingSessions||[]).filter(s=> (s.status||'').indexOf('In progress') >= 0).length;
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="cana-header">
+      <div>
+        <h2>🌡️ Curing — Cana flower only</h2>
+        <p class="sub">After <b>Trim Cana</b> · room-based cure · each burp/flip = one log row · Syncs to <b>Cure Sessions</b> + <b>Cure Log</b> sheets<br><span class="bi">หลังทริม Cana · บันทึกทีละ action · หลายสายพันธุ์ในห้องเดียว</span></p>
+      </div>
+      <div class="cana-header-meta">
+        <span class="doc-badge">${activeCount} active cure${activeCount===1?'':'s'}</span>
+        <span class="doc-badge">${sessions.length} session${sessions.length===1?'':'s'} this month</span>
+        <span class="doc-badge">${logs.length} log row${logs.length===1?'':'s'}</span>
+      </div>
+    </div>
+    <div class="cana-subtabs">
+      <button type="button" class="${isSessions?'active':''}" id="btnCureSessions">🏠 Active cures <span class="bi">/ รอบ cure</span></button>
+      <button type="button" class="${!isSessions?'active':''}" id="btnCureLogTab">📋 Cure log <span class="bi">/ บันทึก burp</span></button>
+    </div>
+    <div class="row-actions cana-toolbar">
+      <button class="primary" id="btnNewCure">${isSessions ? '+ New cure session' : '+ Log action'} <span class="bi">/ เพิ่ม</span></button>
+      <label class="month-filter">Month:
+        <select id="cureMonthInput">${months.map(m=>`<option value="${esc(m)}" ${m===cureMonth?'selected':''}>${esc(m)}</option>`).join('')}</select>
+      </label>
+      <input class="search-box" id="cureSearchBox" placeholder="Search room, strain, staff…" value="${esc(cureSearchText)}">
+    </div>
+    <div id="cureResultsWrap">${isSessions ? renderCureSessionsTable(sessions) : renderCureLogTable(logs)}</div>
+  `;
+  document.getElementById('btnCureSessions').onclick = ()=>{ cureSubTab='sessions'; renderCuringView(); };
+  document.getElementById('btnCureLogTab').onclick = ()=>{ cureSubTab='log'; renderCuringView(); };
+  document.getElementById('btnNewCure').onclick = ()=>{
+    if(isSessions) openCureSessionModal(null);
+    else openCureLogModal(null);
+  };
+  document.getElementById('cureMonthInput').onchange = (e)=>{ cureMonth = e.target.value; renderCuringView(); };
+  document.getElementById('cureSearchBox').oninput = (e)=>{ cureSearchText = e.target.value; updateCuringViewResults(); };
+  bindCuringActions(main);
+}
+function updateCuringViewResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'curing') return;
+  const wrap = document.getElementById('cureResultsWrap');
+  if(!wrap) return;
+  wrap.innerHTML = cureSubTab === 'sessions'
+    ? renderCureSessionsTable(getFilteredCureSessions())
+    : renderCureLogTable(getFilteredCureLogs());
+  bindCuringActions(main);
+}
+function bindCuringActions(root){
+  root.querySelectorAll('[data-edit-cure-session]').forEach(el=> el.onclick = ()=> openCureSessionModal(el.dataset.editCureSession));
+  root.querySelectorAll('[data-delete-cure-session]').forEach(el=> el.onclick = ()=> deleteCureSession(el.dataset.deleteCureSession));
+  root.querySelectorAll('[data-log-cure]').forEach(el=> el.onclick = ()=> openCureLogModal(null, el.dataset.logCure));
+  root.querySelectorAll('[data-edit-cure-log]').forEach(el=> el.onclick = ()=> openCureLogModal(el.dataset.editCureLog));
+  root.querySelectorAll('[data-delete-cure-log]').forEach(el=> el.onclick = ()=> deleteCureLogEntry(el.dataset.deleteCureLog));
+  updateAdminUI();
+}
+function openCureSessionModal(id){
+  if(!requireLogin()) return;
+  const rec = id ? {...getCureSession(id)} : {
+    id: uid(), room:'', strains:'', linkedTrimIds:'', startDate: todayISO(), targetDays:'14',
+    endDate:'', assignedTo:'', status: CURE_STATUS_OPTIONS[0], processSummary:'', notes:''
+  };
+  if(!rec) return;
+  const isNew = !id;
+  const trimOpts = getCanaTrimRecords();
+  const trimPickHtml = trimOpts.length ? `
+    <div class="field full">
+      <label>Pick from Trim Cana <span>เลือกจากทริม Cana</span></label>
+      <select id="cureTrimPick"><option value="">— optional —</option>
+        ${trimOpts.map(t=>`<option value="${esc(t.id)}">${esc(canaTrimOptionLabel(t))}</option>`).join('')}
+      </select>
+      <p class="sub" style="margin:6px 0 0;font-size:11px;color:var(--muted);">Fills room + strains from selected trim session</p>
+    </div>` : '';
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>${isNew ? '+ New cure session' : 'Edit cure session'} — Cana flower</h2>
+      <form id="cureSessionForm" class="form-grid">
+        ${trimPickHtml}
+        ${CURE_SESSION_COLS.map(c=> fieldHtml(c, rec[c.key] || '')).join('')}
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelCure">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ if(modalDirty && !confirm('Discard unsaved changes?')) return; modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelCure').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const trimPick = root.querySelector('#cureTrimPick');
+  if(trimPick){
+    trimPick.onchange = ()=>{
+      const t = trimOpts.find(x=> x.id === trimPick.value);
+      if(!t) return;
+      const form = root.querySelector('#cureSessionForm');
+      if(form.querySelector('[name=room]')) form.querySelector('[name=room]').value = t.room || '';
+      if(form.querySelector('[name=strains]')){
+        const existing = form.querySelector('[name=strains]').value.trim();
+        const add = t.strain || '';
+        form.querySelector('[name=strains]').value = existing ? (existing + ', ' + add) : add;
+      }
+      if(form.querySelector('[name=linkedTrimIds]')){
+        const ids = form.querySelector('[name=linkedTrimIds]').value.trim();
+        form.querySelector('[name=linkedTrimIds]').value = ids ? ids + ',' + t.id : t.id;
+      }
+      modalDirty = true;
+    };
+  }
+  const form = root.querySelector('#cureSessionForm');
+  form.addEventListener('input', ()=>{ modalDirty = true; });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const updated = {...rec};
+    CURE_SESSION_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    if((updated.status||'').indexOf('Complete') >= 0 && !updated.endDate) updated.endDate = todayISO();
+    if(!state.curingSessions) state.curingSessions = [];
+    if(isNew) state.curingSessions.push(updated);
+    else {
+      const i = state.curingSessions.findIndex(s=> s.id === rec.id);
+      if(i >= 0) state.curingSessions[i] = updated;
+    }
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    renderCuringView();
+    showDocToast('Cure session saved');
+  };
+}
+function openCureLogModal(id, sessionIdPrefill){
+  if(!requireLogin()) return;
+  const rec = id ? (state.cureLog||[]).find(l=> l.id === id) : {
+    id: uid(), sessionId: sessionIdPrefill || '', date: todayISO(), time: new Date().toTimeString().slice(0,5),
+    room:'', action: CURE_ACTION_OPTIONS[0], hours:'', description:'', doneBy:'', strainsTouched:''
+  };
+  if(!rec) return;
+  const isNew = !id;
+  if(sessionIdPrefill && !id){
+    const sess = getCureSession(sessionIdPrefill);
+    if(sess){ rec.sessionId = sess.id; rec.room = sess.room || ''; rec.strainsTouched = sess.strains || ''; }
+  }
+  const sessions = (state.curingSessions||[]).slice().sort((a,b)=>(b.startDate||'').localeCompare(a.startDate||''));
+  const sessionField = {
+    key:'sessionId', label:'Cure session', labelTh:'รอบ cure', type:'select',
+    options: sessions.map(s=> cureSessionLabel(s))
+  };
+  const logCols = CURE_LOG_COLS.map(c=>{
+    if(c.key !== 'sessionId') return c;
+    return sessionField;
+  });
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>${isNew ? '+ Log cure action' : 'Edit cure log'} — burp / flip / …</h2>
+      <form id="cureLogForm" class="form-grid">
+        ${logCols.map(c=>{
+          if(c.key === 'sessionId'){
+            return `<div class="field full"><label>${esc(c.label)} <span style="font-weight:400;color:var(--muted)">${esc(c.labelTh)}</span></label>
+              <select name="sessionId" required><option value=""></option>
+                ${sessions.map((s,i)=>`<option value="${esc(s.id)}" ${rec.sessionId===s.id?'selected':''}>${esc(cureSessionLabel(s))}</option>`).join('')}
+              </select></div>`;
+          }
+          return fieldHtml(c, rec[c.key] || '');
+        }).join('')}
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelCureLog">Cancel</button>
+          <button type="submit" class="primary purple">Save log</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ if(modalDirty && !confirm('Discard unsaved changes?')) return; modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelCureLog').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const form = root.querySelector('#cureLogForm');
+  form.addEventListener('input', ()=>{ modalDirty = true; });
+  form.querySelector('[name=sessionId]')?.addEventListener('change', ()=>{
+    const sid = form.querySelector('[name=sessionId]').value;
+    const sess = getCureSession(sid);
+    if(sess && form.querySelector('[name=room]')) form.querySelector('[name=room]').value = sess.room || '';
+    modalDirty = true;
+  });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const updated = {...rec};
+    CURE_LOG_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    if(!state.cureLog) state.cureLog = [];
+    if(isNew) state.cureLog.push(updated);
+    else {
+      const i = state.cureLog.findIndex(l=> l.id === rec.id);
+      if(i >= 0) state.cureLog[i] = updated;
+    }
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    if(cureSubTab === 'log') renderCuringView();
+    else updateCuringViewResults();
+    showDocToast('Cure log saved');
+  };
+}
+function deleteCureSession(id){
+  if(!requireAdmin('delete cure session', ()=> deleteCureSession(id))) return;
+  const s = getCureSession(id);
+  if(!s) return;
+  if(!confirm('Delete cure session "' + (s.room||'') + '" and keep log rows?\nลบรอบ cure นี้?')) return;
+  state.curingSessions = (state.curingSessions||[]).filter(x=> x.id !== id);
+  onDataChanged();
+  if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+  renderCuringView();
+}
+function deleteCureLogEntry(id){
+  if(!requireAdmin('delete cure log', ()=> deleteCureLogEntry(id))) return;
+  if(!confirm('Delete this cure log row?\nลบแถวนี้?')) return;
+  state.cureLog = (state.cureLog||[]).filter(l=> l.id !== id);
+  onDataChanged();
+  if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+  updateCuringViewResults();
+}
+function renderCanaStockView(){
+  if(!requireLogin()) return;
+  const rows = getFilteredCanaStock();
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="cana-header">
+      <div>
+        <h2>📦 Cana Stock — flower on hand</h2>
+        <p class="sub">Cana flower inventory only · strain, room, qty, status · Syncs to <b>Cana Stock</b> sheet<br><span class="bi">สต็อกดอก Cana ในบริษัท · ไม่รวมฟาร์ม QC</span></p>
+      </div>
+    </div>
+    <div class="row-actions cana-toolbar">
+      <button class="primary" id="btnNewStock">+ Add stock line <span class="bi">/ เพิ่ม</span></button>
+      <button id="btnStockFromTrim">From Trim Cana <span class="bi">/ จากทริม</span></button>
+      <select id="stockStatusFilter">
+        <option value="">All status / ทุกสถานะ</option>
+        ${STOCK_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${stockStatusFilter===o?'selected':''}>${esc(o.split(' / ')[0])}</option>`).join('')}
+      </select>
+      <input class="search-box" id="stockSearchBox" placeholder="Search strain, room…" value="${esc(stockSearchText)}">
+    </div>
+    <div id="stockResultsWrap">${renderCanaStockTable(rows)}</div>
+  `;
+  document.getElementById('btnNewStock').onclick = ()=> openCanaStockModal(null);
+  document.getElementById('btnStockFromTrim').onclick = ()=> openCanaStockFromTrimModal();
+  document.getElementById('stockStatusFilter').onchange = (e)=>{ stockStatusFilter = e.target.value; updateCanaStockResults(); };
+  document.getElementById('stockSearchBox').oninput = (e)=>{ stockSearchText = e.target.value; updateCanaStockResults(); };
+  bindCanaStockActions(main);
+}
+function updateCanaStockResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'canaStock') return;
+  const wrap = document.getElementById('stockResultsWrap');
+  if(wrap) wrap.innerHTML = renderCanaStockTable(getFilteredCanaStock());
+  bindCanaStockActions(main);
+}
+function bindCanaStockActions(root){
+  root.querySelectorAll('[data-edit-stock]').forEach(el=> el.onclick = ()=> openCanaStockModal(el.dataset.editStock));
+  root.querySelectorAll('[data-delete-stock]').forEach(el=> el.onclick = ()=> deleteCanaStockLine(el.dataset.deleteStock));
+  updateAdminUI();
+}
+function openCanaStockModal(id, prefill){
+  if(!requireLogin()) return;
+  const rec = id ? {...(state.canaStock||[]).find(s=> s.id === id)} : {
+    id: uid(), strain:'', room:'', qtyG:'', status: STOCK_STATUS_OPTIONS[0],
+    harvestDate:'', trimDate:'', linkedTrimId:'', notes:'',
+    updatedAt: todayISO(), updatedBy:''
+  };
+  if(prefill) Object.assign(rec, prefill);
+  if(!rec) return;
+  const isNew = !id;
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:720px">
+      <h2>${isNew ? '+ Add Cana stock' : 'Edit stock line'}</h2>
+      <form id="stockForm" class="form-grid">
+        ${CANA_STOCK_COLS.map(c=> fieldHtml(c, rec[c.key] || '')).join('')}
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelStock">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ if(modalDirty && !confirm('Discard unsaved changes?')) return; modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelStock').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const form = root.querySelector('#stockForm');
+  form.addEventListener('input', ()=>{ modalDirty = true; });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const updated = {...rec};
+    CANA_STOCK_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    if(!updated.updatedAt) updated.updatedAt = todayISO();
+    if(!state.canaStock) state.canaStock = [];
+    if(isNew) state.canaStock.push(updated);
+    else {
+      const i = state.canaStock.findIndex(s=> s.id === rec.id);
+      if(i >= 0) state.canaStock[i] = updated;
+    }
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    renderCanaStockView();
+    showDocToast('Stock line saved');
+  };
+}
+function openCanaStockFromTrimModal(){
+  if(!requireLogin()) return;
+  const trimOpts = getCanaTrimRecords();
+  if(!trimOpts.length){
+    alert('No Trim Cana sessions yet.\nLog finished flower under Trimming → Cana flower first.');
+    return;
+  }
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:520px">
+      <h2>Add stock from Trim Cana</h2>
+      <p class="sub">Prefills strain, room, qty from finished flower</p>
+      <form id="stockFromTrimForm">
+        <div class="field full"><label>Trim session</label>
+          <select name="trimId" required>
+            ${trimOpts.map(t=>`<option value="${esc(t.id)}">${esc(canaTrimOptionLabel(t))}</option>`).join('')}
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCancelStockTrim">Cancel</button>
+          <button type="submit" class="primary">Continue</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelStockTrim').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#stockFromTrimForm').onsubmit = (e)=>{
+    e.preventDefault();
+    const trimId = new FormData(e.target).get('trimId');
+    const t = trimOpts.find(x=> x.id === trimId);
+    close();
+    if(!t) return;
+    const c = computeTrimRow(t);
+    openCanaStockModal(null, {
+      strain: t.strain || '',
+      room: t.room || '',
+      qtyG: c.totalFlower !== null ? String(c.totalFlower) : (t.finishedFlowerG || ''),
+      harvestDate: t.harvestDate || '',
+      trimDate: t.date || '',
+      linkedTrimId: t.id,
+      status: STOCK_STATUS_OPTIONS[0]
+    });
+  };
+}
+function deleteCanaStockLine(id){
+  if(!requireAdmin('delete stock line', ()=> deleteCanaStockLine(id))) return;
+  const s = (state.canaStock||[]).find(x=> x.id === id);
+  if(!s) return;
+  if(!confirm('Delete stock line "' + (s.strain||'') + '"?\nลบรายการสต็อกนี้?')) return;
+  state.canaStock = (state.canaStock||[]).filter(x=> x.id !== id);
+  onDataChanged();
+  if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+  updateCanaStockResults();
 }
 
 /* ============ RENDER: FARM DOCUMENTS ============ */

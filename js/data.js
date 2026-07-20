@@ -114,6 +114,9 @@ function defaultState(){
     farms,
     documents,
     trimming: [],
+    curingSessions: [],
+    cureLog: [],
+    canaStock: [],
     exportLog: [],
     exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }]
   };
@@ -151,6 +154,59 @@ const TRIMMING_GREY = [
   {key:'diff', label:'Diff (g)', labelTh:'ผลต่าง (กรัม)'},
   {key:'yieldPct', label:'Yield %', labelTh:'Yield %'},
 ];
+
+/** Cana flower only — curing after trim */
+const CURE_STATUS_OPTIONS = ['In progress / กำลัง cure', 'Complete / เสร็จ', 'On hold / พัก'];
+const CURE_ACTION_OPTIONS = [
+  'Burp / เปิดถุง',
+  'Flip / rotate / กลับถุง',
+  'Weigh check / ชั่ง',
+  'Repack / แพ็คใหม่',
+  'Quality check / ตรวจคุณภาพ',
+  'Other / อื่นๆ'
+];
+const STOCK_STATUS_OPTIONS = ['On hand / คงคลัง', 'In cure / กำลัง cure', 'Reserved / จอง', 'Shipped / ส่งแล้ว'];
+
+const CURE_SESSION_COLS = [
+  {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
+  {key:'strains', label:'Strains in cure', labelTh:'สายพันธุ์ (คั่นด้วย comma)', type:'textarea'},
+  {key:'linkedTrimIds', label:'Linked trim IDs', labelTh:'อ้างอิง Trim Cana (optional)', type:'text'},
+  {key:'startDate', label:'Start date', labelTh:'วันเริ่ม cure', type:'date'},
+  {key:'targetDays', label:'Target days', labelTh:'เป้าหมาย (วัน)', type:'number'},
+  {key:'endDate', label:'End date', labelTh:'วันจบ (เมื่อเสร็จ)', type:'date'},
+  {key:'assignedTo', label:'Assigned staff', labelTh:'พนักงานดูแล', type:'text'},
+  {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: CURE_STATUS_OPTIONS},
+  {key:'processSummary', label:'Process summary', labelTh:'สรุปกระบวนการ', type:'textarea'},
+  {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
+];
+const CURE_SESSION_KEYS = ['room','strains','linkedTrimIds','startDate','targetDays','endDate','assignedTo','status','processSummary','notes'];
+
+const CURE_LOG_COLS = [
+  {key:'sessionId', label:'Cure session', labelTh:'รอบ cure', type:'select', options:[]},
+  {key:'date', label:'Date', labelTh:'วันที่', type:'date'},
+  {key:'time', label:'Time', labelTh:'เวลา', type:'text'},
+  {key:'room', label:'Room', labelTh:'ห้อง', type:'text'},
+  {key:'action', label:'Action', labelTh:'การทำ', type:'select', options: CURE_ACTION_OPTIONS},
+  {key:'hours', label:'Hours', labelTh:'ชั่วโมง', type:'number'},
+  {key:'description', label:'What exactly', labelTh:'รายละเอียด', type:'textarea'},
+  {key:'doneBy', label:'Done by', labelTh:'ทำโดย', type:'text'},
+  {key:'strainsTouched', label:'Strains touched', labelTh:'สายพันธุ์ที่ทำ', type:'text'},
+];
+const CURE_LOG_KEYS = ['sessionId','date','time','room','action','hours','description','doneBy','strainsTouched'];
+
+const CANA_STOCK_COLS = [
+  {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
+  {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
+  {key:'qtyG', label:'Qty (g)', labelTh:'น้ำหนัก (กรัม)', type:'number'},
+  {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: STOCK_STATUS_OPTIONS},
+  {key:'harvestDate', label:'Harvest date', labelTh:'วันเก็บเกี่ยว', type:'date'},
+  {key:'trimDate', label:'Trim date', labelTh:'วันทริม', type:'date'},
+  {key:'linkedTrimId', label:'Linked trim ID', labelTh:'อ้างอิง Trim Cana', type:'text'},
+  {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'text'},
+  {key:'updatedAt', label:'Updated', labelTh:'อัปเดต', type:'date'},
+  {key:'updatedBy', label:'Updated by', labelTh:'โดย', type:'text'},
+];
+const CANA_STOCK_KEYS = ['strain','room','qtyG','status','harvestDate','trimDate','linkedTrimId','notes','updatedAt','updatedBy'];
 
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 

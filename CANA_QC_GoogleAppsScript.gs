@@ -588,7 +588,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Cana'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -826,6 +826,9 @@ function readAllFarms() {
     farms: farms,
     documents: readDocuments(ss, farmList),
     trimming: readTrimming(ss),
+    curingSessions: readCureSessions(ss),
+    cureLog: readCureLog(ss),
+    canaStock: readCanaStock(ss),
     exportLog: readExportLog(ss),
     exportCompanies: readExportCompaniesFromMeta(ss) || [{ id: 'bls', name: 'BLS', templateId: 'bls' }],
     farmList: farmList,
@@ -892,11 +895,14 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
   if (state.trimming) writeTrimming(ss, state.trimming);
+  if (state.curingSessions !== undefined) writeCureSessions(ss, state.curingSessions);
+  if (state.cureLog !== undefined) writeCureLog(ss, state.cureLog);
+  if (state.canaStock !== undefined) writeCanaStock(ss, state.canaStock);
   if (state.exportLog) writeExportLog(ss, state.exportLog);
   if (state.exportCompanies) writeExportCompanies(ss, state.exportCompanies);
   updateMeta(ss);
@@ -1664,6 +1670,241 @@ function cellStr(v) {
 function formatSheetDate(v) {
   if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
   return String(v || '');
+}
+
+/* ---------- Cana flower — Cure + Stock tabs ---------- */
+
+var CURE_SESSION_SHEET = 'Cure Sessions';
+var CURE_SESSION_HEADERS = ['_id', 'Room', 'Strains', 'Linked Trim IDs', 'Start Date', 'Target Days', 'End Date', 'Assigned To', 'Status', 'Process Summary', 'Notes'];
+var CURE_SESSION_NUM_COLS = CURE_SESSION_HEADERS.length;
+
+var CURE_LOG_SHEET = 'Cure Log';
+var CURE_LOG_HEADERS = ['_id', 'Session ID', 'Date', 'Time', 'Room', 'Action', 'Hours', 'Description', 'Done By', 'Strains Touched'];
+var CURE_LOG_NUM_COLS = CURE_LOG_HEADERS.length;
+
+var CANA_STOCK_SHEET = 'Cana Stock';
+var CANA_STOCK_HEADERS = ['_id', 'Strain', 'Room', 'Qty (g)', 'Status', 'Harvest Date', 'Trim Date', 'Linked Trim ID', 'Notes', 'Updated At', 'Updated By'];
+var CANA_STOCK_NUM_COLS = CANA_STOCK_HEADERS.length;
+
+var CANA_FLOWER_HEADER_ROW = 3;
+var CANA_FLOWER_DATA_START = 4;
+
+function setupCanaFlowerTab(ss, sheetName, title, subtitle, tabColor, headers) {
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) sheet = ss.insertSheet(sheetName);
+  var numCols = headers.length;
+  sheet.clear();
+  sheet.getRange(1, 1, 1, numCols).merge()
+    .setValue(title)
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+  sheet.getRange(2, 1, 1, numCols).merge()
+    .setValue(subtitle)
+    .setBackground(tabColor).setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+  sheet.getRange(CANA_FLOWER_HEADER_ROW, 1, 1, numCols).setValues([headers])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle')
+    .setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(CANA_FLOWER_HEADER_ROW, 32);
+  sheet.setTabColor(tabColor);
+  sheet.setFrozenRows(CANA_FLOWER_HEADER_ROW);
+  sheet.hideColumns(1);
+}
+
+function readCureSessions(ss) {
+  var sheet = ss.getSheetByName(CURE_SESSION_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, CURE_SESSION_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[2] && !row[4]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      room: String(row[1] || ''),
+      strains: String(row[2] || ''),
+      linkedTrimIds: String(row[3] || ''),
+      startDate: formatSheetDate(row[4]),
+      targetDays: cellStr(row[5]),
+      endDate: formatSheetDate(row[6]),
+      assignedTo: String(row[7] || ''),
+      status: String(row[8] || ''),
+      processSummary: String(row[9] || ''),
+      notes: String(row[10] || '')
+    });
+  });
+  return list;
+}
+
+function writeCureSessions(ss, sessions) {
+  setupCanaFlowerTab(ss, CURE_SESSION_SHEET, 'CANA QC TRACKER  ·  CURE SESSIONS',
+    'Cana flower only — room cure runs after trim · multiple strains per room',
+    '#7c3aed', CURE_SESSION_HEADERS);
+  var sheet = ss.getSheetByName(CURE_SESSION_SHEET);
+  var rows = (sessions || []).map(function(s) {
+    return [
+      s.id || newId(),
+      s.room || '',
+      s.strains || '',
+      s.linkedTrimIds || '',
+      s.startDate || '',
+      s.targetDays || '',
+      s.endDate || '',
+      s.assignedTo || '',
+      s.status || '',
+      s.processSummary || '',
+      s.notes || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, CURE_SESSION_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CURE_SESSION_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, CURE_SESSION_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#f5f3ff')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+function readCureLog(ss) {
+  var sheet = ss.getSheetByName(CURE_LOG_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, CURE_LOG_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[2] && !row[5]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      sessionId: String(row[1] || ''),
+      date: formatSheetDate(row[2]),
+      time: String(row[3] || ''),
+      room: String(row[4] || ''),
+      action: String(row[5] || ''),
+      hours: cellStr(row[6]),
+      description: String(row[7] || ''),
+      doneBy: String(row[8] || ''),
+      strainsTouched: String(row[9] || '')
+    });
+  });
+  return list;
+}
+
+function writeCureLog(ss, logs) {
+  setupCanaFlowerTab(ss, CURE_LOG_SHEET, 'CANA QC TRACKER  ·  CURE LOG',
+    'Each row = one action (burp, flip, etc.) · text + hours · Cana flower only',
+    '#9333ea', CURE_LOG_HEADERS);
+  var sheet = ss.getSheetByName(CURE_LOG_SHEET);
+  var rows = (logs || []).slice().sort(function(a, b) {
+    var da = (a.date || '') + ' ' + (a.time || '');
+    var db = (b.date || '') + ' ' + (b.time || '');
+    return db.localeCompare(da);
+  }).map(function(log) {
+    return [
+      log.id || newId(),
+      log.sessionId || '',
+      log.date || '',
+      log.time || '',
+      log.room || '',
+      log.action || '',
+      log.hours || '',
+      log.description || '',
+      log.doneBy || '',
+      log.strainsTouched || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, CURE_LOG_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CURE_LOG_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, CURE_LOG_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#faf5ff')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+function readCanaStock(ss) {
+  var sheet = ss.getSheetByName(CANA_STOCK_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, CANA_STOCK_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[3]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      strain: String(row[1] || ''),
+      room: String(row[2] || ''),
+      qtyG: cellStr(row[3]),
+      status: String(row[4] || ''),
+      harvestDate: formatSheetDate(row[5]),
+      trimDate: formatSheetDate(row[6]),
+      linkedTrimId: String(row[7] || ''),
+      notes: String(row[8] || ''),
+      updatedAt: formatSheetDate(row[9]),
+      updatedBy: String(row[10] || '')
+    });
+  });
+  return list;
+}
+
+function writeCanaStock(ss, stock) {
+  setupCanaFlowerTab(ss, CANA_STOCK_SHEET, 'CANA QC TRACKER  ·  CANA STOCK',
+    'Cana flower inventory on hand — strain, room, qty, status',
+    '#059669', CANA_STOCK_HEADERS);
+  var sheet = ss.getSheetByName(CANA_STOCK_SHEET);
+  var rows = (stock || []).map(function(s) {
+    return [
+      s.id || newId(),
+      s.strain || '',
+      s.room || '',
+      s.qtyG || '',
+      s.status || '',
+      s.harvestDate || '',
+      s.trimDate || '',
+      s.linkedTrimId || '',
+      s.notes || '',
+      s.updatedAt || '',
+      s.updatedBy || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, CANA_STOCK_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CANA_STOCK_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, CANA_STOCK_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#ecfdf5')
+        .setFontSize(10).setWrap(true);
+    }
+    sheet.getRange(CANA_FLOWER_DATA_START, 4, rows.length, 1).setNumberFormat('#,##0.##');
+  }
+}
+
+/** Run once — creates Cure Sessions, Cure Log, Cana Stock tabs */
+function upgradeCanaFlowerTabs() {
+  var ss = getSpreadsheet();
+  writeCureSessions(ss, readCureSessions(ss));
+  writeCureLog(ss, readCureLog(ss));
+  writeCanaStock(ss, readCanaStock(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Cure Sessions, Cure Log, and Cana Stock tabs ready.');
 }
 
 /* ---------- Export Log tab ---------- */

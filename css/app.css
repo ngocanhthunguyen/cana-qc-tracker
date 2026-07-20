@@ -421,6 +421,20 @@
   .trim-staff-panel .sub{color:var(--muted);}
   .trim-staff-table th,.trim-staff-table td{font-size:10.5px;}
 
+  /* ---- Cana flower — Curing & Stock ---- */
+  .cana-header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:16px;padding:18px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-sm);}
+  .cana-header h2{margin:0 0 6px;font-size:20px;font-weight:800;letter-spacing:-.02em;}
+  .cana-header .sub{margin:0;font-size:13px;color:var(--muted);line-height:1.45;}
+  .cana-header-meta{display:flex;flex-wrap:wrap;gap:8px;}
+  .cana-subtabs{display:flex;gap:8px;margin-bottom:16px;padding:4px;background:var(--grey-bg);border:1px solid var(--line);border-radius:12px;width:fit-content;max-width:100%;}
+  .cana-subtabs button{border:0;background:transparent;padding:10px 16px;border-radius:9px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
+  .cana-subtabs button.active{background:#fff;color:#7c3aed;box-shadow:0 2px 8px rgba(15,23,42,.08);}
+  .cana-toolbar{align-items:center;flex-wrap:wrap;gap:10px;}
+  .cana-toolbar .month-filter{font-size:13px;font-weight:600;color:var(--muted);display:flex;align-items:center;gap:8px;}
+  .cana-toolbar .month-filter select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:#fff;}
+  .cana-table th,.cana-table td{font-size:11px;white-space:nowrap;}
+  .cana-stock-summary{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+
   @media (max-width:900px){
     .chart-row{grid-template-columns:1fr;}
     .preview-grid{grid-template-columns:repeat(2,1fr);}
