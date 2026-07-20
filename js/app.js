@@ -325,31 +325,29 @@ function todayBangkokISO(){
   return p.year + '-' + p.month + '-' + p.day;
 }
 function nowBangkokTime(){
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: BANGKOK_TZ,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(new Date());
+  const p = bangkokDateParts();
+  return padTimeHm(parseInt(p.hour, 10), parseInt(p.minute, 10));
 }
 function padTimeHm(h, m){
   return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
 }
-/** Display cure log time — always HH:mm, no timezone shift */
-function formatCureLogTime(time){
-  if(time === undefined || time === null || time === '') return '—';
+/** Normalize cure log time for storage/display — plain HH:mm ICT, never timezone-shifted */
+function normalizeCureLogTimeInput(time){
+  if(time === undefined || time === null || time === '') return '';
+  if(time instanceof Date){
+    const p = bangkokDateParts(time);
+    return padTimeHm(parseInt(p.hour, 10), parseInt(p.minute, 10));
+  }
   let s = String(time).trim();
   if(s.charAt(0) === "'") s = s.slice(1);
-  const m = s.match(/^(\d{1,2}):(\d{2})/);
-  if(m) return padTimeHm(parseInt(m[1], 10), parseInt(m[2], 10));
-  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
-    try{
-      return new Intl.DateTimeFormat('en-GB', {
-        timeZone: BANGKOK_TZ, hour: '2-digit', minute: '2-digit', hour12: false
-      }).format(new Date(s));
-    }catch(e){}
-  }
-  return s || '—';
+  const hm = s.match(/(?:^|T)(\d{1,2}):(\d{2})/);
+  if(hm) return padTimeHm(parseInt(hm[1], 10), parseInt(hm[2], 10));
+  return s;
+}
+/** Display cure log time — always HH:mm, no timezone shift */
+function formatCureLogTime(time){
+  const t = normalizeCureLogTimeInput(time);
+  return t || '—';
 }
 function batchDatePart(dateStr){
   if(dateStr) return dateStr.replace(/-/g,'').slice(2);
@@ -3376,8 +3374,7 @@ function normalizeCureLogEntry(log){
   }
   if(log.hours !== undefined) delete log.hours;
   if(log.time !== undefined && log.time !== null && log.time !== ''){
-    log.time = formatCureLogTime(log.time);
-    if(log.time === '—') log.time = '';
+    log.time = normalizeCureLogTimeInput(log.time);
   }
   return log;
 }
@@ -3747,6 +3744,7 @@ function openCureLogModal(id, sessionIdPrefill){
     e.preventDefault();
     const updated = {...rec};
     CURE_LOG_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    updated.time = normalizeCureLogTimeInput(updated.time);
     normalizeCureLogEntry(updated);
     if(!state.cureLog) state.cureLog = [];
     if(isNew) state.cureLog.push(updated);

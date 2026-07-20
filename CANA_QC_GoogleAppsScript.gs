@@ -1672,7 +1672,7 @@ function formatSheetDate(v) {
   return String(v || '');
 }
 
-function formatSheetTime(v) {
+function formatSheetTime(v, ss) {
   if (v === '' || v === null || v === undefined) return '';
   if (typeof v === 'number' && isFinite(v)) {
     var totalMin = Math.round(v * 24 * 60) % (24 * 60);
@@ -1681,11 +1681,13 @@ function formatSheetTime(v) {
     return (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
   }
   if (v instanceof Date) {
-    return Utilities.formatDate(v, 'Asia/Bangkok', 'HH:mm');
+    // Use spreadsheet TZ — Date from getValues() is wall-clock in sheet TZ, not UTC
+    var tz = (ss && ss.getSpreadsheetTimeZone) ? ss.getSpreadsheetTimeZone() : 'Asia/Bangkok';
+    return Utilities.formatDate(v, tz, 'HH:mm');
   }
   var s = String(v).trim();
   if (s.charAt(0) === "'") s = s.slice(1);
-  var m = s.match(/^(\d{1,2}):(\d{2})/);
+  var m = s.match(/(?:^|T)(\d{1,2}):(\d{2})/);
   if (m) {
     var h = parseInt(m[1], 10);
     var mi = m[2];
@@ -1695,9 +1697,20 @@ function formatSheetTime(v) {
 }
 
 function sheetTextTime(t) {
-  t = String(t || '').trim();
+  t = normalizeSheetTimeText(t);
   if (!t) return '';
   return "'" + t;
+}
+
+function normalizeSheetTimeText(t) {
+  t = String(t || '').trim();
+  if (t.charAt(0) === "'") t = t.slice(1);
+  var m = t.match(/(?:^|T)(\d{1,2}):(\d{2})/);
+  if (m) {
+    var h = parseInt(m[1], 10);
+    return (h < 10 ? '0' : '') + h + ':' + m[2];
+  }
+  return t;
 }
 
 /* ---------- Cana flower — Cure + Stock tabs ---------- */
@@ -1809,14 +1822,17 @@ function readCureLog(ss) {
   var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
   if (numRows < 1) return [];
   var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, CURE_LOG_NUM_COLS).getValues();
+  var timeDisplay = sheet.getRange(CANA_FLOWER_DATA_START, 4, numRows, 1).getDisplayValues();
   var list = [];
-  values.forEach(function(row) {
+  values.forEach(function(row, i) {
     if (!row[1] && !row[2] && !row[5]) return;
+    var displayTime = (timeDisplay[i] && timeDisplay[i][0]) ? String(timeDisplay[i][0]).trim() : '';
+    var timeVal = displayTime.match(/^\d{1,2}:\d{2}/) ? displayTime : formatSheetTime(row[3], ss);
     list.push({
       id: String(row[0] || '') || newId(),
       sessionId: String(row[1] || ''),
       date: formatSheetDate(row[2]),
-      time: formatSheetTime(row[3]),
+      time: normalizeSheetTimeText(timeVal),
       room: String(row[4] || ''),
       action: String(row[5] || ''),
       minutes: cellStr(row[6]),
@@ -1842,7 +1858,7 @@ function writeCureLog(ss, logs) {
       log.id || newId(),
       log.sessionId || '',
       log.date || '',
-      sheetTextTime(log.time || log.hours || ''),
+      normalizeSheetTimeText(log.time || log.hours || ''),
       log.room || '',
       log.action || '',
       log.minutes || log.hours || '',
@@ -1855,8 +1871,11 @@ function writeCureLog(ss, logs) {
     sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, CURE_LOG_NUM_COLS).clearContent();
   }
   if (rows.length) {
-    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CURE_LOG_NUM_COLS).setValues(rows);
+    // Text format BEFORE setValues — stops Sheets converting "14:17" into a datetime serial
     sheet.getRange(CANA_FLOWER_DATA_START, 4, rows.length, 1).setNumberFormat('@');
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, CURE_LOG_NUM_COLS).setValues(rows);
+    var timeTexts = rows.map(function(r) { return [sheetTextTime(r[3])]; });
+    sheet.getRange(CANA_FLOWER_DATA_START, 4, rows.length, 1).setValues(timeTexts);
     for (var r = 0; r < rows.length; r++) {
       sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, CURE_LOG_NUM_COLS)
         .setBackground(r % 2 === 0 ? THEME.white : '#faf5ff')
@@ -1925,15 +1944,16 @@ function writeCanaStock(ss, stock) {
   }
 }
 
-/** Run once — creates Cure Sessions, Cure Log, Cana Stock tabs */
+/** Run once — creates Cure Sessions, Cure Log, Cana Stock tabs + fixes time column as ICT text */
 function upgradeCanaFlowerTabs() {
   var ss = getSpreadsheet();
+  try { ss.setSpreadsheetTimeZone('Asia/Bangkok'); } catch (e) {}
   writeCureSessions(ss, readCureSessions(ss));
   writeCureLog(ss, readCureLog(ss));
   writeCanaStock(ss, readCanaStock(ss));
   orderTabs(ss);
   SpreadsheetApp.flush();
-  Logger.log('Cure Sessions, Cure Log, and Cana Stock tabs ready.');
+  Logger.log('Cure Sessions, Cure Log, Cana Stock tabs ready. Spreadsheet TZ set to Asia/Bangkok.');
 }
 
 /* ---------- Export Log tab ---------- */
