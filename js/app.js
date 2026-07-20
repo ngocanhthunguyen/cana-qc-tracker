@@ -307,6 +307,27 @@ function todayISO(){
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
+/** Thailand (Bangkok) — used for Cana cure log date/time */
+const BANGKOK_TZ = 'Asia/Bangkok';
+function bangkokDateParts(date){
+  date = date || new Date();
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: BANGKOK_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(date).filter(p=> p.type !== 'literal').map(p=> [p.type, p.value])
+  );
+  return parts;
+}
+function todayBangkokISO(){
+  const p = bangkokDateParts();
+  return p.year + '-' + p.month + '-' + p.day;
+}
+function nowBangkokTime(){
+  const p = bangkokDateParts();
+  return p.hour + ':' + p.minute;
+}
 function batchDatePart(dateStr){
   if(dateStr) return dateStr.replace(/-/g,'').slice(2);
   return todayISO().replace(/-/g,'').slice(2);
@@ -878,6 +899,7 @@ function ensureStateShape(){
   state.trimming = state.trimming.map(normalizeTrimRecord);
   if(!state.curingSessions) state.curingSessions = [];
   if(!state.cureLog) state.cureLog = [];
+  state.cureLog = state.cureLog.map(normalizeCureLogEntry);
   if(!state.canaStock) state.canaStock = [];
   if(!state.exportLog) state.exportLog = [];
   if(!state.exportCompanies || !state.exportCompanies.length){
@@ -1286,7 +1308,7 @@ async function pullFromGoogleSheet(silent){
     if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
     if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
     if(Array.isArray(data.curingSessions)) state.curingSessions = data.curingSessions.slice();
-    if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice();
+    if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice().map(normalizeCureLogEntry);
     if(Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
     if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
     if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
@@ -3308,6 +3330,18 @@ function deleteTrimmingRecord(id){
 }
 
 /* ============ CANA FLOWER — CURING & STOCK ============ */
+function normalizeCureLogEntry(log){
+  if(!log) return log;
+  if(log.minutes === undefined || log.minutes === null || log.minutes === ''){
+    if(log.hours !== undefined && log.hours !== null && log.hours !== ''){
+      const h = num(log.hours);
+      if(h !== null && h > 0 && h <= 8) log.minutes = String(Math.round(h * 60));
+      else log.minutes = String(log.hours).trim();
+    }
+  }
+  if(log.hours !== undefined) delete log.hours;
+  return log;
+}
 function getCanaTrimRecords(){
   return (state.trimming||[]).filter(isCanaTrimRecord);
 }
@@ -3423,7 +3457,7 @@ function renderCureSessionsTable(sessions){
 }
 function renderCureLogTable(logs){
   if(!logs.length){
-    return `<div class="panel empty-state"><b>No cure log entries this month.</b><br>Each burp / flip = one row · hours + description.<br><span class="bi">แต่ละครั้งเปิดถุง = 1 แถว</span></div>`;
+    return `<div class="panel empty-state"><b>No cure log entries this month.</b><br>Each burp / flip = one row · minutes + description.<br><span class="bi">แต่ละครั้งเปิดถุง = 1 แถว · ใส่เป็นนาที</span></div>`;
   }
   const body = logs.map(l=>{
     const sess = getCureSession(l.sessionId);
@@ -3432,7 +3466,7 @@ function renderCureLogTable(logs){
       <td>${esc(l.time||'—')}</td>
       <td>${esc(l.room||sess?.room||'—')}</td>
       <td><b>${esc((l.action||'—').split(' / ')[0])}</b></td>
-      <td>${l.hours ? fmtNum(l.hours, 1) + ' h' : '—'}</td>
+      <td>${l.minutes ? fmtNum(l.minutes, 0) + ' min' : '—'}</td>
       <td title="${esc(l.description||'')}">${esc((l.description||'—').slice(0, 80))}${(l.description||'').length > 80 ? '…' : ''}</td>
       <td>${esc(l.doneBy||'—')}</td>
       <td><div class="action-group">
@@ -3442,7 +3476,7 @@ function renderCureLogTable(logs){
     </tr>`;
   }).join('');
   return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
-    <thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Action</th><th>Hours</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Date</th><th>Time</th><th>Room</th><th>Action</th><th>Mins</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
 }
@@ -3616,9 +3650,9 @@ function openCureSessionModal(id){
 }
 function openCureLogModal(id, sessionIdPrefill){
   if(!requireLogin()) return;
-  const rec = id ? (state.cureLog||[]).find(l=> l.id === id) : {
-    id: uid(), sessionId: sessionIdPrefill || '', date: todayISO(), time: new Date().toTimeString().slice(0,5),
-    room:'', action: CURE_ACTION_OPTIONS[0], hours:'', description:'', doneBy:'', strainsTouched:''
+  const rec = id ? normalizeCureLogEntry({...(state.cureLog||[]).find(l=> l.id === id)}) : {
+    id: uid(), sessionId: sessionIdPrefill || '', date: todayBangkokISO(), time: nowBangkokTime(),
+    room:'', action: CURE_ACTION_OPTIONS[0], minutes:'', description:'', doneBy:'', strainsTouched:''
   };
   if(!rec) return;
   const isNew = !id;
@@ -3673,6 +3707,7 @@ function openCureLogModal(id, sessionIdPrefill){
     e.preventDefault();
     const updated = {...rec};
     CURE_LOG_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    normalizeCureLogEntry(updated);
     if(!state.cureLog) state.cureLog = [];
     if(isNew) state.cureLog.push(updated);
     else {

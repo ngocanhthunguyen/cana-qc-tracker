@@ -184,15 +184,15 @@ const CURE_SESSION_KEYS = ['room','strains','linkedTrimIds','startDate','targetD
 const CURE_LOG_COLS = [
   {key:'sessionId', label:'Cure session', labelTh:'รอบ cure', type:'select', options:[]},
   {key:'date', label:'Date', labelTh:'วันที่', type:'date'},
-  {key:'time', label:'Time', labelTh:'เวลา', type:'text'},
+  {key:'time', label:'Time (Thai)', labelTh:'เวลา (ไทย ICT)', type:'text'},
   {key:'room', label:'Room', labelTh:'ห้อง', type:'text'},
   {key:'action', label:'Action', labelTh:'การทำ', type:'select', options: CURE_ACTION_OPTIONS},
-  {key:'hours', label:'Hours', labelTh:'ชั่วโมง', type:'number'},
+  {key:'minutes', label:'Minutes', labelTh:'นาที', type:'number'},
   {key:'description', label:'What exactly', labelTh:'รายละเอียด', type:'textarea'},
   {key:'doneBy', label:'Done by', labelTh:'ทำโดย', type:'text'},
   {key:'strainsTouched', label:'Strains touched', labelTh:'สายพันธุ์ที่ทำ', type:'text'},
 ];
-const CURE_LOG_KEYS = ['sessionId','date','time','room','action','hours','description','doneBy','strainsTouched'];
+const CURE_LOG_KEYS = ['sessionId','date','time','room','action','minutes','description','doneBy','strainsTouched'];
 
 const CANA_STOCK_COLS = [
   {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},

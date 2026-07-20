@@ -1668,7 +1668,12 @@ function cellStr(v) {
 }
 
 function formatSheetDate(v) {
-  if (v instanceof Date) return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Bangkok', 'yyyy-MM-dd');
+  return String(v || '');
+}
+
+function formatSheetTime(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Bangkok', 'HH:mm');
   return String(v || '');
 }
 
@@ -1679,7 +1684,7 @@ var CURE_SESSION_HEADERS = ['_id', 'Room', 'Strains', 'Linked Trim IDs', 'Start 
 var CURE_SESSION_NUM_COLS = CURE_SESSION_HEADERS.length;
 
 var CURE_LOG_SHEET = 'Cure Log';
-var CURE_LOG_HEADERS = ['_id', 'Session ID', 'Date', 'Time', 'Room', 'Action', 'Hours', 'Description', 'Done By', 'Strains Touched'];
+var CURE_LOG_HEADERS = ['_id', 'Session ID', 'Date', 'Time', 'Room', 'Action', 'Minutes', 'Description', 'Done By', 'Strains Touched'];
 var CURE_LOG_NUM_COLS = CURE_LOG_HEADERS.length;
 
 var CANA_STOCK_SHEET = 'Cana Stock';
@@ -1788,10 +1793,10 @@ function readCureLog(ss) {
       id: String(row[0] || '') || newId(),
       sessionId: String(row[1] || ''),
       date: formatSheetDate(row[2]),
-      time: String(row[3] || ''),
+      time: row[3] instanceof Date ? formatSheetTime(row[3]) : String(row[3] || ''),
       room: String(row[4] || ''),
       action: String(row[5] || ''),
-      hours: cellStr(row[6]),
+      minutes: cellStr(row[6]),
       description: String(row[7] || ''),
       doneBy: String(row[8] || ''),
       strainsTouched: String(row[9] || '')
@@ -1802,7 +1807,7 @@ function readCureLog(ss) {
 
 function writeCureLog(ss, logs) {
   setupCanaFlowerTab(ss, CURE_LOG_SHEET, 'CANA QC TRACKER  ·  CURE LOG',
-    'Each row = one action (burp, flip, etc.) · text + hours · Cana flower only',
+    'Each row = one action (burp, flip, etc.) · text + minutes · Cana flower only',
     '#9333ea', CURE_LOG_HEADERS);
   var sheet = ss.getSheetByName(CURE_LOG_SHEET);
   var rows = (logs || []).slice().sort(function(a, b) {
@@ -1817,7 +1822,7 @@ function writeCureLog(ss, logs) {
       log.time || '',
       log.room || '',
       log.action || '',
-      log.hours || '',
+      log.minutes || log.hours || '',
       log.description || '',
       log.doneBy || '',
       log.strainsTouched || ''
