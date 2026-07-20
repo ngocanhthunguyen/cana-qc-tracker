@@ -11,6 +11,7 @@ let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
 let trimMonth = '';
 let cureSubTab = 'sessions'; // 'sessions' | 'log'
+let cureLogsModalSessionId = null;
 let cureSearchText = '';
 let cureMonth = '';
 let stockSearchText = '';
@@ -3461,6 +3462,73 @@ function canaTrimOptionLabel(rec){
   const flower = c.totalFlower !== null ? fmtWeight(c.totalFlower) : '—';
   return (rec.room||'—') + ' · ' + (rec.strain||'—') + ' · ' + (rec.date||'—') + ' · ' + flower;
 }
+function getCureLogsForSession(sessionId){
+  return (state.cureLog||[])
+    .filter(l=> l.sessionId === sessionId)
+    .slice()
+    .sort((a,b)=>{
+      const da = (a.date||'') + ' ' + normalizeCureLogTimeInput(a.time);
+      const db = (b.date||'') + ' ' + normalizeCureLogTimeInput(b.time);
+      return db.localeCompare(da);
+    });
+}
+function refreshCuringAfterLogChange(){
+  if(cureSubTab === 'log') renderCuringView();
+  else updateCuringViewResults();
+  if(cureLogsModalSessionId) openCureSessionLogsModal(cureLogsModalSessionId);
+}
+function bindCureLogModalActions(root){
+  root.querySelectorAll('[data-edit-cure-log]').forEach(el=> el.onclick = ()=> openCureLogModal(el.dataset.editCureLog));
+  root.querySelectorAll('[data-delete-cure-log]').forEach(el=> el.onclick = ()=> deleteCureLogEntry(el.dataset.deleteCureLog));
+  updateAdminUI();
+}
+function openCureSessionLogsModal(sessionId){
+  if(!requireLogin()) return;
+  const session = getCureSession(sessionId);
+  if(!session) return;
+  cureLogsModalSessionId = sessionId;
+  const logs = getCureLogsForSession(sessionId);
+  const days = daysInCure(session);
+  const target = num(session.targetDays);
+  const dayLabel = days !== null ? days + 'd' + (target !== null ? ' / ' + target + 'd target' : '') : '—';
+  const sc = cureStatusClass(session.status);
+  modalDirty = false;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal cure-logs-modal" style="max-width:920px">
+      <div class="cure-logs-modal-head">
+        <div>
+          <h2>📋 Cure logs — Room ${esc(session.room||'—')}</h2>
+          <p class="sub">${esc((session.strains||'—').slice(0, 120))}${(session.strains||'').length > 120 ? '…' : ''}</p>
+        </div>
+        <span class="status-chip ${sc}">${esc((session.status||'—').split(' / ')[0])}</span>
+      </div>
+      <div class="cure-logs-modal-meta">
+        <span class="doc-badge">Start ${esc(session.startDate||'—')}</span>
+        <span class="doc-badge">${dayLabel}</span>
+        <span class="doc-badge">${esc(session.assignedTo||'—')}</span>
+        <span class="doc-badge"><b>${logs.length}</b> log${logs.length===1?'':'s'}</span>
+      </div>
+      <div id="cureSessionLogsWrap">${renderCureLogTable(logs, {
+        emptyTitle: 'No logs for this session yet.',
+        emptyHint: 'Click <b>+ Log action</b> below to add the first burp / flip.'
+      })}</div>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btnCloseCureLogs">Close</button>
+        <button type="button" class="primary purple" id="btnAddCureLogFromModal">+ Log action <span class="bi">/ เพิ่ม burp</span></button>
+      </div>
+    </div>
+  </div>`;
+  const close = ()=>{ cureLogsModalSessionId = null; modalDirty = false; closeModal(); };
+  root.querySelector('#btnCloseCureLogs').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#btnAddCureLogFromModal').onclick = ()=>{
+    modalDirty = false;
+    openCureLogModal(null, sessionId);
+  };
+  bindCureLogModalActions(root);
+}
 function renderCureSessionsTable(sessions){
   if(!sessions.length){
     return `<div class="panel empty-state"><b>No cure sessions for this month.</b><br>Start a room cure after <b>Trim Cana</b> is logged.<br><span class="bi">เริ่ม cure หลังทริม Cana · หลายสายพันธุ์ในห้องเดียวได้</span></div>`;
@@ -3469,7 +3537,7 @@ function renderCureSessionsTable(sessions){
     const days = daysInCure(s);
     const target = num(s.targetDays);
     const dayLabel = days !== null ? days + 'd' + (target !== null ? ' / ' + target + 'd target' : '') : '—';
-    const logs = (state.cureLog||[]).filter(l=> l.sessionId === s.id).length;
+    const logs = getCureLogsForSession(s.id).length;
     const sc = cureStatusClass(s.status);
     return `<tr>
       <td><b>${esc(s.room||'—')}</b></td>
@@ -3478,7 +3546,7 @@ function renderCureSessionsTable(sessions){
       <td>${dayLabel}</td>
       <td>${esc(s.assignedTo||'—')}</td>
       <td><span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span></td>
-      <td>${logs} log${logs===1?'':'s'}</td>
+      <td><button type="button" class="cure-log-count-btn" data-view-cure-logs="${esc(s.id)}" title="View all logs for this session">${logs} log${logs===1?'':'s'} →</button></td>
       <td><div class="action-group">
         <button class="small purple" data-log-cure="${s.id}">+ Log</button>
         <button class="small" data-edit-cure-session="${s.id}">Edit</button>
@@ -3491,9 +3559,12 @@ function renderCureSessionsTable(sessions){
     <tbody>${body}</tbody>
   </table></div>`;
 }
-function renderCureLogTable(logs){
+function renderCureLogTable(logs, opts){
+  opts = opts || {};
   if(!logs.length){
-    return `<div class="panel empty-state"><b>No cure log entries this month.</b><br>Each burp / flip = one row · minutes + description.<br><span class="bi">แต่ละครั้งเปิดถุง = 1 แถว · ใส่เป็นนาที</span></div>`;
+    const title = opts.emptyTitle || 'No cure log entries this month.';
+    const hint = opts.emptyHint || 'Each burp / flip = one row · minutes + description.';
+    return `<div class="panel empty-state"><b>${title}</b><br>${hint}<br><span class="bi">แต่ละครั้งเปิดถุง = 1 แถว · ใส่เป็นนาที</span></div>`;
   }
   const body = logs.map(l=>{
     const sess = getCureSession(l.sessionId);
@@ -3602,6 +3673,7 @@ function updateCuringViewResults(){
   bindCuringActions(main);
 }
 function bindCuringActions(root){
+  root.querySelectorAll('[data-view-cure-logs]').forEach(el=> el.onclick = ()=> openCureSessionLogsModal(el.dataset.viewCureLogs));
   root.querySelectorAll('[data-edit-cure-session]').forEach(el=> el.onclick = ()=> openCureSessionModal(el.dataset.editCureSession));
   root.querySelectorAll('[data-delete-cure-session]').forEach(el=> el.onclick = ()=> deleteCureSession(el.dataset.deleteCureSession));
   root.querySelectorAll('[data-log-cure]').forEach(el=> el.onclick = ()=> openCureLogModal(null, el.dataset.logCure));
@@ -3755,8 +3827,7 @@ function openCureLogModal(id, sessionIdPrefill){
     modalDirty = false;
     onDataChanged();
     closeModal();
-    if(cureSubTab === 'log') renderCuringView();
-    else updateCuringViewResults();
+    refreshCuringAfterLogChange();
     showDocToast('Cure log saved');
   };
 }
@@ -3776,7 +3847,7 @@ function deleteCureLogEntry(id){
   state.cureLog = (state.cureLog||[]).filter(l=> l.id !== id);
   onDataChanged();
   if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
-  updateCuringViewResults();
+  refreshCuringAfterLogChange();
 }
 function renderCanaStockView(){
   if(!requireLogin()) return;
