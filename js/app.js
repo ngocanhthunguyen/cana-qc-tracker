@@ -1349,43 +1349,80 @@ function gasPostXHR(url, body){
     xhr.send(body);
   });
 }
+async function gasPostFetch(url, body){
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      redirect: 'follow',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body
+    });
+  } catch(e) {
+    throw new Error('Failed to fetch — check connection, or redeploy Apps Script (Anyone access) and hard-refresh the app.');
+  }
+  const text = await res.text();
+  if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
+  try { return JSON.parse(text); }
+  catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
+}
+async function gasGetWrite(url){
+  let res;
+  try {
+    res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+  } catch(e) {
+    const kb = Math.round(url.length / 1024);
+    throw new Error(
+      'Failed to fetch — save payload may be too large'
+      + (kb > 6 ? ' (~' + kb + ' KB URL)' : '')
+      + '. Redeploy Apps Script (Manage deployments → Edit → New version), hard-refresh, then Save again.'
+    );
+  }
+  const text = await res.text();
+  if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
+  try { return JSON.parse(text); }
+  catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
+}
 async function callAppsScript(payload){
   if(!appsScriptUrl) throw new Error('No Apps Script URL configured');
   const body = JSON.stringify(payload);
 
-  // Primary: GET write — same reliable path as Reload (POST often returns 405 from Vercel)
+  // POST first for writes — full state in body avoids URL length limits as QC/trim data grows
   if(payload.action === 'write' || payload.action === 'setDriveConfig'){
-    const encoded = utf8ToBase64(body);
-    if(encoded.length > 180000) throw new Error('Data too large to sync in one request');
-    const url = appsScriptUrl
-      + (appsScriptUrl.includes('?') ? '&' : '?')
-      + 'action=' + encodeURIComponent(payload.action)
-      + '&payload=' + encodeURIComponent(encoded)
-      + '&_=' + Date.now();
-    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
-    const text = await res.text();
-    if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
-    try { return JSON.parse(text); }
-    catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
+    try {
+      return await gasPostXHR(appsScriptUrl, body);
+    } catch(xhrErr) {
+      console.warn('XHR POST write failed, trying fetch POST', xhrErr);
+    }
+    try {
+      return await gasPostFetch(appsScriptUrl, body);
+    } catch(postErr) {
+      console.warn('POST write failed, trying GET fallback', postErr);
+      const encoded = utf8ToBase64(body);
+      if(encoded.length > 180000) throw new Error('Data too large to sync in one request');
+      const url = appsScriptUrl
+        + (appsScriptUrl.includes('?') ? '&' : '?')
+        + 'action=' + encodeURIComponent(payload.action)
+        + '&payload=' + encodeURIComponent(encoded)
+        + '&_=' + Date.now();
+      if(url.length > 7500){
+        throw new Error(
+          (postErr.message || 'POST save failed')
+          + '\n\nData too large for URL fallback (~' + Math.round(url.length / 1024) + ' KB). '
+          + 'Redeploy Apps Script with latest code, then Save again.'
+        );
+      }
+      return await gasGetWrite(url);
+    }
   }
 
-  // POST fallback for read/other actions
   try {
     return await gasPostXHR(appsScriptUrl, body);
   } catch(xhrErr) {
     console.warn('XHR POST failed, trying fetch', xhrErr);
   }
-  const res = await fetch(appsScriptUrl, {
-    method: 'POST',
-    mode: 'cors',
-    redirect: 'follow',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body
-  });
-  const text = await res.text();
-  if(!res.ok) throw new Error(parseAppsScriptError(text, res.status) + ' (HTTP ' + res.status + ')');
-  try { return JSON.parse(text); }
-  catch(e){ throw new Error(parseAppsScriptError(text, res.status)); }
+  return await gasPostFetch(appsScriptUrl, body);
 }
 async function pullFromGoogleSheet(silent){
   if(!appsScriptUrl) return;

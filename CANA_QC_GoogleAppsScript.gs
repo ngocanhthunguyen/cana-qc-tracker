@@ -1372,7 +1372,9 @@ function trimSheetLayout(sheet) {
   if (!sheet) return 'legacy';
   var h2 = trimSheetHeaderText(sheet, 2);
   var h3 = trimSheetHeaderText(sheet, 3);
-  if (h2 === 'Total Trimmed (g)') return 'daily';
+  // Trim Record tab: _id | Date | Total Trimmed (g) | …
+  if (h2 === 'Date' && h3.indexOf('Total Trimmed') >= 0) return 'daily';
+  if (h2.indexOf('Total Trimmed') >= 0) return 'daily';
   if (h2 === 'Harvest Date' && h3 === 'Room') return 'cana';
   if (h2 === 'Harvest Date') return 'full';
   return 'legacy';
