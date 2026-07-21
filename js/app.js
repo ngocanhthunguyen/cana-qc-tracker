@@ -1188,6 +1188,77 @@ function stripDocsForSheet(documents){
   });
   return out;
 }
+function mergeSharedModulesFromRemote(data){
+  if(!data) return;
+  mergeTrimmingFromRemote(data.trimming);
+  mergeCureFromRemote(data.curingSessions, data.cureLog);
+  if(!localDirty && Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
+  else if(localDirty) mergeCanaStockFromRemote(data.canaStock);
+  if(!localDirty && Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
+  if(!localDirty && Array.isArray(data.exportCompanies) && data.exportCompanies.length){
+    state.exportCompanies = data.exportCompanies.slice();
+  }
+}
+function mergeTrimmingFromRemote(remoteTrimming){
+  if(!Array.isArray(remoteTrimming)) return;
+  const remote = remoteTrimming.map(normalizeTrimRecord);
+  if(!localDirty){
+    state.trimming = remote;
+    return;
+  }
+  const local = (state.trimming || []).map(normalizeTrimRecord);
+  const remoteIds = new Set(remote.map(r=> r.id));
+  const pendingLocal = local.filter(r=> !remoteIds.has(r.id));
+  if(!pendingLocal.length){
+    state.trimming = remote;
+    return;
+  }
+  const localById = Object.fromEntries(local.map(r=> [r.id, r]));
+  const merged = remote.map(r=> localById[r.id] || r);
+  pendingLocal.forEach(r=> merged.push(r));
+  state.trimming = merged;
+}
+function mergeCureFromRemote(remoteSessions, remoteLog){
+  if(!localDirty){
+    if(Array.isArray(remoteSessions)) state.curingSessions = remoteSessions.slice();
+    if(Array.isArray(remoteLog)) state.cureLog = remoteLog.slice().map(normalizeCureLogEntry);
+    return;
+  }
+  if(Array.isArray(remoteSessions)){
+    const remote = remoteSessions.slice();
+    const remoteIds = new Set(remote.map(s=> s.id));
+    const pending = (state.curingSessions || []).filter(s=> !remoteIds.has(s.id));
+    const localById = Object.fromEntries((state.curingSessions || []).map(s=> [s.id, s]));
+    state.curingSessions = remote.map(s=> localById[s.id] || s).concat(pending);
+  }
+  if(Array.isArray(remoteLog)){
+    const remote = remoteLog.map(normalizeCureLogEntry);
+    const remoteIds = new Set(remote.map(l=> l.id));
+    const pending = (state.cureLog || []).map(normalizeCureLogEntry).filter(l=> !remoteIds.has(l.id));
+    const localById = Object.fromEntries((state.cureLog || []).map(l=> [l.id, l]));
+    state.cureLog = remote.map(l=> localById[l.id] || l).concat(pending);
+  }
+}
+function mergeCanaStockFromRemote(remoteStock){
+  if(!Array.isArray(remoteStock)) return;
+  const remote = remoteStock.slice();
+  if(!localDirty){
+    state.canaStock = remote;
+    return;
+  }
+  const remoteIds = new Set(remote.map(s=> s.id));
+  const pending = (state.canaStock || []).filter(s=> !remoteIds.has(s.id));
+  const localById = Object.fromEntries((state.canaStock || []).map(s=> [s.id, s]));
+  state.canaStock = remote.map(s=> localById[s.id] || s).concat(pending);
+}
+function sharedModulesFingerprint(){
+  return JSON.stringify({
+    trimming: state.trimming || [],
+    curingSessions: state.curingSessions || [],
+    cureLog: state.cureLog || [],
+    canaStock: state.canaStock || []
+  });
+}
 function mergeDocumentsFromRemote(remoteDocs){
   if(!remoteDocs) return;
   getFarmList().forEach(f=>{
@@ -1320,7 +1391,7 @@ async function pullFromGoogleSheet(silent){
   if(!appsScriptUrl) return;
   const modalOpen = document.getElementById('modalRoot').innerHTML.trim() !== '';
   if(modalOpen || modalDirty) return;
-  if(localDirty || sheetSaveInFlight) return;
+  if(sheetSaveInFlight) return;
   try{
     const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
     const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
@@ -1346,25 +1417,22 @@ async function pullFromGoogleSheet(silent){
       exportCompanies: data.exportCompanies || []
     });
     const docsBefore = JSON.stringify(stripDocsForSheet(state.documents));
+    const sharedBefore = sharedModulesFingerprint();
     const remoteChanged = fp !== lastRemoteJson;
-    if(remoteChanged){
+    if(!localDirty && remoteChanged){
       state.farms = data.farms;
       if(data.farmList && data.farmList.length) state.farmList = data.farmList;
       if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
       if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
       if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
-      if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
-      if(Array.isArray(data.curingSessions)) state.curingSessions = data.curingSessions.slice();
-      if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice().map(normalizeCureLogEntry);
-      if(Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
-      if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
-      if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
     }
+    mergeSharedModulesFromRemote(data);
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
     const docsChanged = docsBefore !== JSON.stringify(stripDocsForSheet(state.documents));
-    if(!remoteChanged && !docsChanged) return;
-    if(remoteChanged) lastRemoteJson = fp;
+    const sharedChanged = sharedBefore !== sharedModulesFingerprint();
+    if(!remoteChanged && !docsChanged && !sharedChanged) return;
+    if(!localDirty && remoteChanged) lastRemoteJson = fp;
     saveLocal();
     render();
     lastSyncTime = new Date().toLocaleTimeString();
@@ -1771,7 +1839,13 @@ function buildStateForStorage(){
     farms: state.farms,
     documents,
     farmList: getFarmList(),
-    farmCodes: state.farmCodes || {}
+    farmCodes: state.farmCodes || {},
+    trimming: state.trimming || [],
+    curingSessions: state.curingSessions || [],
+    cureLog: state.cureLog || [],
+    canaStock: state.canaStock || [],
+    exportLog: state.exportLog || [],
+    exportCompanies: state.exportCompanies || []
   };
 }
 function saveLocal(){
@@ -4790,7 +4864,8 @@ async function testSheetConnection(){
 
 /* ============ INIT ============ */
 async function init(){
-  state = loadLocal() || defaultState();
+  const saved = loadLocal();
+  state = saved ? {...defaultState(), ...saved} : defaultState();
   ensureStateShape();
   migrateLegacyAdminSession();
   await hydrateDocumentsFromIdb();
