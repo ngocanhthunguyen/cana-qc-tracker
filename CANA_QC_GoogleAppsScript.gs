@@ -994,7 +994,7 @@ function getCellUrl(range) {
 }
 
 function parseDocRow(row, urlOverride) {
-  if (!row[0] && !row[1]) return null;
+  if (!row[0] && !row[1] && !row[3] && !row[4]) return null;
   var urlVal = urlOverride != null ? String(urlOverride) : String(row[4] || '');
   if (urlVal.indexOf('HYPERLINK') >= 0) {
     var m = urlVal.match(/HYPERLINK\s*\(\s*"([^"]+)"/i);
@@ -1104,6 +1104,22 @@ function formatDocumentsSheet(sheet, numRows) {
   sheet.getRange(DOC_DATA_START, 10, numRows, 1).setNumberFormat('#,##0');
 }
 
+/** Run once if deleted docs reappear — syncs farm tab doc tables from Documents tab */
+function repairDocumentSync() {
+  var ss = getSpreadsheet();
+  var farmList = getFarmList(ss);
+  var docs = readDocuments(ss, farmList);
+  writeDocuments(ss, docs, farmList);
+  farmList.forEach(function(farm) {
+    var sheet = ss.getSheetByName(farm);
+    if (!sheet) return;
+    writeFarmSheet(sheet, readFarmSheet(sheet), docs[farm] || []);
+  });
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Document tables repaired from Documents tab.');
+}
+
 /** Run once — adds document tables beside QC on every farm tab */
 function upgradeFarmDocumentTables() {
   var ss = getSpreadsheet();
@@ -1134,24 +1150,17 @@ function countDocuments(documents, farmList) {
   return n;
 }
 
-function readDocuments(ss, farmList) {
-  farmList = farmList || getFarmList(ss);
-  var documents = {};
-  var fromFarmTabs = false;
-  farmList.forEach(function(f) { documents[f] = []; });
-  farmList.forEach(function(farm) {
-    var sheet = ss.getSheetByName(farm);
-    if (hasFarmDocSection(sheet)) {
-      documents[farm] = readFarmDocuments(sheet);
-      fromFarmTabs = true;
-    }
-  });
-  if (fromFarmTabs) return documents;
+function hasDocumentsTab(sheet) {
+  if (!sheet) return false;
+  return String(sheet.getRange(DOC_HEADER_ROW, 2).getValue() || '') === 'Farm';
+}
 
-  // Fallback — read from consolidated Documents tab
-  var sheet = ss.getSheetByName('Documents');
+function readDocumentsFromTab(sheet, farmList) {
+  var documents = {};
+  farmList.forEach(function(f) { documents[f] = []; });
   if (!sheet || sheet.getLastRow() < DOC_DATA_START) return documents;
   var numRows = sheet.getLastRow() - DOC_HEADER_ROW;
+  if (numRows < 1) return documents;
   var values = sheet.getRange(DOC_DATA_START, 1, numRows, DOC_NUM_COLS).getValues();
   for (var i = 0; i < numRows; i++) {
     var row = values[i];
@@ -1160,7 +1169,7 @@ function readDocuments(ss, farmList) {
     if (farmList.indexOf(farm) === -1) continue;
     var rowNum = DOC_DATA_START + i;
     var urlVal = getCellUrl(sheet.getRange(rowNum, 6));
-    documents[farm].push({
+    var doc = {
       id: String(row[0] || newId()),
       title: String(row[2] || ''),
       category: String(row[3] || ''),
@@ -1174,15 +1183,46 @@ function readDocuments(ss, farmList) {
       size: row[9] === '' || row[9] === null ? 0 : Number(row[9]) || 0,
       mimeType: String(row[10] || ''),
       hasLocalFile: String(row[11] || '').toLowerCase() === 'yes'
-    });
+    };
+    documents[farm].push(doc);
   }
   return documents;
 }
 
+function readDocumentsFromFarmTabs(ss, farmList) {
+  var documents = {};
+  farmList.forEach(function(f) { documents[f] = []; });
+  farmList.forEach(function(farm) {
+    var sheet = ss.getSheetByName(farm);
+    if (hasFarmDocSection(sheet)) {
+      documents[farm] = readFarmDocuments(sheet);
+    }
+  });
+  return documents;
+}
+
+function readDocuments(ss, farmList) {
+  farmList = farmList || getFarmList(ss);
+  var docsSheet = ss.getSheetByName('Documents');
+  // Documents tab is source of truth once it exists (avoids stale copies on farm tabs)
+  if (hasDocumentsTab(docsSheet)) {
+    return readDocumentsFromTab(docsSheet, farmList);
+  }
+  return readDocumentsFromFarmTabs(ss, farmList);
+}
+
+function ensureDocumentsTab(ss) {
+  var sheet = ss.getSheetByName('Documents');
+  if (!sheet || !hasDocumentsTab(sheet)) {
+    setupDocumentsTab(ss);
+    sheet = ss.getSheetByName('Documents');
+  }
+  return sheet;
+}
+
 function writeDocuments(ss, documents, farmList) {
   farmList = farmList || getFarmList(ss);
-  setupDocumentsTab(ss);
-  var sheet = ss.getSheetByName('Documents');
+  var sheet = ensureDocumentsTab(ss);
   var rows = [];
   farmList.forEach(function(farm) {
     var list = (documents && documents[farm]) ? documents[farm] : [];
@@ -1203,8 +1243,9 @@ function writeDocuments(ss, documents, farmList) {
       ]);
     });
   });
-  if (sheet.getLastRow() >= DOC_DATA_START) {
-    sheet.getRange(DOC_DATA_START, 1, sheet.getLastRow() - DOC_HEADER_ROW, DOC_NUM_COLS).clearContent();
+  var clearRows = Math.max(sheet.getLastRow() - DOC_HEADER_ROW, rows.length, 50);
+  if (clearRows > 0) {
+    sheet.getRange(DOC_DATA_START, 1, clearRows, DOC_NUM_COLS).clearContent();
   }
   if (rows.length) {
     sheet.getRange(DOC_DATA_START, 1, rows.length, DOC_NUM_COLS).setValues(rows);

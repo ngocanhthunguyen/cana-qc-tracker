@@ -1193,6 +1193,20 @@ function mergeDocumentsFromRemote(remoteDocs){
   getFarmList().forEach(f=>{
     const local = state.documents[f] || [];
     const remote = remoteDocs[f] || [];
+    if(localDirty){
+      // Pending local edits (incl. deletes) win until sheet push succeeds
+      const remoteById = Object.fromEntries(remote.map(d=>[d.id, d]));
+      state.documents[f] = local.map(ld=>{
+        const rd = remoteById[ld.id];
+        if(!rd) return ld;
+        let doc = {...rd};
+        if(!isValidExternalUrl(doc.url) && isValidExternalUrl(ld.url)) doc.url = ld.url;
+        else if(!isValidExternalUrl(doc.url)) doc.url = '';
+        if(ld.data || ld._fileInIdb) doc = {...doc, _fileInIdb: true, data: ld.data || ''};
+        return doc;
+      });
+      return;
+    }
     const localById = Object.fromEntries(local.map(d=>[d.id, d]));
     const merged = remote.map(rd=>{
       const localDoc = localById[rd.id];
@@ -4281,10 +4295,16 @@ function deleteDocument(id){
     onDataChanged();
     if(appsScriptUrl){
       clearTimeout(sheetSaveTimer);
-      pushToGoogleSheet(true);
+      try{
+        await pushToGoogleSheet(true);
+        showDocToast('Document deleted · synced to sheet');
+      }catch(e){
+        showDocToast('Deleted in app — sheet sync failed, will retry on Save');
+      }
+    } else {
+      showDocToast('Document deleted');
     }
     renderFarmDocuments();
-    showDocToast('Document deleted');
   })();
 }
 
