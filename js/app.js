@@ -1207,8 +1207,13 @@ function mergeDocumentsFromRemote(remoteDocs){
       });
       return;
     }
+    // Sheet is source of truth — drop local-only rows (fixes deleted docs jumping back)
     const localById = Object.fromEntries(local.map(d=>[d.id, d]));
-    const merged = remote.map(rd=>{
+    const remoteIds = new Set(remote.map(d=>d.id));
+    local.forEach(ld=>{
+      if(!remoteIds.has(ld.id)) idbDeleteDocData(ld.id);
+    });
+    state.documents[f] = remote.map(rd=>{
       const localDoc = localById[rd.id];
       let doc = {...rd};
       if(!isValidExternalUrl(doc.url) && localDoc && isValidExternalUrl(localDoc.url)){
@@ -1221,11 +1226,6 @@ function mergeDocumentsFromRemote(remoteDocs){
       }
       return doc;
     });
-    const remoteIds = new Set(remote.map(d=>d.id));
-    local.forEach(ld=>{
-      if(!remoteIds.has(ld.id)) merged.push(ld);
-    });
-    state.documents[f] = merged;
   });
 }
 
@@ -1345,21 +1345,26 @@ async function pullFromGoogleSheet(silent){
       exportLog: data.exportLog || [],
       exportCompanies: data.exportCompanies || []
     });
-    if(fp === lastRemoteJson) return;
-    state.farms = data.farms;
-    if(data.farmList && data.farmList.length) state.farmList = data.farmList;
-    if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
-    if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
-    if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
-    if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
-    if(Array.isArray(data.curingSessions)) state.curingSessions = data.curingSessions.slice();
-    if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice().map(normalizeCureLogEntry);
-    if(Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
-    if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
-    if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
+    const docsBefore = JSON.stringify(stripDocsForSheet(state.documents));
+    const remoteChanged = fp !== lastRemoteJson;
+    if(remoteChanged){
+      state.farms = data.farms;
+      if(data.farmList && data.farmList.length) state.farmList = data.farmList;
+      if(data.farmCodes) state.farmCodes = {...(state.farmCodes||{}), ...data.farmCodes};
+      if(data.farmDriveFolders) state.farmDriveFolders = {...(state.farmDriveFolders||{}), ...data.farmDriveFolders};
+      if(data.driveParentFolderId) state.driveParentFolderId = data.driveParentFolderId;
+      if(Array.isArray(data.trimming)) state.trimming = data.trimming.slice().map(normalizeTrimRecord);
+      if(Array.isArray(data.curingSessions)) state.curingSessions = data.curingSessions.slice();
+      if(Array.isArray(data.cureLog)) state.cureLog = data.cureLog.slice().map(normalizeCureLogEntry);
+      if(Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
+      if(Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
+      if(Array.isArray(data.exportCompanies) && data.exportCompanies.length) state.exportCompanies = data.exportCompanies.slice();
+    }
     mergeDocumentsFromRemote(data.documents);
     ensureStateShape();
-    lastRemoteJson = fp;
+    const docsChanged = docsBefore !== JSON.stringify(stripDocsForSheet(state.documents));
+    if(!remoteChanged && !docsChanged) return;
+    if(remoteChanged) lastRemoteJson = fp;
     saveLocal();
     render();
     lastSyncTime = new Date().toLocaleTimeString();
