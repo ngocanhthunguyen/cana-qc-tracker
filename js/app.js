@@ -1100,20 +1100,25 @@ function renderStockBigPopChart(totalBigs, totalPops){
 }
 function renderCanaStockDashboardPanel(){
   const s = computeCanaStockSummary();
+  const stockBtn = isManager()
+    ? `<button type="button" class="small primary" id="btnDashGoStock">${s.lineCount ? 'Open stock →' : '+ Add stock'}</button>`
+    : `<span class="dash-view-badge">View only / ดูอย่างเดียว</span>`;
   const head = `
     <div class="dash-stock-head">
       <div>
         <h3>📦 Cana Stock — overall on hand</h3>
         <p class="sub">Current company flower inventory · not filtered by QC month above · ${s.activeCures} active cure${s.activeCures === 1 ? '' : 's'}<br><span class="bi">สต็อกดอก Cana รวม · ภาพรวมทั้งหมด</span></p>
       </div>
-      <button type="button" class="small primary" id="btnDashGoStock">${s.lineCount ? 'Open stock →' : '+ Add stock'}</button>
+      ${stockBtn}
     </div>`;
   if(!s.lineCount){
-    return `<div class="panel dash-stock-panel admin-only">${head}
-      <div class="empty-state" style="padding:20px;margin:0;">No Cana stock lines yet. Add inventory under <b>Cana Stock</b>.</div>
+    return `<div class="panel dash-stock-panel">${head}
+      <div class="empty-state" style="padding:20px;margin:0;">${isManager()
+        ? 'No Cana stock lines yet. Add inventory under <b>Cana Stock</b>.'
+        : 'No Cana stock logged yet. <span class="bi">ยังไม่มีสต็อก — ติดต่อผู้จัดการเพื่อเพิ่มข้อมูล</span>'}</div>
     </div>`;
   }
-  return `<div class="panel dash-stock-panel admin-only">${head}
+  return `<div class="panel dash-stock-panel">${head}
     <div class="kpi-row dash-stock-kpis">
       <div class="kpi"><div class="v">${fmtWeight(s.onHandG)}</div><div class="l">On hand (excl. shipped)</div></div>
       <div class="kpi"><div class="v">${fmtWeight(s.totalG)}</div><div class="l">Total logged</div></div>
@@ -4974,6 +4979,7 @@ function renderDashboard(){
     </div>
 
     ${dashSubTab === 'overview' || !isManager() ? `
+    ${isStaff() ? '<p class="staff-hint dash-readonly-hint">📊 <b>Dashboard is view-only</b> for staff — charts and totals only. Use farm tabs to enter QC and trimming.<br><span class="bi">ดูภาพรวมได้อย่างเดียว · บันทึกข้อมูลที่แท็บฟาร์ม / Trimming</span></p>' : ''}
     <div class="kpi-row">
       <div class="kpi"><div class="v">${summary.total.batches}</div><div class="l">Total Batches</div></div>
       <div class="kpi"><div class="v">${fmtNum(summary.total.totalFlower)} g</div><div class="l">Total Flower</div></div>
@@ -4994,7 +5000,7 @@ function renderDashboard(){
       <h3 style="margin:0 0 12px;font-size:14px;">By Farm — ${esc(dashMonth)}</h3>
       <div class="table-wrap"><table>
         <thead><tr><th>Farm</th><th>Batches</th><th>Start (g)</th><th>Flower (g)</th><th>Yield %</th><th>Pass</th><th>Fail</th><th>Cond</th></tr></thead>
-        <tbody>${summary.perFarm.map(r=>`<tr class="clickable" data-farm="${esc(r.farm)}"><td><b>${esc(r.farm)}</b></td><td>${r.batches}</td><td>${fmtNum(r.totalStart)}</td><td>${fmtNum(r.totalFlower)}</td><td>${fmtPct(r.avgYield)}</td><td style="color:var(--pass)">${r.pass}</td><td style="color:var(--fail)">${r.fail}</td><td style="color:var(--cond)">${r.cond}</td></tr>`).join('')}</tbody>
+        <tbody>${summary.perFarm.map(r=>`<tr class="${isStaff() ? '' : 'clickable'}" data-farm="${esc(r.farm)}"><td><b>${esc(r.farm)}</b></td><td>${r.batches}</td><td>${fmtNum(r.totalStart)}</td><td>${fmtNum(r.totalFlower)}</td><td>${fmtPct(r.avgYield)}</td><td style="color:var(--pass)">${r.pass}</td><td style="color:var(--fail)">${r.fail}</td><td style="color:var(--cond)">${r.cond}</td></tr>`).join('')}</tbody>
         <tfoot><tr><td>TOTAL</td><td>${summary.total.batches}</td><td>${fmtNum(summary.total.totalStart)}</td><td>${fmtNum(summary.total.totalFlower)}</td><td>${fmtPct(summary.total.avgYield)}</td><td>${summary.total.pass}</td><td>${summary.total.fail}</td><td>${summary.total.cond}</td></tr></tfoot>
       </table></div>
     </div>` : renderExportBuilderPanel(dashMonth)}
@@ -5013,7 +5019,9 @@ function renderDashboard(){
   const btnDashGoStock = document.getElementById('btnDashGoStock');
   if(btnDashGoStock) btnDashGoStock.onclick = ()=>{ currentView = 'canaStock'; render(); };
   if(dashSubTab === 'exports' && isManager()) bindExportBuilderEvents(main, dashMonth);
-  main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{ row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth); });
+  if(!isStaff()){
+    main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{ row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth); });
+  }
 }
 
 async function loadRemoteConfig(){

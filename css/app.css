@@ -149,6 +149,8 @@
   .dash-stock-head .sub{margin:0;font-size:12px;color:var(--muted);line-height:1.45;}
   .dash-stock-kpis .kpi::before{background:linear-gradient(90deg,#059669,#15803d);}
   .bar-row .fill.stock-fill{background:linear-gradient(90deg,#059669,#10b981);}
+  .dash-readonly-hint{margin:0 0 16px;}
+  .dash-view-badge{display:inline-flex;align-items:center;padding:6px 12px;border-radius:999px;font-size:11px;font-weight:700;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;white-space:nowrap;}
   tfoot td{font-weight:800;background:#eef1f7;border-top:2px solid var(--line);}
   .helpbox{font-size:13px;line-height:1.7;color:var(--ink);}
   .helpbox h3{font-size:13.5px;margin:14px 0 4px;color:var(--blue-700);}
