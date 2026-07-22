@@ -166,6 +166,8 @@ const CURE_ACTION_OPTIONS = [
   'Other / อื่นๆ'
 ];
 const STOCK_STATUS_OPTIONS = ['On hand / คงคลัง', 'In cure / กำลัง cure', 'Reserved / จอง', 'Shipped / ส่งแล้ว'];
+const STOCK_FLOWER_TYPE_OPTIONS = ['Big / ใหญ่', 'Pop / เล็ก', 'Mixed / ผสม'];
+const STOCK_CROP_AGE_OPTIONS = ['New / ใหม่', 'Old / เก่า'];
 
 const CURE_SESSION_COLS = [
   {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
@@ -197,7 +199,11 @@ const CURE_LOG_KEYS = ['sessionId','date','time','room','action','minutes','desc
 const CANA_STOCK_COLS = [
   {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
   {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
-  {key:'qtyG', label:'Qty (g)', labelTh:'น้ำหนัก (กรัม)', type:'number'},
+  {key:'flowerType', label:'Type (Big / Pop)', labelTh:'ประเภท (ใหญ่/เล็ก)', type:'select', options: STOCK_FLOWER_TYPE_OPTIONS},
+  {key:'cropAge', label:'Crop age (New / Old)', labelTh:'เก่า/ใหม่', type:'select', options: STOCK_CROP_AGE_OPTIONS},
+  {key:'bigsG', label:'Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
+  {key:'popsG', label:'Pops (g)', labelTh:'ดอกเล็ก (กรัม)', type:'number'},
+  {key:'qtyG', label:'Total qty (g)', labelTh:'น้ำหนักรวม (กรัม)', type:'number'},
   {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: STOCK_STATUS_OPTIONS},
   {key:'harvestDate', label:'Harvest date', labelTh:'วันเก็บเกี่ยว', type:'date'},
   {key:'trimDate', label:'Trim date', labelTh:'วันทริม', type:'date'},
@@ -206,7 +212,7 @@ const CANA_STOCK_COLS = [
   {key:'updatedAt', label:'Updated', labelTh:'อัปเดต', type:'date'},
   {key:'updatedBy', label:'Updated by', labelTh:'โดย', type:'text'},
 ];
-const CANA_STOCK_KEYS = ['strain','room','qtyG','status','harvestDate','trimDate','linkedTrimId','notes','updatedAt','updatedBy'];
+const CANA_STOCK_KEYS = ['strain','room','flowerType','cropAge','bigsG','popsG','qtyG','status','harvestDate','trimDate','linkedTrimId','notes','updatedAt','updatedBy'];
 
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 

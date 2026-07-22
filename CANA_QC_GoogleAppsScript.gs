@@ -1767,7 +1767,7 @@ var CURE_LOG_HEADERS = ['_id', 'Session ID', 'Date', 'Time', 'Room', 'Action', '
 var CURE_LOG_NUM_COLS = CURE_LOG_HEADERS.length;
 
 var CANA_STOCK_SHEET = 'Cana Stock';
-var CANA_STOCK_HEADERS = ['_id', 'Strain', 'Room', 'Qty (g)', 'Status', 'Harvest Date', 'Trim Date', 'Linked Trim ID', 'Notes', 'Updated At', 'Updated By'];
+var CANA_STOCK_HEADERS = ['_id', 'Strain', 'Room', 'Qty (g)', 'Status', 'Harvest Date', 'Trim Date', 'Linked Trim ID', 'Notes', 'Bigs (g)', 'Pops (g)', 'Flower Type', 'Crop Age', 'Updated At', 'Updated By'];
 var CANA_STOCK_NUM_COLS = CANA_STOCK_HEADERS.length;
 
 var CANA_FLOWER_HEADER_ROW = 3;
@@ -1927,27 +1927,61 @@ function writeCureLog(ss, logs) {
   }
 }
 
+function canaStockColIndex(headerRow, label, legacyIdx) {
+  for (var i = 0; i < headerRow.length; i++) {
+    if (String(headerRow[i] || '').trim() === label) return i;
+  }
+  return legacyIdx;
+}
+
 function readCanaStock(ss) {
   var sheet = ss.getSheetByName(CANA_STOCK_SHEET);
   if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
   var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
   if (numRows < 1) return [];
-  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, CANA_STOCK_NUM_COLS).getValues();
+  var lastCol = Math.max(CANA_STOCK_NUM_COLS, sheet.getLastColumn());
+  var headerRow = sheet.getRange(CANA_FLOWER_HEADER_ROW, 1, 1, lastCol).getValues()[0];
+  var idx = {
+    id: canaStockColIndex(headerRow, '_id', 0),
+    strain: canaStockColIndex(headerRow, 'Strain', 1),
+    room: canaStockColIndex(headerRow, 'Room', 2),
+    qtyG: canaStockColIndex(headerRow, 'Qty (g)', 3),
+    status: canaStockColIndex(headerRow, 'Status', 4),
+    harvestDate: canaStockColIndex(headerRow, 'Harvest Date', 5),
+    trimDate: canaStockColIndex(headerRow, 'Trim Date', 6),
+    linkedTrimId: canaStockColIndex(headerRow, 'Linked Trim ID', 7),
+    notes: canaStockColIndex(headerRow, 'Notes', 8),
+    bigsG: canaStockColIndex(headerRow, 'Bigs (g)', -1),
+    popsG: canaStockColIndex(headerRow, 'Pops (g)', -1),
+    flowerType: canaStockColIndex(headerRow, 'Flower Type', -1),
+    cropAge: canaStockColIndex(headerRow, 'Crop Age', -1),
+    updatedAt: canaStockColIndex(headerRow, 'Updated At', 9),
+    updatedBy: canaStockColIndex(headerRow, 'Updated By', 10)
+  };
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, lastCol).getValues();
   var list = [];
   values.forEach(function(row) {
-    if (!row[1] && !row[3]) return;
+    var strain = idx.strain >= 0 ? String(row[idx.strain] || '') : '';
+    var qtyG = idx.qtyG >= 0 ? cellStr(row[idx.qtyG]) : '';
+    var bigsG = idx.bigsG >= 0 ? cellStr(row[idx.bigsG]) : '';
+    var popsG = idx.popsG >= 0 ? cellStr(row[idx.popsG]) : '';
+    if (!strain && !qtyG && !bigsG && !popsG) return;
     list.push({
-      id: String(row[0] || '') || newId(),
-      strain: String(row[1] || ''),
-      room: String(row[2] || ''),
-      qtyG: cellStr(row[3]),
-      status: String(row[4] || ''),
-      harvestDate: formatSheetDate(row[5]),
-      trimDate: formatSheetDate(row[6]),
-      linkedTrimId: String(row[7] || ''),
-      notes: String(row[8] || ''),
-      updatedAt: formatSheetDate(row[9]),
-      updatedBy: String(row[10] || '')
+      id: String(row[idx.id] || '') || newId(),
+      strain: strain,
+      room: idx.room >= 0 ? String(row[idx.room] || '') : '',
+      qtyG: qtyG,
+      status: idx.status >= 0 ? String(row[idx.status] || '') : '',
+      harvestDate: idx.harvestDate >= 0 ? formatSheetDate(row[idx.harvestDate]) : '',
+      trimDate: idx.trimDate >= 0 ? formatSheetDate(row[idx.trimDate]) : '',
+      linkedTrimId: idx.linkedTrimId >= 0 ? String(row[idx.linkedTrimId] || '') : '',
+      notes: idx.notes >= 0 ? String(row[idx.notes] || '') : '',
+      bigsG: bigsG,
+      popsG: popsG,
+      flowerType: idx.flowerType >= 0 ? String(row[idx.flowerType] || '') : '',
+      cropAge: idx.cropAge >= 0 ? String(row[idx.cropAge] || '') : '',
+      updatedAt: idx.updatedAt >= 0 ? formatSheetDate(row[idx.updatedAt]) : '',
+      updatedBy: idx.updatedBy >= 0 ? String(row[idx.updatedBy] || '') : ''
     });
   });
   return list;
@@ -1969,6 +2003,10 @@ function writeCanaStock(ss, stock) {
       s.trimDate || '',
       s.linkedTrimId || '',
       s.notes || '',
+      s.bigsG || '',
+      s.popsG || '',
+      s.flowerType || '',
+      s.cropAge || '',
       s.updatedAt || '',
       s.updatedBy || ''
     ];
@@ -1984,6 +2022,7 @@ function writeCanaStock(ss, stock) {
         .setFontSize(10).setWrap(true);
     }
     sheet.getRange(CANA_FLOWER_DATA_START, 4, rows.length, 1).setNumberFormat('#,##0.##');
+    sheet.getRange(CANA_FLOWER_DATA_START, 10, rows.length, 2).setNumberFormat('#,##0.##');
   }
 }
 

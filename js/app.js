@@ -1054,6 +1054,83 @@ function renderPassFailChart(total){
     <span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:var(--fail);vertical-align:-1px;"></i>Fail ${fail}</span>
   </div>`;
 }
+function renderStockWeightChart(map, emptyMsg){
+  const rows = Object.entries(map || {}).filter(([, g])=> g > 0).sort((a, b)=> b[1] - a[1]).slice(0, 8);
+  if(!rows.length) return `<div style="color:var(--muted);font-size:12px;">${esc(emptyMsg)}</div>`;
+  const max = Math.max(...rows.map(([, g])=> g), 1);
+  return '<div class="bar-chart">' + rows.map(([label, g])=>{
+    const pct = Math.round(g / max * 100);
+    const short = String(label).split(' / ')[0];
+    return `<div class="bar-row"><span class="lbl" title="${esc(label)}">${esc(short)}</span><div class="track"><div class="fill stock-fill" style="width:${pct}%"></div></div><span class="val">${fmtWeight(g)}</span></div>`;
+  }).join('') + '</div>';
+}
+function renderStockStatusChart(byStatus){
+  const colors = {
+    'On hand / คงคลัง': '#16a34a',
+    'In cure / กำลัง cure': '#7c3aed',
+    'Reserved / จอง': '#d97706',
+    'Shipped / ส่งแล้ว': '#94a3b8'
+  };
+  const entries = Object.entries(byStatus || {}).filter(([, g])=> g > 0);
+  const sum = entries.reduce((n, [, g])=> n + g, 0);
+  if(!sum) return '<div style="color:var(--muted);font-size:12px;">No stock logged yet.</div>';
+  return `<div class="stacked-bar">${entries.map(([label, g])=>{
+    const w = (g / sum * 100).toFixed(1);
+    const bg = colors[label] || '#64748b';
+    return `<div class="seg" style="width:${w}%;background:${bg}" title="${esc(label.split(' / ')[0])}: ${fmtWeight(g)}"></div>`;
+  }).join('')}</div>
+  <div class="stacked-legend">${entries.map(([label, g])=>{
+    const bg = colors[label] || '#64748b';
+    return `<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:${bg};vertical-align:-1px;"></i>${esc(label.split(' / ')[0])} ${fmtWeight(g)}</span>`;
+  }).join('')}</div>`;
+}
+function renderStockBigPopChart(totalBigs, totalPops){
+  const sum = totalBigs + totalPops;
+  if(!sum) return '<div style="color:var(--muted);font-size:12px;">No big/pop weights recorded yet.</div>';
+  const bW = (totalBigs / sum * 100).toFixed(1);
+  const pW = (totalPops / sum * 100).toFixed(1);
+  return `<div class="stacked-bar">
+    ${totalBigs ? `<div class="seg" style="width:${bW}%;background:#15803d" title="Bigs: ${fmtWeight(totalBigs)}"></div>` : ''}
+    ${totalPops ? `<div class="seg" style="width:${pW}%;background:#0369a1" title="Pops: ${fmtWeight(totalPops)}"></div>` : ''}
+  </div>
+  <div class="stacked-legend">
+    ${totalBigs ? `<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:#15803d;vertical-align:-1px;"></i>Big ${fmtWeight(totalBigs)}</span>` : ''}
+    ${totalPops ? `<span><i style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;background:#0369a1;vertical-align:-1px;"></i>Pop ${fmtWeight(totalPops)}</span>` : ''}
+  </div>`;
+}
+function renderCanaStockDashboardPanel(){
+  const s = computeCanaStockSummary();
+  const head = `
+    <div class="dash-stock-head">
+      <div>
+        <h3>📦 Cana Stock — overall on hand</h3>
+        <p class="sub">Current company flower inventory · not filtered by QC month above · ${s.activeCures} active cure${s.activeCures === 1 ? '' : 's'}<br><span class="bi">สต็อกดอก Cana รวม · ภาพรวมทั้งหมด</span></p>
+      </div>
+      <button type="button" class="small primary" id="btnDashGoStock">${s.lineCount ? 'Open stock →' : '+ Add stock'}</button>
+    </div>`;
+  if(!s.lineCount){
+    return `<div class="panel dash-stock-panel admin-only">${head}
+      <div class="empty-state" style="padding:20px;margin:0;">No Cana stock lines yet. Add inventory under <b>Cana Stock</b>.</div>
+    </div>`;
+  }
+  return `<div class="panel dash-stock-panel admin-only">${head}
+    <div class="kpi-row dash-stock-kpis">
+      <div class="kpi"><div class="v">${fmtWeight(s.onHandG)}</div><div class="l">On hand (excl. shipped)</div></div>
+      <div class="kpi"><div class="v">${fmtWeight(s.totalG)}</div><div class="l">Total logged</div></div>
+      <div class="kpi"><div class="v">${s.lineCount}</div><div class="l">Stock lines</div></div>
+      <div class="kpi"><div class="v">${fmtWeight(s.totalBigs)}</div><div class="l">Bigs total</div></div>
+      <div class="kpi"><div class="v">${fmtWeight(s.totalPops)}</div><div class="l">Pops total</div></div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-box"><h3>By status</h3>${renderStockStatusChart(s.byStatus)}</div>
+      <div class="chart-box"><h3>Big vs Pop weight</h3>${renderStockBigPopChart(s.totalBigs, s.totalPops)}</div>
+    </div>
+    <div class="chart-row">
+      <div class="chart-box"><h3>Top strains by weight</h3>${renderStockWeightChart(s.byStrain, 'No strain breakdown yet.')}</div>
+      <div class="chart-box"><h3>New vs Old crop</h3>${renderStockWeightChart(s.byAge, 'No crop age recorded yet.')}</div>
+    </div>
+  </div>`;
+}
 function goToFarmMonth(farm, month){
   currentView = 'farm';
   currentFarmTab = 'qc';
@@ -1192,8 +1269,7 @@ function mergeSharedModulesFromRemote(data){
   if(!data) return;
   mergeTrimmingFromRemote(data.trimming);
   mergeCureFromRemote(data.curingSessions, data.cureLog);
-  if(!localDirty && Array.isArray(data.canaStock)) state.canaStock = data.canaStock.slice();
-  else if(localDirty) mergeCanaStockFromRemote(data.canaStock);
+  mergeCanaStockFromRemote(data.canaStock);
   if(!localDirty && Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
   if(!localDirty && Array.isArray(data.exportCompanies) && data.exportCompanies.length){
     state.exportCompanies = data.exportCompanies.slice();
@@ -1242,14 +1318,63 @@ function mergeCureFromRemote(remoteSessions, remoteLog){
 function mergeCanaStockFromRemote(remoteStock){
   if(!Array.isArray(remoteStock)) return;
   const remote = remoteStock.slice();
+  const local = state.canaStock || [];
   if(!localDirty){
+    // Sheet tab missing or not synced yet — don't wipe local rows on poll
+    if(!remote.length && local.length){
+      localDirty = true;
+      debouncedPushToSheet();
+      return;
+    }
     state.canaStock = remote;
     return;
   }
   const remoteIds = new Set(remote.map(s=> s.id));
-  const pending = (state.canaStock || []).filter(s=> !remoteIds.has(s.id));
-  const localById = Object.fromEntries((state.canaStock || []).map(s=> [s.id, s]));
+  const pending = local.filter(s=> !remoteIds.has(s.id));
+  const localById = Object.fromEntries(local.map(s=> [s.id, s]));
   state.canaStock = remote.map(s=> localById[s.id] || s).concat(pending);
+}
+function stockLineTotalG(line){
+  const bigs = num(line && line.bigsG), pops = num(line && line.popsG);
+  if(bigs !== null || pops !== null) return (bigs || 0) + (pops || 0);
+  return num(line && line.qtyG);
+}
+function finalizeCanaStockLine(line){
+  const out = {...line};
+  const total = stockLineTotalG(out);
+  if(total !== null) out.qtyG = String(total);
+  if(!out.updatedAt) out.updatedAt = todayISO();
+  if(!out.updatedBy){
+    out.updatedBy = isManager() ? 'Manager' : (isStaff() ? 'Staff' : '');
+  }
+  return out;
+}
+function isStockOnHandStatus(status){
+  return String(status || '').indexOf('Shipped') < 0;
+}
+function computeCanaStockSummary(){
+  const lines = state.canaStock || [];
+  let totalG = 0, onHandG = 0, totalBigs = 0, totalPops = 0;
+  const byStatus = {}, byType = {}, byAge = {}, byStrain = {};
+  lines.forEach(s=>{
+    const g = stockLineTotalG(s);
+    if(g === null && !s.strain && !s.room) return;
+    const grams = g || 0;
+    totalG += grams;
+    if(isStockOnHandStatus(s.status)) onHandG += grams;
+    totalBigs += num(s.bigsG) || 0;
+    totalPops += num(s.popsG) || 0;
+    const st = s.status || STOCK_STATUS_OPTIONS[0];
+    byStatus[st] = (byStatus[st] || 0) + grams;
+    const typeKey = s.flowerType || 'Not set / ไม่ระบุ';
+    byType[typeKey] = (byType[typeKey] || 0) + grams;
+    const ageKey = s.cropAge || 'Not set / ไม่ระบุ';
+    byAge[ageKey] = (byAge[ageKey] || 0) + grams;
+    const strain = (s.strain || '').trim() || '(no strain)';
+    byStrain[strain] = (byStrain[strain] || 0) + grams;
+  });
+  const activeCures = (state.curingSessions || []).filter(s=> (s.status || '').indexOf('In progress') >= 0).length;
+  return { lineCount: lines.length, totalG, onHandG, totalBigs, totalPops, byStatus, byType, byAge, byStrain, activeCures };
 }
 function sharedModulesFingerprint(){
   return JSON.stringify({
@@ -3583,7 +3708,7 @@ function getFilteredCanaStock(){
   return (state.canaStock||[]).filter(s=>{
     if(stockStatusFilter && s.status !== stockStatusFilter) return false;
     if(!q) return true;
-    const hay = [s.strain, s.room, s.notes, s.status, s.linkedTrimId].join(' ').toLowerCase();
+    const hay = [s.strain, s.room, s.notes, s.status, s.linkedTrimId, s.flowerType, s.cropAge, s.bigsG, s.popsG].join(' ').toLowerCase();
     return hay.includes(q);
   }).slice().sort((a,b)=>(b.updatedAt||b.trimDate||'').localeCompare(a.updatedAt||a.trimDate||''));
 }
@@ -3723,13 +3848,19 @@ function renderCanaStockTable(rows){
   }
   let totalG = 0;
   const body = rows.map(s=>{
-    const g = num(s.qtyG);
+    const g = stockLineTotalG(s);
     if(g !== null) totalG += g;
     const sc = stockStatusClass(s.status);
+    const typeShort = (s.flowerType || '—').split(' / ')[0];
+    const ageShort = (s.cropAge || '—').split(' / ')[0];
     return `<tr>
       <td><b>${esc(s.strain||'—')}</b></td>
       <td>${esc(s.room||'—')}</td>
-      <td><b>${fmtWeight(s.qtyG)}</b></td>
+      <td>${esc(typeShort)}</td>
+      <td>${esc(ageShort)}</td>
+      <td>${fmtWeight(s.bigsG)}</td>
+      <td>${fmtWeight(s.popsG)}</td>
+      <td><b>${fmtWeight(g)}</b></td>
       <td><span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span></td>
       <td>${esc(s.harvestDate||'—')}</td>
       <td>${esc(s.trimDate||'—')}</td>
@@ -3741,8 +3872,8 @@ function renderCanaStockTable(rows){
     </tr>`;
   }).join('');
   return `<div class="cana-stock-summary"><span class="doc-badge">${rows.length} line${rows.length===1?'':'s'}</span><span class="doc-badge"><b>${fmtWeight(totalG)}</b> on list</span></div>
-  <div class="table-wrap desktop-table"><table class="compact-table cana-table">
-    <thead><tr><th>Strain</th><th>Room</th><th>Qty</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
+  <div class="table-wrap desktop-table"><table class="compact-table cana-table cana-stock-table">
+    <thead><tr><th>Strain</th><th>Room</th><th>Type</th><th>Age</th><th>Bigs</th><th>Pops</th><th>Total</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
 }
@@ -3988,7 +4119,7 @@ function renderCanaStockView(){
     <div class="cana-header">
       <div>
         <h2>📦 Cana Stock — flower on hand</h2>
-        <p class="sub">Cana flower inventory only · strain, room, qty, status · Syncs to <b>Cana Stock</b> sheet<br><span class="bi">สต็อกดอก Cana ในบริษัท · ไม่รวมฟาร์ม QC</span></p>
+        <p class="sub">Cana flower inventory · strain, room, big/pop type, new/old crop, qty · Syncs to <b>Cana Stock</b> sheet<br><span class="bi">สต็อกดอก Cana · ใหญ่/เล็ก · เก่า/ใหม่</span></p>
       </div>
     </div>
     <div class="row-actions cana-toolbar">
@@ -4023,8 +4154,8 @@ function bindCanaStockActions(root){
 function openCanaStockModal(id, prefill){
   if(!requireLogin()) return;
   const rec = id ? {...(state.canaStock||[]).find(s=> s.id === id)} : {
-    id: uid(), strain:'', room:'', qtyG:'', status: STOCK_STATUS_OPTIONS[0],
-    harvestDate:'', trimDate:'', linkedTrimId:'', notes:'',
+    id: uid(), strain:'', room:'', flowerType:'', cropAge:'', bigsG:'', popsG:'', qtyG:'',
+    status: STOCK_STATUS_OPTIONS[0], harvestDate:'', trimDate:'', linkedTrimId:'', notes:'',
     updatedAt: todayISO(), updatedBy:''
   };
   if(prefill) Object.assign(rec, prefill);
@@ -4054,7 +4185,7 @@ function openCanaStockModal(id, prefill){
     e.preventDefault();
     const updated = {...rec};
     CANA_STOCK_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
-    if(!updated.updatedAt) updated.updatedAt = todayISO();
+    Object.assign(updated, finalizeCanaStockLine(updated));
     if(!state.canaStock) state.canaStock = [];
     if(isNew) state.canaStock.push(updated);
     else {
@@ -4063,6 +4194,7 @@ function openCanaStockModal(id, prefill){
     }
     modalDirty = false;
     onDataChanged();
+    if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
     closeModal();
     renderCanaStockView();
     showDocToast('Stock line saved');
@@ -4105,10 +4237,20 @@ function openCanaStockFromTrimModal(){
     close();
     if(!t) return;
     const c = computeTrimRow(t);
+    const bigs = t.outputBigsG || '';
+    const pops = t.outputPopsG || '';
+    let flowerType = '';
+    if(bigs && pops) flowerType = STOCK_FLOWER_TYPE_OPTIONS[2];
+    else if(bigs) flowerType = STOCK_FLOWER_TYPE_OPTIONS[0];
+    else if(pops) flowerType = STOCK_FLOWER_TYPE_OPTIONS[1];
     openCanaStockModal(null, {
       strain: t.strain || '',
       room: t.room || '',
+      bigsG: bigs,
+      popsG: pops,
       qtyG: c.totalFlower !== null ? String(c.totalFlower) : (t.finishedFlowerG || ''),
+      flowerType,
+      cropAge: STOCK_CROP_AGE_OPTIONS[0],
       harvestDate: t.harvestDate || '',
       trimDate: t.date || '',
       linkedTrimId: t.id,
@@ -4847,6 +4989,7 @@ function renderDashboard(){
     <div class="panel" style="margin-bottom:16px;">
       <div class="chart-box" style="border:none;box-shadow:none;padding:0;"><h3>Total Mold by Farm (g)</h3>${renderMoldChart(summary.perFarm)}</div>
     </div>
+    ${renderCanaStockDashboardPanel()}
     <div class="panel">
       <h3 style="margin:0 0 12px;font-size:14px;">By Farm — ${esc(dashMonth)}</h3>
       <div class="table-wrap"><table>
@@ -4867,6 +5010,8 @@ function renderDashboard(){
   const btnExportMonth = document.getElementById('btnExportMonth');
   if(btnExportMonth) btnExportMonth.onclick = ()=> exportMonthExcel(dashMonth);
   document.getElementById('btnViewAllFarms').onclick = ()=>{ currentView='allFarms'; farmMonthFilter=dashMonth; render(); };
+  const btnDashGoStock = document.getElementById('btnDashGoStock');
+  if(btnDashGoStock) btnDashGoStock.onclick = ()=>{ currentView = 'canaStock'; render(); };
   if(dashSubTab === 'exports' && isManager()) bindExportBuilderEvents(main, dashMonth);
   main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{ row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth); });
 }
