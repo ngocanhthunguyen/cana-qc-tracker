@@ -47,6 +47,7 @@ let lastSyncTime = '';
 let sheetSyncActive = false;
 let sheetSyncOk = false;
 let farmNavOpen = false;
+let loginUsers = [];
 
 /* ============ COMPUTE ============ */
 function num(v){
@@ -619,7 +620,7 @@ function migrateLegacyAdminSession(){
     const raw = sessionStorage.getItem(ADMIN_SESSION_KEY);
     if(!raw || getAuthSession()) return;
     const exp = Number(raw);
-    if(exp && Date.now() < exp) setAuthSession('manager', exp);
+    if(exp && Date.now() < exp) setAuthSession('manager', exp, '', 'Manager');
     sessionStorage.removeItem(ADMIN_SESSION_KEY);
   }catch(e){}
 }
@@ -638,14 +639,65 @@ function getAuthSession(){
     return null;
   }
 }
-function setAuthSession(role, expMs){
+function setAuthSession(role, expMs, userId, userName){
   const exp = expMs || (Date.now() + AUTH_SESSION_MS);
-  sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ role, exp }));
+  sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({
+    role,
+    userId: userId || '',
+    userName: userName || '',
+    exp
+  }));
   updateAuthUI();
 }
 function clearAuthSession(){
   sessionStorage.removeItem(AUTH_SESSION_KEY);
   updateAuthUI();
+}
+function getCurrentUserName(){
+  const s = getAuthSession();
+  if(s && s.userName) return s.userName;
+  return isManager() ? 'Manager' : 'Staff';
+}
+function getCurrentUserId(){
+  const s = getAuthSession();
+  return s && s.userId ? s.userId : '';
+}
+function applyUserAttribution(obj, fields){
+  const name = getCurrentUserName();
+  if(!name) return obj;
+  fields.forEach(k=>{
+    if(!obj[k] || !String(obj[k]).trim()) obj[k] = name;
+  });
+  return obj;
+}
+async function fetchLoginUsers(force){
+  if(!appsScriptUrl) return loginUsers.slice();
+  if(loginUsers.length && !force) return loginUsers.slice();
+  try{
+    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=listUsers&_=' + Date.now();
+    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+    const data = JSON.parse(await res.text());
+    if(data.ok && Array.isArray(data.users)) loginUsers = data.users;
+  }catch(e){
+    console.warn('listUsers failed', e);
+  }
+  return loginUsers.slice();
+}
+async function logClientActivity(action, detail){
+  if(!appsScriptUrl || !isLoggedIn()) return;
+  const s = getAuthSession();
+  try{
+    await gasPostFetch(appsScriptUrl, JSON.stringify({
+      action: 'logActivity',
+      userId: s.userId || '',
+      userName: s.userName || '',
+      role: s.role || '',
+      activityAction: action,
+      detail: detail || ''
+    }));
+  }catch(e){
+    console.warn('activity log failed', e);
+  }
 }
 function getUserRole(){
   const s = getAuthSession();
@@ -675,8 +727,9 @@ function updateAuthUI(){
   if(rolePill){
     if(loggedIn){
       rolePill.hidden = false;
-      rolePill.textContent = isManager() ? 'Manager' : 'Staff';
-      rolePill.title = isManager() ? 'Full access' : 'QC & trimming only';
+      const name = getCurrentUserName();
+      rolePill.textContent = name + (isManager() ? ' · Manager' : ' · Staff');
+      rolePill.title = isManager() ? 'Manager access' : 'Staff access';
     } else rolePill.hidden = true;
   }
   const btn = document.getElementById('btnAdmin');
@@ -712,33 +765,35 @@ function requireManager(reason, onSuccess){
   openManagerUnlockModal(onSuccess, reason);
   return false;
 }
-async function verifyLoginRemote(role, pin){
+async function verifyLoginRemote(role, pin, userId){
   if(!appsScriptUrl) throw new Error('App not connected to Google Sheet backend yet.');
-  const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?')
+  let url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?')
     + 'action=verifyLogin&role=' + encodeURIComponent(role)
     + '&pin=' + encodeURIComponent(pin) + '&_=' + Date.now();
+  if(userId) url += '&userId=' + encodeURIComponent(userId);
   const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); }
   catch(e){ throw new Error('Could not verify PIN — paste latest CANA_QC_GoogleAppsScript.gs and redeploy.'); }
   if(!data.ok) throw new Error(data.error || 'Incorrect PIN');
-  return data.role || role;
+  return data;
 }
 async function verifyAdminPinRemote(pin){
   return verifyLoginRemote('manager', pin);
 }
 async function checkLoginPinsConfigured(){
-  if(!appsScriptUrl) return { staff: false, manager: false };
+  if(!appsScriptUrl) return { staff: false, manager: false, hasUsers: false };
   try{
     const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=loginStatus&_=' + Date.now();
     const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
     const data = JSON.parse(await res.text());
     return {
-      staff: !!(data.ok && data.hasStaffPin),
-      manager: !!(data.ok && (data.hasManagerPin || data.hasPin))
+      staff: !!(data.ok && (data.hasStaffPin || data.hasUsers)),
+      manager: !!(data.ok && (data.hasManagerPin || data.hasPin)),
+      hasUsers: !!(data.ok && data.hasUsers)
     };
-  }catch(e){ return { staff: false, manager: false }; }
+  }catch(e){ return { staff: false, manager: false, hasUsers: false }; }
 }
 let authGateRole = 'staff';
 let authGateSuccessCallback = null;
@@ -749,9 +804,26 @@ function showAuthGate(onSuccess, reason, preferredRole){
   if(!gate){ openManagerUnlockModal(onSuccess, reason); return; }
   gate.hidden = false;
   document.body.classList.add('auth-locked');
-  setAuthGateRole(authGateRole);
-  const pinInput = gate.querySelector('[name=pin]');
-  if(pinInput){ pinInput.value = ''; pinInput.focus(); }
+  fetchLoginUsers(true).then(()=>{
+    setAuthGateRole(authGateRole);
+    const pinInput = gate.querySelector('[name=pin]');
+    if(pinInput){ pinInput.value = ''; pinInput.focus(); }
+  });
+}
+function usersForAuthRole(role){
+  return loginUsers.filter(u=> u.role === role);
+}
+function renderAuthUserOptions(role){
+  const sel = document.getElementById('authUserSelect');
+  if(!sel) return;
+  const list = usersForAuthRole(role);
+  if(!list.length){
+    sel.innerHTML = '<option value="">— Shared PIN (legacy) —</option>';
+    sel.value = '';
+    return;
+  }
+  sel.innerHTML = '<option value="">— Select your name —</option>'
+    + list.map(u=>`<option value="${esc(u.id)}">${esc(u.name)}</option>`).join('');
 }
 function setAuthGateRole(role){
   authGateRole = role === 'manager' ? 'manager' : 'staff';
@@ -764,12 +836,16 @@ function setAuthGateRole(role){
   });
   const desc = document.getElementById('authRoleDesc');
   const pinLabel = document.getElementById('authPinLabel');
+  const userField = document.getElementById('authUserField');
+  const list = usersForAuthRole(authGateRole);
+  if(userField) userField.style.display = list.length ? '' : 'none';
+  renderAuthUserOptions(authGateRole);
   if(authGateRole === 'manager'){
-    if(desc) desc.innerHTML = '<b>Manager</b> — Full access: deliveries, farms, settings, delete records.<br><span class="bi">จัดการทั้งหมด · ตั้งค่า · ลบข้อมูล</span>';
-    if(pinLabel) pinLabel.textContent = 'manager PIN';
+    if(desc) desc.innerHTML = '<b>Manager</b> — Full access: settings, delete, exports, staff users.<br><span class="bi">จัดการทั้งหมด · ตั้งค่า · ลบข้อมูล</span>';
+    if(pinLabel) pinLabel.textContent = list.length ? 'manager PIN' : 'manager PIN (legacy)';
   } else {
-    if(desc) desc.innerHTML = '<b>Staff</b> — Enter QC results, view records, log trim & cure.<br><span class="bi">กรอก QC · ดูข้อมูล · บันทึกทริม & cure</span>';
-    if(pinLabel) pinLabel.textContent = 'staff PIN';
+    if(desc) desc.innerHTML = '<b>Staff</b> — Select your name, enter your personal PIN.<br><span class="bi">เลือกชื่อ · ใส่ PIN ส่วนตัว · บันทึก QC & ทริม</span>';
+    if(pinLabel) pinLabel.textContent = 'personal PIN';
   }
 }
 function bindAuthGate(){
@@ -793,13 +869,19 @@ function bindAuthGate(){
     e.preventDefault();
     showErr('');
     const pin = gate.querySelector('[name=pin]').value;
+    const userId = (gate.querySelector('[name=userId]')||{}).value || '';
+    const list = usersForAuthRole(authGateRole);
+    if(list.length && !userId){
+      showErr('Please select your name.');
+      return;
+    }
     const btn = gate.querySelector('.auth-submit');
     const prev = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Signing in…';
     try{
-      const role = await verifyLoginRemote(authGateRole, pin);
-      setAuthSession(role);
+      const data = await verifyLoginRemote(authGateRole, pin, userId);
+      setAuthSession(data.role || authGateRole, undefined, data.userId || userId, data.userName || '');
       gate.hidden = true;
       document.body.classList.remove('auth-locked');
       startAppAfterLogin();
@@ -861,8 +943,8 @@ function openManagerUnlockModal(onSuccess, reason){
     showPinError('');
     const pin = pinInput.value;
     try{
-      await verifyLoginRemote('manager', pin);
-      setAuthSession('manager');
+      const data = await verifyLoginRemote('manager', pin, '');
+      setAuthSession('manager', undefined, data.userId || '', data.userName || 'Manager');
       close();
       render();
       if(typeof onSuccess === 'function') onSuccess();
@@ -882,10 +964,12 @@ async function checkAdminPinConfigured(){
   return s.manager;
 }
 function logoutUser(){
+  const name = getCurrentUserName();
   const msg = isManager()
-    ? 'Sign out of manager session?\nออกจากระบบผู้จัดการ?'
-    : 'Sign out?\nออกจากระบบ?';
+    ? 'Sign out ' + name + '?\nออกจากระบบ?'
+    : 'Sign out ' + name + '?\nออกจากระบบ?';
   if(!confirm(msg)) return;
+  logClientActivity('logout', 'Signed out');
   clearAuthSession();
   stopSheetPolling();
   showAuthGate();
@@ -1350,7 +1434,7 @@ function finalizeCanaStockLine(line){
   if(total !== null) out.qtyG = String(total);
   if(!out.updatedAt) out.updatedAt = todayISO();
   if(!out.updatedBy){
-    out.updatedBy = isManager() ? 'Manager' : (isStaff() ? 'Staff' : '');
+    out.updatedBy = getCurrentUserName();
   }
   return out;
 }
@@ -1808,6 +1892,158 @@ function openManageFarmsModal(){
     render();
     alert('Farm added: ' + name.trim() + '\nเพิ่มฟาร์มแล้ว — ข้อมูลจะซิงค์ไป Google Sheet');
   };
+}
+
+async function callManageUsers(managerPin, op, extra){
+  if(!appsScriptUrl) throw new Error('Google Sheet not connected');
+  return gasPostFetch(appsScriptUrl, JSON.stringify({
+    action: 'manageUsers',
+    managerPin: managerPin || '',
+    op,
+    ...(extra || {})
+  }));
+}
+async function fetchActivityLog(managerPin, limit){
+  if(!appsScriptUrl) return [];
+  const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?')
+    + 'action=listActivity&managerPin=' + encodeURIComponent(managerPin || '')
+    + '&limit=' + (limit || 80) + '&_=' + Date.now();
+  const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+  const data = JSON.parse(await res.text());
+  if(!data.ok) throw new Error(data.error || 'Could not load activity log');
+  return data.entries || [];
+}
+function renderStaffUsersAdminHtml(users, activity){
+  const userRows = (users || []).map(u=>`
+    <div class="staff-user-row ${u.active === 'Yes' ? '' : 'inactive'}">
+      <div>
+        <strong>${esc(u.name)}</strong>
+        <span class="farm-manage-meta">${esc(u.role)} · ${u.active === 'Yes' ? 'Active' : 'Inactive'} · Last login: ${esc(u.lastLogin || '—')}</span>
+      </div>
+      <div class="action-group">
+        <button type="button" class="small" data-reset-pin="${esc(u.id)}" data-user-name="${esc(u.name)}">Reset PIN</button>
+        <button type="button" class="small ${u.active === 'Yes' ? 'danger' : ''}" data-toggle-user="${esc(u.id)}" data-user-active="${u.active === 'Yes' ? '1' : '0'}">${u.active === 'Yes' ? 'Deactivate' : 'Activate'}</button>
+      </div>
+    </div>`).join('');
+  const actRows = (activity || []).slice(0, 80).map(a=>`
+    <tr><td>${esc(a.timestamp||'—')}</td><td><b>${esc(a.userName||'—')}</b></td><td>${esc((a.role||'').split(' / ')[0])}</td><td>${esc(a.action||'—')}</td><td>${esc(a.detail||'—')}</td></tr>
+  `).join('');
+  return `
+    <div class="staff-users-list">${userRows || '<p class="sub">No team members yet — add someone below.</p>'}</div>
+    <form id="addStaffUserForm" class="farm-add-form staff-add-form">
+      <h3 style="margin:0 0 10px;font-size:14px;">+ Add team member</h3>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+        <label>Name / ชื่อ<input type="text" name="name" required maxlength="40" autocomplete="off"></label>
+        <label>Role<select name="role"><option value="staff">Staff</option><option value="manager">Manager</option></select></label>
+        <label>PIN (min 4) / รหัส<input type="password" name="pin" required minlength="4" autocomplete="new-password"></label>
+        <label>Notes (optional)<input type="text" name="notes" maxlength="80" autocomplete="off"></label>
+      </div>
+      <div class="modal-actions" style="margin-top:12px;">
+        <button type="submit" class="primary">+ Add user</button>
+      </div>
+    </form>
+    <div class="staff-activity-panel">
+      <h3 style="margin:16px 0 8px;font-size:14px;">Recent activity / บันทึกการเข้าใช้</h3>
+      <div class="table-wrap"><table class="compact-table staff-activity-table">
+        <thead><tr><th>Time (ICT)</th><th>User</th><th>Role</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody>${actRows || '<tr><td colspan="5" style="color:var(--muted);">No activity yet.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+function openStaffUsersModal(){
+  if(!requireAdmin('manage staff users', ()=> openStaffUsersModal())) return;
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal staff-users-modal" style="max-width:720px">
+      <h2>👥 Staff Users / จัดการทีม</h2>
+      <p class="sub">Individual PINs · activity log · managers add or reset access here<br><span class="bi">PIN รายคน · ดูว่าใคร login เมื่อไหร่</span></p>
+      <form id="staffAdminUnlockForm" class="staff-unlock-row">
+        <label>Manager PIN to manage <span class="bi">/ ยืนยันตัวตนผู้จัดการ</span>
+          <input type="password" name="managerPin" minlength="4" required autocomplete="off" placeholder="Enter manager PIN">
+        </label>
+        <button type="submit" class="primary">Unlock / เปิด</button>
+      </form>
+      <div id="staffUsersAdminWrap" class="staff-users-admin-wrap" hidden>
+        <p class="farm-add-hint">Each person selects their name at sign-in. Share their PIN privately — not in group chat.</p>
+        <div id="staffUsersAdminBody"></div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCloseStaffUsers">Close</button>
+          <button type="button" class="small" id="btnRefreshStaffUsers">Refresh</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  let adminPin = '';
+  const close = ()=>{ modalDirty = false; closeModal(); fetchLoginUsers(true); };
+  root.querySelector('#btnCloseStaffUsers').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const loadAdmin = async (pin)=>{
+    adminPin = pin;
+    const [usersRes, activity] = await Promise.all([
+      callManageUsers(pin, 'list'),
+      fetchActivityLog(pin, 80)
+    ]);
+    root.querySelector('#staffUsersAdminWrap').hidden = false;
+    root.querySelector('#staffUsersAdminBody').innerHTML = renderStaffUsersAdminHtml(usersRes.users || [], activity);
+    bindStaffUsersAdminActions(root, adminPin, loadAdmin);
+  };
+  root.querySelector('#staffAdminUnlockForm').onsubmit = async (e)=>{
+    e.preventDefault();
+    const pin = new FormData(e.target).get('managerPin');
+    try{
+      await loadAdmin(String(pin || ''));
+    }catch(err){
+      alert('Could not unlock:\n' + (err.message || err));
+    }
+  };
+  root.querySelector('#btnRefreshStaffUsers').onclick = async ()=>{
+    if(!adminPin) return;
+    try{ await loadAdmin(adminPin); }catch(err){ alert(err.message || String(err)); }
+  };
+}
+function bindStaffUsersAdminActions(root, adminPin, reload){
+  const body = root.querySelector('#staffUsersAdminBody');
+  if(!body) return;
+  body.querySelector('#addStaffUserForm')?.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    try{
+      await callManageUsers(adminPin, 'add', {
+        name: fd.get('name'),
+        role: fd.get('role'),
+        pin: fd.get('pin'),
+        notes: fd.get('notes')
+      });
+      e.target.reset();
+      showDocToast('User added');
+      await reload(adminPin);
+    }catch(err){ alert('Add failed:\n' + (err.message || err)); }
+  });
+  body.querySelectorAll('[data-reset-pin]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const pin = prompt('New PIN for ' + btn.dataset.userName + ' (min 4 characters):');
+      if(pin === null) return;
+      if(String(pin).length < 4){ alert('PIN must be at least 4 characters.'); return; }
+      try{
+        await callManageUsers(adminPin, 'update', { userId: btn.dataset.resetPin, pin: pin });
+        showDocToast('PIN updated');
+        await reload(adminPin);
+      }catch(err){ alert(err.message || String(err)); }
+    };
+  });
+  body.querySelectorAll('[data-toggle-user]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const active = btn.dataset.userActive === '1';
+      const label = btn.closest('.staff-user-row')?.querySelector('strong')?.textContent || 'user';
+      if(active && !confirm('Deactivate ' + label + '? They cannot sign in until reactivated.\nปิดการใช้งาน?')) return;
+      try{
+        await callManageUsers(adminPin, 'update', { userId: btn.dataset.toggleUser, active: !active });
+        await reload(adminPin);
+      }catch(err){ alert(err.message || String(err)); }
+    };
+  });
 }
 
 function openDriveFoldersModal(){
@@ -2421,7 +2657,7 @@ function exportExcel(){
 /* ============ EXPORT BUILDER ============ */
 function exportBatchKey({rec, farm}){ return farm + '::' + rec.id; }
 function monthFileTag(month){ return String(month || '').replace(/ /g, '_'); }
-function getExportActorLabel(){ return isManager() ? 'Manager' : 'Staff'; }
+function getExportActorLabel(){ return getCurrentUserName() || (isManager() ? 'Manager' : 'Staff'); }
 function ensureExportSelection(month){
   if(exportSelectionMonth !== month){
     exportSelectionMonth = month;
@@ -3499,7 +3735,7 @@ function openTrimmingModal(id){
   const rec = id ? normalizeTrimRecord({...(state.trimming||[]).find(r=>r.id===id)}) : normalizeTrimRecord({
     id: uid(), type, date: todayISO(), harvestDate: '', sourceFarm: type === 'Cana flower' ? 'Cana' : '',
     room:'', batchId:'', linkedRecordId:'', strain:'', inputWt:'', finishedFlowerG:'', outputBigsG:'', outputPopsG:'',
-    moldG:'', seedsG:'', stemsG:'', wasteG:'', hoursWorked:'', trimmedBy:'', status: TRIM_STATUS_OPTIONS[0], notes:''
+    moldG:'', seedsG:'', stemsG:'', wasteG:'', hoursWorked:'', trimmedBy: getCurrentUserName(), status: TRIM_STATUS_OPTIONS[0], notes:''
   });
   if(!rec) return;
   const isNew = !id;
@@ -3567,6 +3803,7 @@ function openTrimmingModal(id){
       updated.inputWt = '';
     }
     normalizeTrimRecord(updated);
+    applyUserAttribution(updated, ['trimmedBy']);
     if(isDaily && isNew){
       const dup = (state.trimming||[]).find(r=> isDailyTrimRecord(r) && r.date === updated.date && r.id !== updated.id);
       if(dup && !confirm('A trimming record for ' + updated.date + ' already exists. Save anyway?\nมีบันทึกวันนี้แล้ว — บันทึกซ้ำ?')) return;
@@ -3951,7 +4188,7 @@ function openCureSessionModal(id){
   if(!requireLogin()) return;
   const rec = id ? {...getCureSession(id)} : {
     id: uid(), room:'', strains:'', linkedTrimIds:'', startDate: todayISO(), targetDays:'14',
-    endDate:'', assignedTo:'', status: CURE_STATUS_OPTIONS[0], processSummary:'', notes:''
+    endDate:'', assignedTo: getCurrentUserName(), status: CURE_STATUS_OPTIONS[0], processSummary:'', notes:''
   };
   if(!rec) return;
   const isNew = !id;
@@ -4008,6 +4245,7 @@ function openCureSessionModal(id){
     e.preventDefault();
     const updated = {...rec};
     CURE_SESSION_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    applyUserAttribution(updated, ['assignedTo']);
     if((updated.status||'').indexOf('Complete') >= 0 && !updated.endDate) updated.endDate = todayISO();
     if(!state.curingSessions) state.curingSessions = [];
     if(isNew) state.curingSessions.push(updated);
@@ -4026,7 +4264,7 @@ function openCureLogModal(id, sessionIdPrefill){
   if(!requireLogin()) return;
   const rec = id ? normalizeCureLogEntry({...(state.cureLog||[]).find(l=> l.id === id)}) : {
     id: uid(), sessionId: sessionIdPrefill || '', date: todayBangkokISO(), time: nowBangkokTime(),
-    room:'', action: CURE_ACTION_OPTIONS[0], minutes:'', description:'', doneBy:'', strainsTouched:''
+    room:'', action: CURE_ACTION_OPTIONS[0], minutes:'', description:'', doneBy: getCurrentUserName(), strainsTouched:''
   };
   if(!rec) return;
   const isNew = !id;
@@ -4083,6 +4321,7 @@ function openCureLogModal(id, sessionIdPrefill){
     const updated = {...rec};
     CURE_LOG_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
     updated.time = normalizeCureLogTimeInput(updated.time);
+    applyUserAttribution(updated, ['doneBy']);
     normalizeCureLogEntry(updated);
     if(!state.cureLog) state.cureLog = [];
     if(isNew) state.cureLog.push(updated);
@@ -4173,7 +4412,7 @@ function openCanaStockModal(id, prefill){
     <div class="modal" style="max-width:720px">
       <h2>${isNew ? '+ Add Cana stock' : 'Edit stock line'}</h2>
       <form id="stockForm" class="form-grid">
-        ${CANA_STOCK_COLS.map(c=> fieldHtml(c, rec[c.key] || '')).join('')}
+        ${CANA_STOCK_COLS.map(c=> fieldHtml(c, rec[c.key] || (c.key === 'updatedBy' ? getCurrentUserName() : ''))).join('')}
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelStock">Cancel</button>
           <button type="submit" class="primary">Save</button>
@@ -4838,13 +5077,14 @@ function openQCModal(id){
   if(!rec) return;
   const root = document.getElementById('modalRoot');
   const purpleFields = PURPLE_COLS.map(c=>{
+    const val = rec[c.key] || (c.key === 'qcBy' ? getCurrentUserName() : '');
     if(c.key === 'startWt'){
       return `<div class="field-with-btn full">
-        <div class="field" style="flex:1">${fieldHtml(c, rec[c.key]).replace('<div class="field">','').replace(/<\/div>$/,'')}</div>
+        <div class="field" style="flex:1">${fieldHtml(c, val).replace('<div class="field">','').replace(/<\/div>$/,'')}</div>
         <button type="button" class="small" id="btnUseGross" style="margin-bottom:1px;">Use gross wt / ใช้น้ำหนักรวม</button>
       </div>`;
     }
-    return fieldHtml(c, rec[c.key]);
+    return fieldHtml(c, val);
   }).join('');
 
   root.innerHTML = `
@@ -4891,6 +5131,7 @@ function openQCModal(id){
       return;
     }
     PURPLE_COLS.forEach(c=> rec[c.key] = fd.get(c.key) || '');
+    applyUserAttribution(rec, ['qcBy']);
     onDataChanged();
     closeModal();
     if(currentView === 'allFarms') renderAllFarmsView();
@@ -5061,6 +5302,7 @@ async function init(){
   await hydrateDocumentsFromIdb();
   await loadRemoteConfig();
   bindAuthGate();
+  await fetchLoginUsers(true);
 
   document.getElementById('btnLinkSheet').onclick = ()=>{
     if(!requireAdmin('Google Sheet', ()=>{
@@ -5073,6 +5315,7 @@ async function init(){
   document.getElementById('btnAdmin').onclick = toggleAdminSession;
   document.getElementById('btnSetupGuide').onclick = ()=>{ toggleMoreMenu(false); openSheetSetupGuide(); };
   document.getElementById('btnManageFarms').onclick = ()=>{ toggleMoreMenu(false); openManageFarmsModal(); };
+  document.getElementById('btnStaffUsers').onclick = ()=>{ toggleMoreMenu(false); openStaffUsersModal(); };
   document.getElementById('btnDriveFolders').onclick = ()=>{ toggleMoreMenu(false); openDriveFoldersModal(); };
   document.getElementById('btnOpenSheet').onclick = openGoogleSheetInBrowser;
   document.getElementById('btnReconnect').onclick = reconnectFile;

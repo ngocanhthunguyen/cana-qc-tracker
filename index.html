@@ -30,14 +30,20 @@
         <span class="bi">กรอก QC · ดูข้อมูล · บันทึกทริม & cure</span>
       </div>
       <form id="authLoginForm" class="auth-form">
+        <div class="field" id="authUserField">
+          <label>Your name <span class="bi">/ ชื่อ</span></label>
+          <select name="userId" id="authUserSelect">
+            <option value="">— Select your name —</option>
+          </select>
+        </div>
         <div class="field">
-          <label>PIN <span id="authPinLabel">staff PIN</span></label>
+          <label>Your PIN <span id="authPinLabel">personal PIN</span></label>
           <input type="password" name="pin" inputmode="numeric" autocomplete="off" required minlength="4" placeholder="Enter PIN" autofocus>
         </div>
         <div class="auth-error" id="authError" hidden></div>
         <button type="submit" class="primary auth-submit">Sign in / เข้าสู่ระบบ</button>
       </form>
-      <p class="auth-foot" id="authFootnote">Protected workspace — contact your manager for a PIN.</p>
+      <p class="auth-foot" id="authFootnote">Select your name and enter your personal PIN. Contact your manager if you need access.</p>
     </div>
   </div>
 </div>
@@ -62,6 +68,7 @@
         <div class="dropdown">
           <button id="btnOpenFileMob" type="button" class="admin-only">🔗 Link Excel File</button>
           <button id="btnManageFarms" type="button" class="admin-only">🏡 Manage Farms</button>
+          <button id="btnStaffUsers" type="button" class="admin-only">👥 Staff Users</button>
           <button id="btnDriveFolders" type="button" class="admin-only">📁 Drive Folders</button>
           <button id="btnSetupGuide" type="button" class="admin-only">📖 Google Sheet Setup</button>
           <button id="btnExportJSON" type="button" class="admin-only">⬇ Export JSON</button>

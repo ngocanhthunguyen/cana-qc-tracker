@@ -72,11 +72,24 @@ function doGet(e) {
   if (e && e.parameter && e.parameter.action === 'loginStatus') {
     return jsonOut(getLoginStatus());
   }
+  if (e && e.parameter && e.parameter.action === 'listUsers') {
+    return jsonOut({ ok: true, users: listPublicStaffUsers(getSpreadsheet()) });
+  }
+  if (e && e.parameter && e.parameter.action === 'listActivity' && e.parameter.managerPin) {
+    if (!verifyManagerPinOnly(String(e.parameter.managerPin)).ok) {
+      return jsonOut({ ok: false, error: 'Incorrect manager PIN.' });
+    }
+    return jsonOut({ ok: true, entries: readActivityLog(getSpreadsheet(), Number(e.parameter.limit) || 100) });
+  }
   if (e && e.parameter && e.parameter.action === 'verifyAdmin' && e.parameter.pin) {
-    return jsonOut(verifyLoginPin('manager', String(e.parameter.pin)));
+    return jsonOut(verifyLoginPin('manager', String(e.parameter.pin), String(e.parameter.userId || '')));
   }
   if (e && e.parameter && e.parameter.action === 'verifyLogin' && e.parameter.pin) {
-    return jsonOut(verifyLoginPin(String(e.parameter.role || 'staff'), String(e.parameter.pin)));
+    return jsonOut(verifyLoginPin(
+      String(e.parameter.role || 'staff'),
+      String(e.parameter.pin),
+      String(e.parameter.userId || '')
+    ));
   }
   return jsonOut({ ok: true, message: 'CANA QC Tracker API' });
 }
@@ -128,36 +141,401 @@ function hashAdminPin(pin) {
 }
 
 function getLoginStatus() {
+  var ss = getSpreadsheet();
+  var users = listPublicStaffUsers(ss);
   return {
     ok: true,
     hasPin: !!getAdminPinHash(),
     hasManagerPin: !!getAdminPinHash(),
-    hasStaffPin: !!getStaffPinHash()
+    hasStaffPin: !!getStaffPinHash(),
+    hasUsers: users.length > 0,
+    userCount: users.length
   };
 }
 
-function verifyLoginPin(role, pin) {
+function verifyManagerPinOnly(pin) {
+  pin = String(pin || '').trim();
+  if (!pin) return { ok: false, error: 'Enter manager PIN.' };
+  var hash = hashAdminPin(pin);
+  var managerHash = getAdminPinHash();
+  if (managerHash && hash === managerHash) return { ok: true };
+  var mgrUser = findStaffUserByPinHash(hash, 'manager');
+  if (mgrUser) return { ok: true, userId: mgrUser.id, userName: mgrUser.name };
+  return { ok: false, error: 'Incorrect manager PIN.' };
+}
+
+function verifyLoginPin(role, pin, userId) {
   role = String(role || 'staff').toLowerCase();
   pin = String(pin || '').trim();
+  userId = String(userId || '').trim();
   if (!pin) return { ok: false, error: 'Enter your PIN.' };
   var hash = hashAdminPin(pin);
+
+  if (userId) {
+    var user = getStaffUserById(userId);
+    if (!user || user.active !== 'Yes') return { ok: false, error: 'User not found or inactive.' };
+    if (String(user.role || 'staff').toLowerCase() !== role) {
+      return { ok: false, error: 'This account is not allowed on the ' + role + ' sign-in tab.' };
+    }
+    if (user.pinHash !== hash) return { ok: false, error: 'Incorrect PIN.' };
+    touchStaffUserLogin(userId);
+    appendActivityLog(user.id, user.name, user.role, 'login', 'Signed in via web app');
+    return { ok: true, role: user.role, userId: user.id, userName: user.name };
+  }
+
+  var sheetUser = findStaffUserByPinHash(hash, role);
+  if (sheetUser) {
+    touchStaffUserLogin(sheetUser.id);
+    appendActivityLog(sheetUser.id, sheetUser.name, sheetUser.role, 'login', 'Signed in via web app');
+    return { ok: true, role: sheetUser.role, userId: sheetUser.id, userName: sheetUser.name };
+  }
+
   if (role === 'manager') {
     var managerHash = getAdminPinHash();
     if (!managerHash) return { ok: false, error: 'Manager PIN not configured. Run setManagerPinOnce in Apps Script.' };
-    if (hash === managerHash) return { ok: true, role: 'manager' };
+    if (hash === managerHash) {
+      appendActivityLog('', 'Manager', 'manager', 'login', 'Signed in (legacy manager PIN)');
+      return { ok: true, role: 'manager', userId: '', userName: 'Manager' };
+    }
     return { ok: false, error: 'Incorrect manager PIN.' };
   }
   if (role === 'staff') {
     var staffHash = getStaffPinHash();
-    if (!staffHash) return { ok: false, error: 'Staff PIN not configured. Run setStaffPinOnce in Apps Script.' };
-    if (hash === staffHash) return { ok: true, role: 'staff' };
-    return { ok: false, error: 'Incorrect staff PIN.' };
+    if (!staffHash) return { ok: false, error: 'Staff PIN not configured. Ask manager to add team members under Staff Users.' };
+    if (hash === staffHash) {
+      appendActivityLog('', 'Staff (shared)', 'staff', 'login', 'Signed in (legacy shared staff PIN)');
+      return { ok: true, role: 'staff', userId: '', userName: 'Staff (shared)' };
+    }
+    return { ok: false, error: 'Incorrect PIN.' };
   }
   return { ok: false, error: 'Invalid role.' };
 }
 
 function verifyAdminPin(pin) {
-  return verifyLoginPin('manager', pin);
+  return verifyLoginPin('manager', pin, '');
+}
+
+/* ---------- Staff Users + Activity Log ---------- */
+
+var STAFF_USERS_SHEET = 'Staff Users';
+var STAFF_USERS_HEADERS = ['_id', 'Name', 'Role', 'PIN Hash', 'Active', 'Created At', 'Last Login', 'Notes'];
+var STAFF_USERS_NUM_COLS = STAFF_USERS_HEADERS.length;
+var STAFF_USERS_HEADER_ROW = 3;
+var STAFF_USERS_DATA_START = 4;
+
+var ACTIVITY_LOG_SHEET = 'Activity Log';
+var ACTIVITY_LOG_HEADERS = ['_id', 'Timestamp (ICT)', 'User ID', 'User Name', 'Role', 'Action', 'Detail'];
+var ACTIVITY_LOG_NUM_COLS = ACTIVITY_LOG_HEADERS.length;
+var ACTIVITY_LOG_HEADER_ROW = 3;
+var ACTIVITY_LOG_DATA_START = 4;
+var ACTIVITY_LOG_MAX_ROWS = 5000;
+
+function setupStaffUsersTab(ss) {
+  var sheet = ss.getSheetByName(STAFF_USERS_SHEET);
+  if (!sheet) sheet = ss.insertSheet(STAFF_USERS_SHEET);
+  sheet.clear();
+  sheet.getRange(1, 1, 1, STAFF_USERS_NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  STAFF USERS')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+  sheet.getRange(2, 1, 1, STAFF_USERS_NUM_COLS).merge()
+    .setValue('Individual PINs for staff & managers · managed in web app · PIN Hash column is SHA-256 (never share plain PIN here)')
+    .setBackground('#1e40af').setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+  sheet.getRange(STAFF_USERS_HEADER_ROW, 1, 1, STAFF_USERS_NUM_COLS).setValues([STAFF_USERS_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle')
+    .setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(STAFF_USERS_HEADER_ROW, 32);
+  sheet.setTabColor('#1e40af');
+  sheet.setFrozenRows(STAFF_USERS_HEADER_ROW);
+  sheet.hideColumns(1);
+  sheet.hideColumns(4);
+}
+
+function setupActivityLogTab(ss) {
+  var sheet = ss.getSheetByName(ACTIVITY_LOG_SHEET);
+  if (!sheet) sheet = ss.insertSheet(ACTIVITY_LOG_SHEET);
+  if (sheet.getLastRow() >= ACTIVITY_LOG_HEADER_ROW && String(sheet.getRange(ACTIVITY_LOG_HEADER_ROW, 1).getValue() || '') === '_id') {
+    return sheet;
+  }
+  sheet.clear();
+  sheet.getRange(1, 1, 1, ACTIVITY_LOG_NUM_COLS).merge()
+    .setValue('CANA QC TRACKER  ·  ACTIVITY LOG')
+    .setBackground(THEME.greenDark).setFontColor(THEME.white)
+    .setFontSize(15).setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle');
+  sheet.setRowHeight(1, 46);
+  sheet.getRange(2, 1, 1, ACTIVITY_LOG_NUM_COLS).merge()
+    .setValue('Sign-in audit trail · who logged in and when (ICT / Bangkok time)')
+    .setBackground('#334155').setFontColor(THEME.white)
+    .setFontSize(10).setFontWeight('bold')
+    .setHorizontalAlignment('center');
+  sheet.setRowHeight(2, 28);
+  sheet.getRange(ACTIVITY_LOG_HEADER_ROW, 1, 1, ACTIVITY_LOG_NUM_COLS).setValues([ACTIVITY_LOG_HEADERS])
+    .setFontWeight('bold').setFontSize(9).setWrap(true)
+    .setHorizontalAlignment('center').setVerticalAlignment('middle')
+    .setBackground(THEME.greyBg).setFontColor(THEME.greyHeader);
+  sheet.setRowHeight(ACTIVITY_LOG_HEADER_ROW, 32);
+  sheet.setTabColor('#334155');
+  sheet.setFrozenRows(ACTIVITY_LOG_HEADER_ROW);
+  sheet.hideColumns(1);
+  sheet.hideColumns(3);
+  return sheet;
+}
+
+function readStaffUsers(ss) {
+  var sheet = ss.getSheetByName(STAFF_USERS_SHEET);
+  if (!sheet || sheet.getLastRow() < STAFF_USERS_DATA_START) return [];
+  var numRows = sheet.getLastRow() - STAFF_USERS_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(STAFF_USERS_DATA_START, 1, numRows, STAFF_USERS_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      name: String(row[1] || ''),
+      role: String(row[2] || 'staff').toLowerCase(),
+      pinHash: String(row[3] || ''),
+      active: String(row[4] || 'Yes'),
+      createdAt: formatSheetDate(row[5]),
+      lastLogin: formatSheetDate(row[6]),
+      notes: String(row[7] || '')
+    });
+  });
+  return list;
+}
+
+function writeStaffUsers(ss, users) {
+  setupStaffUsersTab(ss);
+  var sheet = ss.getSheetByName(STAFF_USERS_SHEET);
+  var rows = (users || []).map(function(u) {
+    return [
+      u.id || newId(),
+      u.name || '',
+      u.role || 'staff',
+      u.pinHash || '',
+      u.active || 'Yes',
+      u.createdAt || '',
+      u.lastLogin || '',
+      u.notes || ''
+    ];
+  });
+  if (sheet.getLastRow() >= STAFF_USERS_DATA_START) {
+    sheet.getRange(STAFF_USERS_DATA_START, 1, sheet.getLastRow() - STAFF_USERS_HEADER_ROW, STAFF_USERS_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(STAFF_USERS_DATA_START, 1, rows.length, STAFF_USERS_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(STAFF_USERS_DATA_START + r, 1, 1, STAFF_USERS_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#eff6ff')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+function listPublicStaffUsers(ss) {
+  return readStaffUsers(ss)
+    .filter(function(u) { return u.active === 'Yes'; })
+    .map(function(u) {
+      return { id: u.id, name: u.name, role: u.role };
+    })
+    .sort(function(a, b) {
+      if (a.role !== b.role) return a.role === 'manager' ? -1 : 1;
+      return String(a.name).localeCompare(String(b.name));
+    });
+}
+
+function listStaffUsersAdmin(ss) {
+  return readStaffUsers(ss).map(function(u) {
+    return {
+      id: u.id,
+      name: u.name,
+      role: u.role,
+      active: u.active,
+      createdAt: u.createdAt,
+      lastLogin: u.lastLogin,
+      notes: u.notes,
+      hasPin: !!u.pinHash
+    };
+  });
+}
+
+function getStaffUserById(userId) {
+  userId = String(userId || '').trim();
+  if (!userId) return null;
+  var users = readStaffUsers(getSpreadsheet());
+  for (var i = 0; i < users.length; i++) {
+    if (users[i].id === userId) return users[i];
+  }
+  return null;
+}
+
+function findStaffUserByPinHash(hash, role) {
+  role = String(role || '').toLowerCase();
+  var users = readStaffUsers(getSpreadsheet()).filter(function(u) {
+    return u.active === 'Yes' && u.pinHash === hash;
+  });
+  for (var i = 0; i < users.length; i++) {
+    if (!role || users[i].role === role) return users[i];
+  }
+  return users.length ? users[0] : null;
+}
+
+function touchStaffUserLogin(userId) {
+  var ss = getSpreadsheet();
+  var users = readStaffUsers(ss);
+  var touched = false;
+  var now = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm');
+  users.forEach(function(u) {
+    if (u.id === userId) {
+      u.lastLogin = now;
+      touched = true;
+    }
+  });
+  if (touched) writeStaffUsers(ss, users);
+}
+
+function appendActivityLog(userId, userName, role, action, detail) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = setupActivityLogTab(ss);
+    var ts = Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd HH:mm:ss');
+    var row = [
+      newId(),
+      ts,
+      String(userId || ''),
+      String(userName || ''),
+      String(role || ''),
+      String(action || ''),
+      String(detail || '').slice(0, 500)
+    ];
+    var nextRow = Math.max(sheet.getLastRow() + 1, ACTIVITY_LOG_DATA_START);
+    sheet.getRange(nextRow, 1, 1, ACTIVITY_LOG_NUM_COLS).setValues([row])
+      .setBackground('#ffffff').setFontSize(10).setWrap(true);
+    var totalRows = sheet.getLastRow() - ACTIVITY_LOG_HEADER_ROW;
+    if (totalRows > ACTIVITY_LOG_MAX_ROWS) {
+      sheet.deleteRows(ACTIVITY_LOG_DATA_START, totalRows - ACTIVITY_LOG_MAX_ROWS);
+    }
+  } catch (e) {
+    Logger.log('appendActivityLog failed: ' + e);
+  }
+}
+
+function readActivityLog(ss, limit) {
+  limit = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  var sheet = ss.getSheetByName(ACTIVITY_LOG_SHEET);
+  if (!sheet || sheet.getLastRow() < ACTIVITY_LOG_DATA_START) return [];
+  var numRows = sheet.getLastRow() - ACTIVITY_LOG_HEADER_ROW;
+  if (numRows < 1) return [];
+  var start = Math.max(ACTIVITY_LOG_DATA_START, sheet.getLastRow() - limit + 1);
+  var count = sheet.getLastRow() - start + 1;
+  var values = sheet.getRange(start, 1, count, ACTIVITY_LOG_NUM_COLS).getValues();
+  var list = [];
+  for (var i = values.length - 1; i >= 0; i--) {
+    var row = values[i];
+    if (!row[1] && !row[3] && !row[5]) continue;
+    list.push({
+      id: String(row[0] || ''),
+      timestamp: String(row[1] || ''),
+      userId: String(row[2] || ''),
+      userName: String(row[3] || ''),
+      role: String(row[4] || ''),
+      action: String(row[5] || ''),
+      detail: String(row[6] || '')
+    });
+  }
+  return list;
+}
+
+function handleLogActivity(data) {
+  appendActivityLog(
+    data.userId || '',
+    data.userName || '',
+    data.role || '',
+    data.activityAction || data.action || 'event',
+    data.detail || ''
+  );
+  return { ok: true };
+}
+
+function handleManageUsers(data) {
+  var pinCheck = verifyManagerPinOnly(data.managerPin || '');
+  if (!pinCheck.ok) return pinCheck;
+  var op = String(data.op || '').toLowerCase();
+  var ss = getSpreadsheet();
+  var users = readStaffUsers(ss);
+
+  if (op === 'list') {
+    return { ok: true, users: listStaffUsersAdmin(ss) };
+  }
+  if (op === 'add') {
+    var name = String(data.name || '').trim();
+    var role = String(data.role || 'staff').toLowerCase();
+    var newPin = String(data.pin || '').trim();
+    if (!name) return { ok: false, error: 'Name is required.' };
+    if (name.length > 40) return { ok: false, error: 'Name too long (max 40).' };
+    if (newPin.length < 4) return { ok: false, error: 'PIN must be at least 4 characters.' };
+    if (role !== 'staff' && role !== 'manager') role = 'staff';
+    if (users.some(function(u) { return u.name.toLowerCase() === name.toLowerCase(); })) {
+      return { ok: false, error: 'A user with this name already exists.' };
+    }
+    var entry = {
+      id: newId(),
+      name: name,
+      role: role,
+      pinHash: hashAdminPin(newPin),
+      active: 'Yes',
+      createdAt: Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyy-MM-dd'),
+      lastLogin: '',
+      notes: String(data.notes || '')
+    };
+    users.push(entry);
+    writeStaffUsers(ss, users);
+    appendActivityLog('', pinCheck.userName || 'Manager', 'manager', 'user_add', 'Added user: ' + name + ' (' + role + ')');
+    return { ok: true, user: { id: entry.id, name: entry.name, role: entry.role, active: entry.active, hasPin: true } };
+  }
+  if (op === 'update') {
+    var userId = String(data.userId || '').trim();
+    var idx = -1;
+    users.forEach(function(u, i) { if (u.id === userId) idx = i; });
+    if (idx < 0) return { ok: false, error: 'User not found.' };
+    if (data.name !== undefined) {
+      var newName = String(data.name || '').trim();
+      if (!newName) return { ok: false, error: 'Name cannot be empty.' };
+      users[idx].name = newName;
+    }
+    if (data.role !== undefined) {
+      var r = String(data.role || 'staff').toLowerCase();
+      users[idx].role = (r === 'manager') ? 'manager' : 'staff';
+    }
+    if (data.active !== undefined) users[idx].active = data.active ? 'Yes' : 'No';
+    if (data.notes !== undefined) users[idx].notes = String(data.notes || '');
+    if (data.pin) {
+      var resetPin = String(data.pin).trim();
+      if (resetPin.length < 4) return { ok: false, error: 'PIN must be at least 4 characters.' };
+      users[idx].pinHash = hashAdminPin(resetPin);
+    }
+    writeStaffUsers(ss, users);
+    appendActivityLog('', pinCheck.userName || 'Manager', 'manager', 'user_update', 'Updated user: ' + users[idx].name);
+    return { ok: true };
+  }
+  return { ok: false, error: 'Unknown manageUsers op' };
+}
+
+/** Run once — creates Staff Users + Activity Log tabs */
+function upgradeStaffUsersTab() {
+  var ss = getSpreadsheet();
+  setupStaffUsersTab(ss);
+  setupActivityLogTab(ss);
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Staff Users and Activity Log tabs ready. Add team members in web app → More → Staff Users.');
 }
 
 function handleWriteRequest(payloadB64) {
@@ -222,6 +600,12 @@ function doPost(e) {
     }
     if (data.action === 'deleteDoc') {
       return jsonOut(deleteDocumentFromDrive(data.fileId));
+    }
+    if (data.action === 'logActivity') {
+      return jsonOut(handleLogActivity(data));
+    }
+    if (data.action === 'manageUsers') {
+      return jsonOut(handleManageUsers(data));
     }
     return jsonOut({ ok: false, error: 'Unknown action' });
   } catch (err) {
@@ -588,7 +972,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -895,7 +1279,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
