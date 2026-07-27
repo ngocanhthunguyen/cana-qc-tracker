@@ -15,6 +15,12 @@ const PLANT_STATUS_OPTIONS = [
   'Discarded / ทิ้ง'
 ];
 
+const PLANT_ROOM_PRESETS = [
+  'Cloning',
+  'Veg room',
+  'Flower room'
+];
+
 const PLANT_BATCH_PREFIX = 'CA-P-';
 const PLANT_LOT_PREFIX = 'CA-L-';
 
@@ -142,9 +148,45 @@ function getFilteredPlants(){
 }
 
 function getPlantRoomOptions(){
-  const rooms = new Set();
-  (state.plants || []).forEach(p=>{ if(p.room) rooms.add(p.room); });
-  return [...rooms].sort();
+  const rooms = new Set(PLANT_ROOM_PRESETS);
+  (state.plants || []).forEach(p=>{ if(p.room) rooms.add(String(p.room).trim()); });
+  const presets = PLANT_ROOM_PRESETS.filter(r=> rooms.has(r));
+  const extras = [...rooms].filter(r=> !PLANT_ROOM_PRESETS.includes(r)).sort((a, b)=> a.localeCompare(b));
+  return presets.concat(extras);
+}
+
+function readPlantRoomFromForm(fd){
+  const room = String(fd.get('room') || '').trim();
+  if(room === '__custom__') return String(fd.get('roomCustom') || '').trim();
+  return room;
+}
+
+function bindPlantRoomSelect(root){
+  const sel = root.querySelector('[name="room"]');
+  const custom = root.querySelector('[name="roomCustom"]');
+  if(!sel || !custom) return;
+  const sync = ()=>{
+    const on = sel.value === '__custom__';
+    custom.style.display = on ? '' : 'none';
+    custom.required = on;
+    if(!on) custom.value = '';
+  };
+  sel.onchange = sync;
+  sync();
+}
+
+function renderPlantRoomFields(selected, required){
+  const choices = getPlantRoomOptions();
+  const sel = String(selected || '').trim();
+  const inList = sel && choices.includes(sel);
+  const custom = sel && !inList;
+  return `
+    <select name="room" ${required ? 'required' : ''}>
+      <option value="">— select room —</option>
+      ${choices.map(r=>`<option value="${esc(r)}" ${sel===r?'selected':''}>${esc(r)}</option>`).join('')}
+      <option value="__custom__" ${custom?'selected':''}>Other…</option>
+    </select>
+    <input name="roomCustom" placeholder="Custom room name" value="${custom ? esc(sel) : ''}" style="margin-top:8px;${custom ? '' : 'display:none;'}">`;
 }
 
 function plantStatusShort(status){
@@ -538,7 +580,7 @@ function openPottingBatchModal(){
       <form id="potBatchForm" class="form-grid">
         <div class="field"><label>Strain <span class="bi">/ สายพันธุ์</span></label><input name="strain" required placeholder="MAC 1"></div>
         <div class="field"><label>Pot date</label><input type="date" name="potDate" value="${todayISO()}" required></div>
-        <div class="field"><label>Starting room</label><input name="room" required placeholder="Veg 1"></div>
+        <div class="field"><label>Starting room</label>${renderPlantRoomFields('', true)}</div>
         <div class="field"><label>Source</label><input name="sourceFarm" value="Cana" placeholder="Cana"></div>
         <div class="field"><label>Number of plants</label><input type="number" name="qty" min="1" max="500" value="1" required></div>
         <div class="field full"><label>Notes</label><textarea name="notes" rows="2"></textarea></div>
@@ -555,13 +597,14 @@ function openPottingBatchModal(){
   const close = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#btnCancelPot').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  bindPlantRoomSelect(root);
   root.querySelector('#potBatchForm').onsubmit = (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const qty = Math.min(500, Math.max(1, parseInt(fd.get('qty'), 10) || 1));
     const strain = String(fd.get('strain') || '').trim();
     const potDate = String(fd.get('potDate') || '').trim();
-    const room = String(fd.get('room') || '').trim();
+    const room = readPlantRoomFromForm(fd);
     if(!strain || !room){ alert('Strain and room required'); return; }
     const lotId = nextPotLotId();
     const batchIds = allocatePlantBatchIds(qty);
@@ -608,7 +651,7 @@ function openPlantEditModal(id){
       <form id="plantEditForm" class="form-grid">
         <div class="field"><label>Lot ID</label><input value="${esc(rec.lotId || rec.transferBatchRef || '—')}" readonly class="readonly"></div>
         <div class="field"><label>Strain</label><input name="strain" value="${esc(rec.strain)}" required></div>
-        <div class="field"><label>Current room</label><input name="room" value="${esc(rec.room)}" required></div>
+        <div class="field"><label>Current room</label>${renderPlantRoomFields(rec.room, true)}</div>
         <div class="field"><label>Status</label>
           <select name="status">${PLANT_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${rec.status===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
         </div>
@@ -629,10 +672,11 @@ function openPlantEditModal(id){
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   const delBtn = root.querySelector('#btnDeletePlantEdit');
   if(delBtn) delBtn.onclick = ()=> deletePlantRecord(rec.id);
+  bindPlantRoomSelect(root);
   root.querySelector('#plantEditForm').onsubmit = (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
-    const newRoom = String(fd.get('room') || '').trim();
+    const newRoom = readPlantRoomFromForm(fd);
     if(newRoom !== rec.room) appendRoomHistory(rec, newRoom);
     else rec.room = newRoom;
     rec.strain = String(fd.get('strain') || '').trim();
@@ -660,7 +704,7 @@ function openMoveRoomModal(plantIds){
       <h2>Move room — ${plantIds.length} plant(s)</h2>
       <p class="sub">Batch IDs stay the same<br><span class="bi">รหัสไม่เปลี่ยน แค่ย้ายห้อง</span></p>
       <form id="moveRoomForm">
-        <div class="field"><label>New room</label><input name="room" required placeholder="Veg 2 / Flower 1" autofocus></div>
+        <div class="field"><label>New room</label>${renderPlantRoomFields('', true)}</div>
         <div class="field"><label>Status (optional)</label>
           <select name="status">
             <option value="">— keep current —</option>
@@ -677,10 +721,11 @@ function openMoveRoomModal(plantIds){
   const close = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#btnCancelMove').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  bindPlantRoomSelect(root);
   root.querySelector('#moveRoomForm').onsubmit = (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
-    const room = String(fd.get('room') || '').trim();
+    const room = readPlantRoomFromForm(fd);
     const status = String(fd.get('status') || '').trim();
     plantIds.forEach(id=>{
       const p = getPlantById(id);
@@ -688,6 +733,7 @@ function openMoveRoomModal(plantIds){
       appendRoomHistory(p, room);
       if(status) p.status = status;
       else if(p.status === PLANT_STATUS_OPTIONS[0] && /flower/i.test(room)) p.status = PLANT_STATUS_OPTIONS[1];
+      else if(p.status === PLANT_STATUS_OPTIONS[1] && /veg/i.test(room)) p.status = PLANT_STATUS_OPTIONS[0];
     });
     modalDirty = false;
     plantSelectedIds.clear();
