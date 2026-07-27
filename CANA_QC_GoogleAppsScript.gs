@@ -2062,6 +2062,12 @@ function writeTrimmingSheet(ss, sheetName, subtitle, tabColor, records, kind) {
 
 function writeTrimming(ss, trimming) {
   var all = trimming || [];
+  var existing = readTrimming(ss);
+  // Never wipe sheet trim data when client sends empty array (sync bug / stale app)
+  if (!all.length && existing.length) {
+    Logger.log('writeTrimming: skipped — client sent 0 rows but sheet has ' + existing.length + ' trim record(s).');
+    return;
+  }
   var daily = all.filter(function(r) {
     var t = String(r.type || '');
     return t.indexOf('Trimming record') >= 0 || t.indexOf('Rework') >= 0;
@@ -2502,15 +2508,13 @@ function writePlants(ss, plants) {
   }
 }
 
-/** Run once — creates Plant Registry tab */
+/** Run once — creates Plant Registry tab (does NOT rewrite trim unless data exists) */
 function upgradePlantRegistryTab() {
   var ss = getSpreadsheet();
   writePlants(ss, readPlants(ss));
-  writeTrimming(ss, readTrimming(ss));
-  writeCanaStock(ss, readCanaStock(ss));
   orderTabs(ss);
   SpreadsheetApp.flush();
-  Logger.log('Plant Registry tab ready. Run after deploying latest script.');
+  Logger.log('Plant Registry tab ready. Trim/Cana Stock sheets unchanged — open app to sync.');
 }
 
 /* ---------- Export Log tab ---------- */

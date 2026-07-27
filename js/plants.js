@@ -542,6 +542,51 @@ function buildZplLabel(batchId, strain, room){
     + '^FO20,155^A0N,22,22^FD' + safe(strain) + '  ' + safe(room) + '^FS\n^XZ\n';
 }
 
+function buildPrintLabelDocument(labelsInnerHtml){
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Plant labels</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:#fff;}
+  body.print-labels-body{padding:0;}
+  .zebra-label-sheet{display:block;}
+  .zebra-label{
+    width:50mm;height:25mm;padding:1.5mm 2mm;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;background:#fff;overflow:hidden;
+    page-break-after:always;break-after:page;
+  }
+  .zebra-label:last-child{page-break-after:auto;}
+  .zebra-barcode svg{width:44mm;max-width:44mm;height:10mm;}
+  .zebra-label-id{font-family:Courier New,monospace;font-size:9pt;font-weight:700;line-height:1.1;}
+  .zebra-label-meta{font-size:7pt;line-height:1.1;margin-top:0.5mm;max-width:46mm;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .zebra-label-date{font-size:6pt;color:#333;}
+  @page{size:50mm 25mm;margin:0;}
+  @media print{
+    html,body{width:50mm;height:25mm;}
+    .zebra-label{width:50mm;height:25mm;margin:0;border:0;}
+  }
+</style></head><body class="print-labels-body">
+<div class="zebra-label-sheet">${labelsInnerHtml}</div>
+<script>
+window.onload=function(){
+  setTimeout(function(){
+    window.print();
+  }, 300);
+};
+<\/script></body></html>`;
+}
+
+function showZebraSendInstructions(zplContent){
+  const ip = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
+  const msg = 'ZPL file downloaded.\n\n'
+    + 'Send to Zebra (Wi-Fi ' + ip + '):\n\n'
+    + 'Mac Terminal:\n'
+    + 'cat ~/Downloads/plant-labels-*.zpl | nc ' + ip + ' 9100\n\n'
+    + 'Or paste ZPL in Zebra Setup Utilities → Open Communication.\n\n'
+    + 'Browser Print often uses wrong paper size — ZPL is recommended for Zebra.';
+  alert(msg);
+}
+
 function openPrintPlantLabels(plantIds){
   const plants = plantIds.map(getPlantById).filter(Boolean);
   if(!plants.length){ alert('No plants selected'); return; }
@@ -549,19 +594,27 @@ function openPrintPlantLabels(plantIds){
   const root = document.getElementById('modalRoot');
   const labelsHtml = plants.map(p=>`
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 44, width: 1.8 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 40, width: 1.6 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
       <div class="zebra-label-meta">${esc(p.strain)} · ${esc(p.room || '—')}</div>
       <div class="zebra-label-date">${esc(p.potDate || '')}</div>
     </div>`).join('');
+  const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
   root.innerHTML = `
   <div class="overlay" id="overlay">
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
-      <p class="sub">Code 128 for Zebra · Browser print or download ZPL<br><span class="bi">พิมพ์ผ่าน Zebra หรือดาวน์โหลด ZPL</span></p>
+      <div class="helpbox" style="margin-bottom:12px;font-size:12px;">
+        <b>Recommended for Zebra:</b> <b>Download ZPL</b> → send to printer (port 9100).<br>
+        Browser <b>Print</b> only works if Z-LABEL is installed and paper = <b>50×25 mm</b>, scale <b>100%</b>, margins <b>None</b>.
+      </div>
+      <div class="field" style="margin-bottom:10px;max-width:280px;">
+        <label>Zebra Wi-Fi IP</label>
+        <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151">
+      </div>
       <div class="row-actions" style="margin-bottom:12px">
-        <button type="button" class="primary" id="btnDoPrint">Print</button>
-        <button type="button" id="btnDownloadZpl">Download ZPL</button>
+        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (Zebra)</button>
+        <button type="button" id="btnDoPrint">Browser print</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
       <div class="zebra-label-sheet" id="zebraLabelSheet">${labelsHtml}</div>
@@ -571,12 +624,14 @@ function openPrintPlantLabels(plantIds){
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnDoPrint').onclick = ()=>{
     const sheet = document.getElementById('zebraLabelSheet');
-    const w = window.open('', '_blank', 'width=800,height=600');
+    const w = window.open('', '_blank', 'width=520,height=640');
     if(!w){ alert('Allow pop-ups to print labels'); return; }
-    w.document.write('<!DOCTYPE html><html><head><title>Plant labels</title><link rel="stylesheet" href="css/app.css"></head><body class="print-labels-body">' + sheet.innerHTML + '<script>window.onload=function(){window.print();}<\/script></body></html>');
+    w.document.write(buildPrintLabelDocument(sheet.innerHTML));
     w.document.close();
   };
   root.querySelector('#btnDownloadZpl').onclick = ()=>{
+    const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
+    localStorage.setItem('cana_zebra_ip', ip.trim());
     let zpl = '';
     plants.forEach(p=>{ zpl += buildZplLabel(p.batchId, p.strain, p.room); });
     const blob = new Blob([zpl], { type: 'text/plain' });
@@ -585,7 +640,8 @@ function openPrintPlantLabels(plantIds){
     a.download = 'plant-labels-' + todayISO() + '.zpl';
     a.click();
     URL.revokeObjectURL(a.href);
-    showDocToast('ZPL downloaded — send to Zebra printer');
+    showZebraSendInstructions(zpl);
+    showDocToast('ZPL downloaded ✓');
   };
 }
 

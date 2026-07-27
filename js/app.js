@@ -1372,14 +1372,23 @@ function mergeSharedModulesFromRemote(data){
 function mergeTrimmingFromRemote(remoteTrimming){
   if(!Array.isArray(remoteTrimming)) return;
   const remote = remoteTrimming.map(normalizeTrimRecord);
+  const local = (state.trimming || []).map(normalizeTrimRecord);
   if(!localDirty){
+    // Don't wipe local trim rows when sheet read returns empty (deploy/read glitch)
+    if(!remote.length && local.length){
+      localDirty = true;
+      debouncedPushToSheet();
+      return;
+    }
     state.trimming = remote;
     return;
   }
-  const local = (state.trimming || []).map(normalizeTrimRecord);
   const remoteIds = new Set(remote.map(r=> r.id));
   const pendingLocal = local.filter(r=> !remoteIds.has(r.id));
   if(!pendingLocal.length){
+    if(!remote.length && local.length){
+      return;
+    }
     state.trimming = remote;
     return;
   }
@@ -1390,8 +1399,26 @@ function mergeTrimmingFromRemote(remoteTrimming){
 }
 function mergeCureFromRemote(remoteSessions, remoteLog){
   if(!localDirty){
-    if(Array.isArray(remoteSessions)) state.curingSessions = remoteSessions.slice();
-    if(Array.isArray(remoteLog)) state.cureLog = remoteLog.slice().map(normalizeCureLogEntry);
+    if(Array.isArray(remoteSessions)){
+      const remote = remoteSessions.slice();
+      const local = state.curingSessions || [];
+      if(!remote.length && local.length){
+        localDirty = true;
+        debouncedPushToSheet();
+      } else {
+        state.curingSessions = remote;
+      }
+    }
+    if(Array.isArray(remoteLog)){
+      const remote = remoteLog.slice().map(normalizeCureLogEntry);
+      const local = (state.cureLog || []).map(normalizeCureLogEntry);
+      if(!remote.length && local.length){
+        localDirty = true;
+        debouncedPushToSheet();
+      } else {
+        state.cureLog = remote;
+      }
+    }
     return;
   }
   if(Array.isArray(remoteSessions)){
