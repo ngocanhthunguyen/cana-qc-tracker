@@ -716,7 +716,10 @@ function buildZplLabel(batchId, strain, room){
   return zpl;
 }
 
-function buildPrintLabelDocument(labelsInnerHtml){
+function buildPrintLabelDocument(labelsInnerHtml, labelSize){
+  labelSize = labelSize || getLabelSizeIn();
+  const w = labelSize.w + 'in';
+  const h = labelSize.h + 'in';
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Plant labels</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
@@ -724,309 +727,75 @@ function buildPrintLabelDocument(labelsInnerHtml){
   body.print-labels-body{padding:0;}
   .zebra-label-sheet{display:block;}
   .zebra-label{
-    width:2in;height:1in;padding:0.04in 0.06in;
+    width:${w};height:${h};padding:0.06in 0.08in;
     display:flex;flex-direction:column;align-items:center;justify-content:center;
     text-align:center;background:#fff;overflow:hidden;
     page-break-after:always;break-after:page;
   }
   .zebra-label:last-child{page-break-after:auto;}
-  .zebra-barcode svg{width:1.75in;max-width:1.75in;height:0.38in;}
-  .zebra-label-id{font-family:Courier New,monospace;font-size:8pt;font-weight:700;line-height:1.1;}
-  .zebra-label-meta{font-size:6.5pt;line-height:1.1;margin-top:0.02in;max-width:1.85in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .zebra-label-date{font-size:6pt;color:#333;}
-  @page{size:2in 1in;margin:0;}
+  .zebra-barcode svg{width:1.85in;max-width:1.85in;height:0.48in;}
+  .zebra-label-id{font-family:Courier New,monospace;font-size:11pt;font-weight:800;line-height:1.1;margin-top:0.04in;}
+  .zebra-label-meta{font-size:9pt;line-height:1.15;margin-top:0.03in;max-width:1.9in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  @page{size:${w} ${h};margin:0;}
   @media print{
-    html,body{width:2in;height:1in;}
-    .zebra-label{width:2in;height:1in;margin:0;border:0;}
+    html,body{width:${w};height:${h};}
+    .zebra-label{width:${w};height:${h};margin:0;border:0;}
   }
 </style></head><body class="print-labels-body">
 <div class="zebra-label-sheet">${labelsInnerHtml}</div>
 <script>
 window.onload=function(){
-  setTimeout(function(){
-    window.print();
-  }, 300);
+  setTimeout(function(){ window.print(); }, 400);
 };
 <\/script></body></html>`;
+}
+
+function buildLabelsPreviewHtml(plants){
+  return plants.map(p=>`
+    <div class="zebra-label" data-batch="${esc(p.batchId)}">
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2 })}</div>
+      <div class="zebra-label-id">${esc(p.batchId)}</div>
+      <div class="zebra-label-meta">${esc(p.strain)} - ${esc(p.room || '—')}</div>
+    </div>`).join('');
 }
 
 function buildZplForPlants(plants){
   return plants.map(p=> buildZplLabel(p.batchId, p.strain, p.room)).join('');
 }
 
-let zebraBpBaseCache = null;
-
-function zebraBrowserPrintBases(){
-  if(zebraBpBaseCache) return [zebraBpBaseCache];
-  return [
-    'https://127.0.0.1:9101',
-    'https://localhost:9101',
-    'http://127.0.0.1:9100',
-    'http://localhost:9100'
-  ];
-}
-
-function zebraBrowserPrintRequest(method, path, jsonBody){
-  const bases = zebraBrowserPrintBases();
-  function tryBase(base){
-    return new Promise((resolve, reject)=>{
-      const xhr = new XMLHttpRequest();
-      xhr.open(method, base + path, true);
-      xhr.timeout = 10000;
-      if(jsonBody != null) xhr.setRequestHeader('Content-Type', 'application/json');
-      xhr.onload = function(){
-        if(xhr.status >= 200 && xhr.status < 300){
-          resolve({ base, status: xhr.status, text: xhr.responseText || '' });
-        } else {
-          reject(new Error('HTTP ' + xhr.status + (xhr.responseText ? ': ' + xhr.responseText.slice(0, 120) : '')));
-        }
-      };
-      xhr.onerror = function(){ reject(new Error('Network blocked — allow local network in Chrome or trust https://localhost:9101')); };
-      xhr.ontimeout = function(){ reject(new Error('Timeout reaching Browser Print')); };
-      xhr.send(jsonBody != null ? JSON.stringify(jsonBody) : null);
-    });
+function openLocalLabelPrint(plants){
+  saveLabelPrintSettings();
+  const html = buildLabelsPreviewHtml(plants);
+  const w = window.open('', '_blank', 'width=520,height=720');
+  if(!w){
+    showDocToast('Allow pop-ups to print labels');
+    return false;
   }
-  return bases.reduce((chain, base)=>{
-    return chain.catch(()=> tryBase(base).then(r=>{ zebraBpBaseCache = base; return r; }));
-  }, Promise.reject()).catch(err=>{
-    zebraBpBaseCache = null;
-    throw err;
-  });
-}
-
-async function zebraBrowserPrintFetch(path, options){
-  const method = (options && options.method) || 'GET';
-  let body = null;
-  if(options && options.body){
-    try { body = JSON.parse(options.body); } catch(e){ body = options.body; }
-  }
-  const result = await zebraBrowserPrintRequest(method, path, body);
-  return {
-    base: result.base,
-    res: {
-      ok: result.status >= 200 && result.status < 300,
-      status: result.status,
-      json: async ()=> JSON.parse(result.text || '{}'),
-      text: async ()=> result.text
-    }
-  };
-}
-
-async function getZebraDefaultDevice(base){
-  try {
-    const result = await zebraBrowserPrintRequest('GET', '/default?type=printer');
-    const text = result.text;
-    if(!text || text.trim() === '{}' || !text.trim()) return null;
-    const dev = JSON.parse(text);
-    return (dev && dev.uid) ? dev : null;
-  } catch(e){
-    return null;
-  }
-}
-
-function normalizeZebraDevices(data){
-  if(!data) return [];
-  if(Array.isArray(data)) return data.filter(Boolean);
-  const lists = [data.printer, data.printerList, data.printers, data.deviceList];
-  for(const list of lists){
-    if(Array.isArray(list) && list.length) return list.filter(Boolean);
-  }
-  return [];
-}
-
-function pickZebraPrinterDevice(devices, ip){
-  if(!devices || !devices.length) return null;
-  ip = String(ip || '').trim();
-  if(ip){
-    const ipLower = ip.toLowerCase();
-    const netUid = 'net:' + ipLower + ':9100';
-    const byIp = devices.find(d=>{
-      const uid = String(d.uid || '').toLowerCase();
-      const name = String(d.name || '').toLowerCase();
-      return uid === netUid || uid.includes(ipLower) || name.includes(ipLower);
-    });
-    if(byIp) return byIp;
-  }
-  const savedUid = localStorage.getItem('cana_zebra_uid');
-  if(savedUid){
-    const byUid = devices.find(d=> d.uid === savedUid);
-    if(byUid) return byUid;
-  }
-  return devices.find(d=> /z-label|zebra|ztc/i.test(String(d.name || ''))) || devices[0];
-}
-
-function zebraDevicePayload(device){
-  return {
-    name: device.name,
-    uid: device.uid,
-    connection: device.connection,
-    deviceType: device.deviceType || 'printer',
-    version: device.version != null ? device.version : 2,
-    provider: device.provider,
-    manufacturer: device.manufacturer
-  };
-}
-
-async function probeZebraConnection(ip){
-  ip = String(ip || localStorage.getItem('cana_zebra_ip') || '192.168.1.151').trim();
-  try {
-    const { res, base } = await zebraBrowserPrintFetch('/available', { method: 'GET' });
-    const data = await res.json().catch(()=> ({}));
-    let devices = normalizeZebraDevices(data);
-    if(!devices.length){
-      const defDev = await getZebraDefaultDevice(base);
-      if(defDev) devices = [defDev];
-    }
-    const device = pickZebraPrinterDevice(devices, ip);
-    if(device && device.uid){
-      return {
-        ok: true,
-        base,
-        devices,
-        device,
-        ip,
-        message: 'Connected to ' + (device.name || device.uid)
-      };
-    }
-    if(devices.length){
-      return {
-        ok: 'partial',
-        base,
-        devices,
-        device: null,
-        ip,
-        message: 'Browser Print OK — select your printer below (no match for IP ' + ip + ')'
-      };
-    }
-    return {
-      ok: false,
-      base,
-      devices: [],
-      device: null,
-      ip,
-      message: 'Browser Print running but no printer listed — Zebra menu bar icon → Settings → add network printer ' + ip
-    };
-  } catch(e){
-    return {
-      ok: false,
-      devices: [],
-      device: null,
-      ip,
-      message: 'Not connected — run Zebra Browser Print, open https://localhost:9101 once (trust cert). Allow local network if Chrome asks.'
-    };
-  }
-}
-
-async function sendZplToZebraPrinter(zpl, ip, deviceOverride){
-  ip = String(ip || '').trim();
-  let device = deviceOverride;
-  if(!device){
-    const probe = await probeZebraConnection(ip);
-    if(!probe.ok && probe.ok !== 'partial') throw new Error(probe.message);
-    device = pickZebraPrinterDevice(probe.devices, ip) || probe.device;
-    if(!device && probe.devices.length) device = probe.devices[0];
-  }
-  if(!device || !device.uid){
-    throw new Error('No printer in Browser Print. Add Z-LABEL at ' + (ip || '192.168.1.151') + ' in the Zebra menu bar app.');
-  }
-  localStorage.setItem('cana_zebra_uid', device.uid);
-  const body = { device: zebraDevicePayload(device), data: zpl };
-  const { res } = await zebraBrowserPrintFetch('/write', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-  if(!res.ok){
-    let detail = '';
-    try { detail = (await res.text()).slice(0, 120); } catch(e){}
-    throw new Error('Print failed (HTTP ' + res.status + '). ' + (detail || 'Is the printer on and on the same Wi-Fi?'));
-  }
-  return device;
-}
-
-function openBrowserLabelPrint(labelsInnerHtml){
-  const w = window.open('', '_blank', 'width=520,height=640');
-  if(!w){ alert('Allow pop-ups to print labels'); return false; }
-  w.document.write(buildPrintLabelDocument(labelsInnerHtml));
+  w.document.write(buildPrintLabelDocument(html, getLabelSizeIn()));
   w.document.close();
+  showDocToast('Choose your Zebra printer · paper 2×1 in');
   return true;
 }
 
-async function printPlantsNow(plants, ip, deviceOverride){
+function getZplTerminalHint(ip, filename){
   ip = String(ip || localStorage.getItem('cana_zebra_ip') || '192.168.1.151').trim();
-  localStorage.setItem('cana_zebra_ip', ip);
-  const zpl = buildZplForPlants(plants);
-  try {
-    const device = await sendZplToZebraPrinter(zpl, ip, deviceOverride);
-    showDocToast('Printed on ' + (device.name || 'Zebra') + ' ✓');
-    return { ok: true, method: 'zebra', device };
-  } catch(e){
-    console.warn('Direct Zebra print failed', e);
-    return { ok: false, error: e.message || String(e) };
-  }
-}
-
-function showZebraPrintError(statusFn, errMsg){
-  if(typeof statusFn === 'function') statusFn(errMsg || 'Print failed');
-  showDocToast(errMsg || 'Could not print — check connection status above');
-}
-
-function getSelectedZebraDevice(probe){
-  const sel = document.getElementById('zebraPrinterSelect');
-  if(!sel || !sel.value || !probe || !probe.devices) return null;
-  return probe.devices.find(d=> d.uid === sel.value) || null;
-}
-
-async function refreshZebraConnUi(ip){
-  const dot = document.getElementById('zebraConnDot');
-  const text = document.getElementById('zebraConnText');
-  const field = document.getElementById('zebraPrinterField');
-  const sel = document.getElementById('zebraPrinterSelect');
-  const printBtn = document.getElementById('btnPrintNow');
-  if(text) text.textContent = 'Checking Browser Print…';
-  if(dot) dot.className = 'zebra-conn-dot pending';
-  const probe = await probeZebraConnection(ip);
-  if(dot){
-    dot.className = 'zebra-conn-dot ' + (probe.ok === true ? 'on' : probe.ok === 'partial' ? 'warn' : 'off');
-  }
-  if(text) text.textContent = probe.message;
-  if(sel && field){
-    if(probe.devices.length){
-      field.hidden = false;
-      const savedUid = localStorage.getItem('cana_zebra_uid');
-      const pickUid = (probe.device && probe.device.uid) || savedUid || probe.devices[0].uid;
-      sel.innerHTML = probe.devices.map(d=>{
-        const label = esc(d.name || d.uid) + (d.connection ? ' (' + esc(d.connection) + ')' : '');
-        return '<option value="' + esc(d.uid) + '"' + (d.uid === pickUid ? ' selected' : '') + '>' + label + '</option>';
-      }).join('');
-    } else {
-      field.hidden = true;
-      sel.innerHTML = '';
-    }
-  }
-  if(printBtn) printBtn.disabled = false;
-  const setupPanel = document.getElementById('zebraSetupPanel');
-  if(setupPanel) setupPanel.hidden = probe.ok === true;
-  return probe;
-}
-
-function openZebraTrustPage(){
-  window.open('https://localhost:9101', '_blank', 'noopener');
-  showDocToast('Trust the certificate, then click Refresh connection');
+  filename = filename || 'labels.zpl';
+  return 'nc ' + ip + ' 9100 < ~/' + (filename.includes('/') ? filename.split('/').pop() : 'Downloads/' + filename);
 }
 
 function downloadZplFile(plants){
   const zpl = buildZplForPlants(plants);
   const id = (plants[0] && plants[0].batchId) ? plants[0].batchId.replace(/[^\w-]/g, '') : 'labels';
+  const filename = id + (plants.length > 1 ? '-batch' : '') + '.zpl';
   const blob = new Blob([zpl], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = id + (plants.length > 1 ? '-batch' : '') + '.zpl';
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
-  showDocToast('ZPL file downloaded ✓');
-  return true;
+  showDocToast('ZPL downloaded ✓');
+  return filename;
 }
 
 async function copyZplToClipboard(plants){
@@ -1040,17 +809,27 @@ async function copyZplToClipboard(plants){
   }
 }
 
+function downloadPrintableLabelsHtml(plants){
+  const html = buildPrintLabelDocument(buildLabelsPreviewHtml(plants), getLabelSizeIn());
+  const id = (plants[0] && plants[0].batchId) ? plants[0].batchId.replace(/[^\w-]/g, '') : 'labels';
+  const filename = id + (plants.length > 1 ? '-batch' : '') + '-labels.html';
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  showDocToast('Labels file downloaded ✓');
+  return filename;
+}
+
 function openPrintPlantLabels(plantIds){
   const plants = plantIds.map(getPlantById).filter(Boolean);
   if(!plants.length){ alert('No plants selected'); return; }
   modalDirty = true;
   const root = document.getElementById('modalRoot');
-  const labelsHtml = plants.map(p=>`
-    <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2 })}</div>
-      <div class="zebra-label-id">${esc(p.batchId)}</div>
-      <div class="zebra-label-meta">${esc(p.strain)} · ${esc(p.room || '—')}</div>
-    </div>`).join('');
+  const labelsHtml = buildLabelsPreviewHtml(plants);
   const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
   const savedDpi = getZebraDpi();
   const labelSize = getLabelSizeIn();
@@ -1058,29 +837,14 @@ function openPrintPlantLabels(plantIds){
   <div class="overlay" id="overlay">
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
-      <div class="zebra-conn-box" id="zebraConnBox">
-        <span class="zebra-conn-dot pending" id="zebraConnDot" aria-hidden="true"></span>
-        <span id="zebraConnText">Checking Browser Print…</span>
-        <button type="button" class="ghost small" id="btnZebraRefresh">Refresh</button>
+      <div class="plant-print-help">
+        <p><b>Print on Mac</b> — opens a print window. Pick your Zebra in System Settings, paper <b>2 × 1 in</b>, scale 100%.</p>
+        <p><b>Download labels</b> — saves an HTML file; double-click to open and print (works if pop-ups are blocked).</p>
+        <p><b>ZPL (best sticker quality)</b> — download or copy, then in Terminal:<br>
+        <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/CA-P-….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
       </div>
-      <div class="zebra-setup-panel" id="zebraSetupPanel" hidden>
-        <p><b>One-time setup for Print now</b> — you need <b>Zebra Browser Print</b> (separate free app), not the Z-LABEL phone app or Zebra Setup Utilities.</p>
-        <ol class="zebra-setup-steps">
-          <li>Download <a href="https://www.zebra.com/us/en/support-downloads/printer-software/by-request-software.html" target="_blank" rel="noopener">Zebra Browser Print for Mac</a> → install → open from Applications.</li>
-          <li>Look for the <b>Zebra logo in the Mac menu bar</b> (top right, near Wi‑Fi). If missing: open Browser Print from Applications again.</li>
-          <li>Click the icon → <b>Settings</b> → in that window click <b>Manage</b> → Name: Z-LABEL, Address: <b id="zebraSetupIp">${esc(savedIp)}</b>, Port: <b>9100</b> → <b>Add</b>.</li>
-          <li>Same Settings window: tick <b>Broadcast Search</b>. Click <b>Change</b> → pick Z-LABEL → <b>Set</b> as default.</li>
-          <li>Click <b>Trust connection</b> below → Advanced → Proceed → return → <b>Refresh</b>. Status green = Print now works.</li>
-        </ol>
-        <p class="sub" style="margin:8px 0 0;font-size:11px;">No menu bar icon? You may have a different Zebra app — Browser Print is required for direct print from this website.</p>
-        <button type="button" class="ghost small" id="btnZebraTrust">Trust connection</button>
-      </div>
-      <div class="field" id="zebraPrinterField" hidden style="margin-bottom:10px;max-width:480px;">
-        <label>Printer (Browser Print)</label>
-        <select id="zebraPrinterSelect"></select>
-      </div>
-      <div class="form-grid" style="margin-bottom:10px;max-width:480px;">
-        <div class="field"><label>Zebra Wi-Fi IP</label>
+      <div class="form-grid">
+        <div class="field"><label>Printer IP (ZPL only)</label>
           <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
         <div class="field"><label>Printer DPI</label>
           <select id="zebraDpiInput">
@@ -1092,65 +856,41 @@ function openPrintPlantLabels(plantIds){
         <div class="field"><label>Label height (in)</label>
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
       </div>
-      <div class="row-actions" style="margin-bottom:12px">
-        <button type="button" class="primary" id="btnPrintNow">Print now</button>
-        <button type="button" class="ghost" id="btnDownloadZpl" title="Backup only if Browser Print is not set up">Download .zpl (backup)</button>
+      <div class="row-actions">
+        <button type="button" class="primary" id="btnPrintMac">Print on Mac</button>
+        <button type="button" class="ghost" id="btnDownloadHtml">Download labels</button>
+        <button type="button" class="ghost" id="btnDownloadZpl">Download ZPL</button>
         <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
-      <p class="sub" id="printStatusLine" style="font-size:11px;margin:0 0 8px;color:var(--muted);"></p>
+      <p class="sub" id="printStatusLine"></p>
       <div class="zebra-label-sheet" id="zebraLabelSheet">${labelsHtml}</div>
     </div>
   </div>`;
   const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
-  let lastProbe = null;
-  const runConnCheck = async ()=>{
-    saveLabelPrintSettings();
-    const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
-    lastProbe = await refreshZebraConnUi(ip);
-    return lastProbe;
-  };
+  const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
-  root.querySelector('#btnZebraRefresh').onclick = ()=> runConnCheck();
-  root.querySelector('#btnZebraTrust').onclick = ()=> openZebraTrustPage();
-  const ipInput = document.getElementById('zebraIpInput');
-  if(ipInput) ipInput.addEventListener('change', ()=>{
-    const setupIp = document.getElementById('zebraSetupIp');
-    if(setupIp) setupIp.textContent = ipInput.value || savedIp;
-    runConnCheck();
-  });
-  const printerSel = document.getElementById('zebraPrinterSelect');
-  if(printerSel) printerSel.addEventListener('change', ()=>{
-    localStorage.setItem('cana_zebra_uid', printerSel.value);
-  });
-  runConnCheck();
+  root.querySelector('#btnPrintMac').onclick = ()=>{
+    saveLabelPrintSettings();
+    if(openLocalLabelPrint(plants)) setStatus('Print dialog opened — pick Zebra, 2×1 in paper');
+    else setStatus('Pop-up blocked — use Download labels instead');
+  };
+  root.querySelector('#btnDownloadHtml').onclick = ()=>{
+    saveLabelPrintSettings();
+    const fn = downloadPrintableLabelsHtml(plants);
+    setStatus('Saved to Downloads/' + fn + ' — open file, then print');
+  };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
     saveLabelPrintSettings();
-    if(await copyZplToClipboard(plants)) setStatus('ZPL copied ✓');
-    else setStatus('Copy failed — try Download .zpl');
+    if(await copyZplToClipboard(plants)){
+      setStatus('Copied — run in Terminal: pbpaste | nc ' + getIp() + ' 9100');
+    } else setStatus('Copy failed — try Download ZPL');
   };
   root.querySelector('#btnDownloadZpl').onclick = ()=>{
     saveLabelPrintSettings();
-    downloadZplFile(plants);
-    setStatus('Saved .zpl file — open with Zebra Browser Print or your Zebra tool');
-  };
-  root.querySelector('#btnPrintNow').onclick = async ()=>{
-    const btn = root.querySelector('#btnPrintNow');
-    saveLabelPrintSettings();
-    const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
-    const deviceOverride = getSelectedZebraDevice(lastProbe);
-    btn.disabled = true;
-    setStatus('Sending to Z-LABEL…');
-    const result = await printPlantsNow(plants, ip, deviceOverride);
-    btn.disabled = false;
-    if(result.ok){
-      setStatus('Printed on ' + ((result.device && result.device.name) || 'Z-LABEL') + ' ✓');
-      await runConnCheck();
-      return;
-    }
-    showZebraPrintError(setStatus, result.error);
-    await runConnCheck();
+    const fn = downloadZplFile(plants);
+    setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
   };
 }
 
