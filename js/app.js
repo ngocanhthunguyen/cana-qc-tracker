@@ -4217,7 +4217,7 @@ function renderCureLogCardList(logs){
 }
 function renderCureSessionsTable(sessions){
   if(!sessions.length){
-    return `<div class="panel empty-state"><b>No cure sessions for this month.</b><br>Start a room cure after <b>Trim Cana</b> is logged.<br><span class="bi">เริ่ม cure หลังทริม Cana · หลายสายพันธุ์ในห้องเดียวได้</span></div>`;
+    return `<div class="panel empty-state"><b>No cure sessions for this month.</b><br>Type room & strain name(s) when creating a session — Trim Cana link is optional.<br><span class="bi">พิมพ์ห้องและชื่อสายพันธุ์เองได้ · ไม่ต้องมีหลายสายพันธุ์ในห้อง</span></div>`;
   }
   const body = sessions.map(s=>{
     const days = daysInCure(s);
@@ -4356,7 +4356,7 @@ function renderCuringView(){
     <div class="cana-header">
       <div>
         <h2>🌡️ Curing — Cana flower only</h2>
-        <p class="sub">After <b>Trim Cana</b> · room-based cure · each burp/flip = one log row · Syncs to <b>Cure Sessions</b> + <b>Cure Log</b> sheets<br><span class="bi">หลังทริม Cana · บันทึกทีละ action · หลายสายพันธุ์ในห้องเดียว</span></p>
+        <p class="sub">After <b>Trim Cana</b> or manual entry · room-based cure · each burp/flip = one log row · Syncs to <b>Cure Sessions</b> + <b>Cure Log</b> sheets<br><span class="bi">พิมพ์ชื่อสายพันธุ์เองได้ · ไม่จำเป็นต้องหลายสายพันธุ์ในห้อง · ดอกนอกที่นำกลับมาก็บันทึกได้</span></p>
       </div>
       <div class="cana-header-meta">
         <span class="doc-badge">${activeCount} active cure${activeCount===1?'':'s'}</span>
@@ -4407,6 +4407,20 @@ function bindCuringActions(root){
   root.querySelectorAll('[data-delete-cure-log]').forEach(el=> el.onclick = ()=> deleteCureLogEntry(el.dataset.deleteCureLog));
   updateAdminUI();
 }
+function renderCureSessionManualFields(rec){
+  return `
+        <div class="helpbox full" style="font-size:12px;margin-bottom:4px;padding:10px 12px;">
+          <b>Type room & strain name(s) below</b> — one strain is fine. Comma for several (e.g. MAC 1, Gelato). Outside flower brought back? Put that in room or notes.<br>
+          <span class="bi">พิมพ์ห้องและสายพันธุ์เอง · ไม่จำเป็นต้องมีหลายสายพันธุ์ · ดอกนอกที่นำกลับมาก็บันทึกได้</span>
+        </div>
+        <div class="field"><label>Room / location <span style="font-weight:400;color:var(--muted)">ห้อง</span></label>
+          <input type="text" name="room" value="${esc(rec.room || '')}" required placeholder="e.g. 3, Veg room, Outside dry">
+        </div>
+        <div class="field full"><label>Strain name(s) <span style="font-weight:400;color:var(--muted)">พิมพ์ชื่อสายพันธุ์</span></label>
+          <input type="text" name="strains" value="${esc(rec.strains || '')}" required placeholder="e.g. MAC 1  or  Diodlo, Cherry Soap">
+          <p class="sub" style="margin:6px 0 0;font-size:11px;color:var(--muted);">One or many — comma-separated. Does not have to match a Trim Cana session.</p>
+        </div>`;
+}
 function openCureSessionModal(id){
   if(!requireLogin()) return;
   const rec = id ? {...getCureSession(id)} : {
@@ -4417,13 +4431,16 @@ function openCureSessionModal(id){
   const isNew = !id;
   const trimOpts = getCanaTrimRecords();
   const trimPickHtml = trimOpts.length ? `
-    <div class="field full">
-      <label>Pick from Trim Cana <span>เลือกจากทริม Cana</span></label>
-      <select id="cureTrimPick"><option value="">— optional —</option>
-        ${trimOpts.map(t=>`<option value="${esc(t.id)}">${esc(canaTrimOptionLabel(t))}</option>`).join('')}
-      </select>
-      <p class="sub" style="margin:6px 0 0;font-size:11px;color:var(--muted);">Fills room + strains from selected trim session</p>
-    </div>` : '';
+    <details class="field full cure-trim-link">
+      <summary style="cursor:pointer;font-weight:600;font-size:13px;">Link from Trim Cana (optional) <span style="font-weight:400;color:var(--muted)">/ เชื่อมจากทริม Cana</span></summary>
+      <div style="margin-top:10px;">
+        <select id="cureTrimPick"><option value="">— skip, type manually above —</option>
+          ${trimOpts.map(t=>`<option value="${esc(t.id)}">${esc(canaTrimOptionLabel(t))}</option>`).join('')}
+        </select>
+        <p class="sub" style="margin:6px 0 0;font-size:11px;color:var(--muted);">Shortcut only — fills room & strain if empty, or appends strain to what you typed.</p>
+      </div>
+    </details>` : '';
+  const otherCols = CURE_SESSION_COLS.filter(c=> c.key !== 'room' && c.key !== 'strains');
   modalDirty = !isNew;
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
@@ -4431,8 +4448,9 @@ function openCureSessionModal(id){
     <div class="modal" style="max-width:720px">
       <h2>${isNew ? '+ New cure session' : 'Edit cure session'} — Cana flower</h2>
       <form id="cureSessionForm" class="form-grid">
+        ${renderCureSessionManualFields(rec)}
         ${trimPickHtml}
-        ${CURE_SESSION_COLS.map(c=> fieldHtml(c, rec[c.key] || '')).join('')}
+        ${otherCols.map(c=> fieldHtml(c, rec[c.key] || '')).join('')}
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelCure">Cancel</button>
           <button type="submit" class="primary">Save</button>
@@ -4449,11 +4467,17 @@ function openCureSessionModal(id){
       const t = trimOpts.find(x=> x.id === trimPick.value);
       if(!t) return;
       const form = root.querySelector('#cureSessionForm');
-      if(form.querySelector('[name=room]')) form.querySelector('[name=room]').value = t.room || '';
-      if(form.querySelector('[name=strains]')){
-        const existing = form.querySelector('[name=strains]').value.trim();
-        const add = t.strain || '';
-        form.querySelector('[name=strains]').value = existing ? (existing + ', ' + add) : add;
+      const roomEl = form.querySelector('[name=room]');
+      const strainsEl = form.querySelector('[name=strains]');
+      if(roomEl && !roomEl.value.trim()) roomEl.value = t.room || '';
+      if(strainsEl){
+        const existing = strainsEl.value.trim();
+        const add = (t.strain || '').trim();
+        if(!add) return;
+        if(!existing) strainsEl.value = add;
+        else if(!existing.toLowerCase().split(/\s*,\s*/).includes(add.toLowerCase())){
+          strainsEl.value = existing + ', ' + add;
+        }
       }
       if(form.querySelector('[name=linkedTrimIds]')){
         const ids = form.querySelector('[name=linkedTrimIds]').value.trim();
@@ -4468,6 +4492,10 @@ function openCureSessionModal(id){
     e.preventDefault();
     const updated = {...rec};
     CURE_SESSION_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    if(!updated.room || !updated.strains){
+      alert('Room and at least one strain name are required.\nกรุณาใส่ห้องและชื่อสายพันธุ์');
+      return;
+    }
     applyUserAttribution(updated, ['assignedTo']);
     if((updated.status||'').indexOf('Complete') >= 0 && !updated.endDate) updated.endDate = todayISO();
     if(!state.curingSessions) state.curingSessions = [];

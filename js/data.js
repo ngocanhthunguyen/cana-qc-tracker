@@ -172,7 +172,7 @@ const STOCK_CROP_AGE_OPTIONS = ['New / ใหม่', 'Old / เก่า'];
 
 const CURE_SESSION_COLS = [
   {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
-  {key:'strains', label:'Strains in cure', labelTh:'สายพันธุ์ (คั่นด้วย comma)', type:'textarea'},
+  {key:'strains', label:'Strain name(s)', labelTh:'พิมพ์ชื่อสายพันธุ์', type:'text'},
   {key:'linkedTrimIds', label:'Linked trim IDs', labelTh:'อ้างอิง Trim Cana (optional)', type:'text'},
   {key:'startDate', label:'Start date', labelTh:'วันเริ่ม cure', type:'date'},
   {key:'targetDays', label:'Target days', labelTh:'เป้าหมาย (วัน)', type:'number'},
