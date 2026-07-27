@@ -972,7 +972,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -1213,6 +1213,7 @@ function readAllFarms() {
     curingSessions: readCureSessions(ss),
     cureLog: readCureLog(ss),
     canaStock: readCanaStock(ss),
+    plants: readPlants(ss),
     exportLog: readExportLog(ss),
     exportCompanies: readExportCompaniesFromMeta(ss) || [{ id: 'bls', name: 'BLS', templateId: 'bls' }],
     farmList: farmList,
@@ -1279,7 +1280,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1287,6 +1288,7 @@ function writeAllFarms(state) {
   if (state.curingSessions !== undefined) writeCureSessions(ss, state.curingSessions);
   if (state.cureLog !== undefined) writeCureLog(ss, state.cureLog);
   if (state.canaStock !== undefined) writeCanaStock(ss, state.canaStock);
+  if (state.plants !== undefined) writePlants(ss, state.plants);
   if (state.exportLog) writeExportLog(ss, state.exportLog);
   if (state.exportCompanies) writeExportCompanies(ss, state.exportCompanies);
   updateMeta(ss);
@@ -1647,7 +1649,7 @@ var TRIM_TYPE_LEGACY_DAILY = 'Rework flower';
 var TRIM_TYPE_CANA = 'Cana flower';
 var TRIM_DAILY_HEADERS = ['_id', 'Date', 'Total Trimmed (g)', 'Hours Worked', 'Trimmed By', 'Strains / Notes', 'Status', 'Speed (g/hr)'];
 var TRIM_DAILY_NUM_COLS = TRIM_DAILY_HEADERS.length;
-var TRIM_CANA_HEADERS = ['_id', 'Date', 'Harvest Date', 'Room', 'Strain', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Hours Worked', 'Trimmed By', 'Status', 'Notes'];
+var TRIM_CANA_HEADERS = ['_id', 'Date', 'Harvest Date', 'Room', 'Strain', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked Plant Batch IDs'];
 var TRIM_CANA_NUM_COLS = TRIM_CANA_HEADERS.length;
 /** Legacy unified headers — read-only for migration */
 var TRIM_FULL_HEADERS = ['_id', 'Date', 'Harvest Date', 'Source Farm', 'Room', 'Batch ID', 'Strain', 'Input Wt (g)', 'Finished Flower (g)', 'Out Bigs (g)', 'Out Pops (g)', 'Mold (g)', 'Seeds (g)', 'Stems (g)', 'Waste (g)', 'Total Flower (g)', 'Total Out (g)', 'Diff (g)', 'Yield %', 'Hours Worked', 'Trimmed By', 'Status', 'Notes', 'Linked QC ID'];
@@ -1840,6 +1842,7 @@ function parseTrimCanaRow(row) {
   rec.trimmedBy = String(row[15] || '');
   rec.status = String(row[16] || '');
   rec.notes = String(row[17] || '');
+  rec.linkedPlantBatchIds = row.length > 18 ? String(row[18] || '') : '';
   rec.sourceFarm = 'Cana';
   return rec;
 }
@@ -1864,7 +1867,8 @@ function canaRowToValues(rec) {
     rec.hoursWorked || '',
     rec.trimmedBy || '',
     rec.status || '',
-    rec.notes || ''
+    rec.notes || '',
+    rec.linkedPlantBatchIds || ''
   ];
 }
 
@@ -2151,7 +2155,7 @@ var CURE_LOG_HEADERS = ['_id', 'Session ID', 'Date', 'Time', 'Room', 'Action', '
 var CURE_LOG_NUM_COLS = CURE_LOG_HEADERS.length;
 
 var CANA_STOCK_SHEET = 'Cana Stock';
-var CANA_STOCK_HEADERS = ['_id', 'Strain', 'Room', 'Qty (g)', 'Status', 'Harvest Date', 'Trim Date', 'Linked Trim ID', 'Notes', 'Bigs (g)', 'Pops (g)', 'Flower Type', 'Crop Age', 'Updated At', 'Updated By'];
+var CANA_STOCK_HEADERS = ['_id', 'Strain', 'Room', 'Qty (g)', 'Status', 'Harvest Date', 'Trim Date', 'Linked Trim ID', 'Notes', 'Bigs (g)', 'Pops (g)', 'Flower Type', 'Crop Age', 'Updated At', 'Updated By', 'Linked Plant Batch IDs'];
 var CANA_STOCK_NUM_COLS = CANA_STOCK_HEADERS.length;
 
 var CANA_FLOWER_HEADER_ROW = 3;
@@ -2335,6 +2339,7 @@ function readCanaStock(ss) {
     trimDate: canaStockColIndex(headerRow, 'Trim Date', 6),
     linkedTrimId: canaStockColIndex(headerRow, 'Linked Trim ID', 7),
     notes: canaStockColIndex(headerRow, 'Notes', 8),
+    linkedPlantBatchIds: canaStockColIndex(headerRow, 'Linked Plant Batch IDs', -1),
     bigsG: canaStockColIndex(headerRow, 'Bigs (g)', -1),
     popsG: canaStockColIndex(headerRow, 'Pops (g)', -1),
     flowerType: canaStockColIndex(headerRow, 'Flower Type', -1),
@@ -2360,6 +2365,7 @@ function readCanaStock(ss) {
       trimDate: idx.trimDate >= 0 ? formatSheetDate(row[idx.trimDate]) : '',
       linkedTrimId: idx.linkedTrimId >= 0 ? String(row[idx.linkedTrimId] || '') : '',
       notes: idx.notes >= 0 ? String(row[idx.notes] || '') : '',
+      linkedPlantBatchIds: idx.linkedPlantBatchIds >= 0 ? String(row[idx.linkedPlantBatchIds] || '') : '',
       bigsG: bigsG,
       popsG: popsG,
       flowerType: idx.flowerType >= 0 ? String(row[idx.flowerType] || '') : '',
@@ -2392,7 +2398,8 @@ function writeCanaStock(ss, stock) {
       s.flowerType || '',
       s.cropAge || '',
       s.updatedAt || '',
-      s.updatedBy || ''
+      s.updatedBy || '',
+      s.linkedPlantBatchIds || ''
     ];
   });
   if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
@@ -2420,6 +2427,90 @@ function upgradeCanaFlowerTabs() {
   orderTabs(ss);
   SpreadsheetApp.flush();
   Logger.log('Cure Sessions, Cure Log, Cana Stock tabs ready. Spreadsheet TZ set to Asia/Bangkok.');
+}
+
+/* ---------- Plant Registry — potting IDs + barcodes ---------- */
+
+var PLANT_REGISTRY_SHEET = 'Plant Registry';
+var PLANT_REGISTRY_HEADERS = ['_id', 'Batch ID', 'Strain', 'Pot Date', 'Current Room', 'Status', 'Source', 'Harvest Date', 'Linked Trim ID', 'Transfer Batch Ref', 'Room History', 'Notes', 'Created By', 'Created At'];
+var PLANT_REGISTRY_NUM_COLS = PLANT_REGISTRY_HEADERS.length;
+
+function readPlants(ss) {
+  ss = ss || getSpreadsheet();
+  var sheet = ss.getSheetByName(PLANT_REGISTRY_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, PLANT_REGISTRY_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[2]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      batchId: String(row[1] || ''),
+      strain: String(row[2] || ''),
+      potDate: formatSheetDate(row[3]),
+      room: String(row[4] || ''),
+      status: String(row[5] || ''),
+      sourceFarm: String(row[6] || ''),
+      harvestDate: formatSheetDate(row[7]),
+      linkedTrimId: String(row[8] || ''),
+      transferBatchRef: String(row[9] || ''),
+      roomHistory: String(row[10] || ''),
+      notes: String(row[11] || ''),
+      createdBy: String(row[12] || ''),
+      createdAt: String(row[13] || '')
+    });
+  });
+  return list;
+}
+
+function writePlants(ss, plants) {
+  setupCanaFlowerTab(ss, PLANT_REGISTRY_SHEET, 'CANA QC TRACKER  ·  PLANT REGISTRY',
+    'One batch ID per plant at potting · Code128 barcodes · links to Trim Cana & Stock',
+    '#15803d', PLANT_REGISTRY_HEADERS);
+  var sheet = ss.getSheetByName(PLANT_REGISTRY_SHEET);
+  var rows = (plants || []).map(function(p) {
+    return [
+      p.id || newId(),
+      p.batchId || '',
+      p.strain || '',
+      p.potDate || '',
+      p.room || '',
+      p.status || '',
+      p.sourceFarm || '',
+      p.harvestDate || '',
+      p.linkedTrimId || '',
+      p.transferBatchRef || '',
+      p.roomHistory || '',
+      p.notes || '',
+      p.createdBy || '',
+      p.createdAt || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, PLANT_REGISTRY_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, PLANT_REGISTRY_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, PLANT_REGISTRY_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : THEME.greenPale)
+        .setFontSize(10).setWrap(true);
+    }
+    sheet.getRange(CANA_FLOWER_DATA_START, 2, rows.length, 1).setFontFamily('Courier New').setFontWeight('bold');
+  }
+}
+
+/** Run once — creates Plant Registry tab */
+function upgradePlantRegistryTab() {
+  var ss = getSpreadsheet();
+  writePlants(ss, readPlants(ss));
+  writeTrimming(ss, readTrimming(ss));
+  writeCanaStock(ss, readCanaStock(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Plant Registry tab ready. Run after deploying latest script.');
 }
 
 /* ---------- Export Log tab ---------- */

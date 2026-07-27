@@ -117,6 +117,7 @@ function defaultState(){
     curingSessions: [],
     cureLog: [],
     canaStock: [],
+    plants: [],
     exportLog: [],
     exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }]
   };
@@ -147,7 +148,7 @@ const TRIMMING_COLS = [
   {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: TRIM_STATUS_OPTIONS},
   {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
 ];
-const TRIM_SAVE_KEYS = ['date','harvestDate','sourceFarm','room','batchId','strain','inputWt','finishedFlowerG','outputBigsG','outputPopsG','moldG','seedsG','stemsG','wasteG','hoursWorked','trimmedBy','status','notes'];
+const TRIM_SAVE_KEYS = ['date','harvestDate','sourceFarm','room','batchId','strain','inputWt','finishedFlowerG','outputBigsG','outputPopsG','moldG','seedsG','stemsG','wasteG','hoursWorked','trimmedBy','status','notes','linkedPlantBatchIds'];
 const TRIMMING_GREY = [
   {key:'totalFlower', label:'Total flower out (g)', labelTh:'ดอกรวม (กรัม)'},
   {key:'totalOut', label:'Total out (g)', labelTh:'รวมออก (กรัม)'},
@@ -208,11 +209,12 @@ const CANA_STOCK_COLS = [
   {key:'harvestDate', label:'Harvest date', labelTh:'วันเก็บเกี่ยว', type:'date'},
   {key:'trimDate', label:'Trim date', labelTh:'วันทริม', type:'date'},
   {key:'linkedTrimId', label:'Linked trim ID', labelTh:'อ้างอิง Trim Cana', type:'text'},
+  {key:'linkedPlantBatchIds', label:'Linked plant batch IDs', labelTh:'รหัสต้น (CA-P-…)', type:'textarea'},
   {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'text'},
   {key:'updatedAt', label:'Updated', labelTh:'อัปเดต', type:'date'},
   {key:'updatedBy', label:'Updated by', labelTh:'โดย', type:'text'},
 ];
-const CANA_STOCK_KEYS = ['strain','room','flowerType','cropAge','bigsG','popsG','qtyG','status','harvestDate','trimDate','linkedTrimId','notes','updatedAt','updatedBy'];
+const CANA_STOCK_KEYS = ['strain','room','flowerType','cropAge','bigsG','popsG','qtyG','status','harvestDate','trimDate','linkedTrimId','linkedPlantBatchIds','notes','updatedAt','updatedBy'];
 
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 

@@ -5,7 +5,7 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
@@ -121,6 +121,7 @@ function normalizeTrimRecord(rec){
   if(rec.room === undefined) rec.room = '';
   if(rec.finishedFlowerG === undefined) rec.finishedFlowerG = '';
   if(rec.hoursWorked === undefined) rec.hoursWorked = '';
+  if(rec.linkedPlantBatchIds === undefined) rec.linkedPlantBatchIds = '';
   return rec;
 }
 function computeTrimStaffDaily(records){
@@ -215,6 +216,7 @@ function getTrimColsForTab(tab){
       {key:'hoursWorked', label:'Hours worked', labelTh:'ชั่วโมงทำงาน (ต่อ session)', type:'number'},
       {key:'trimmedBy', label:'Trimmed by', labelTh:'ทำโดย', type:'text'},
       {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: TRIM_STATUS_OPTIONS},
+      {key:'linkedPlantBatchIds', label:'Linked plant IDs (CA-P-…)', labelTh:'รหัสต้น', type:'textarea'},
       {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
     ];
   }
@@ -1007,6 +1009,8 @@ function ensureStateShape(){
   if(!state.cureLog) state.cureLog = [];
   state.cureLog = state.cureLog.map(normalizeCureLogEntry);
   if(!state.canaStock) state.canaStock = [];
+  if(!state.plants) state.plants = [];
+  state.plants = state.plants.map(normalizePlant);
   if(!state.exportLog) state.exportLog = [];
   if(!state.exportCompanies || !state.exportCompanies.length){
     state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
@@ -1359,6 +1363,7 @@ function mergeSharedModulesFromRemote(data){
   mergeTrimmingFromRemote(data.trimming);
   mergeCureFromRemote(data.curingSessions, data.cureLog);
   mergeCanaStockFromRemote(data.canaStock);
+  mergePlantsFromRemote(data.plants);
   if(!localDirty && Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
   if(!localDirty && Array.isArray(data.exportCompanies) && data.exportCompanies.length){
     state.exportCompanies = data.exportCompanies.slice();
@@ -1470,7 +1475,8 @@ function sharedModulesFingerprint(){
     trimming: state.trimming || [],
     curingSessions: state.curingSessions || [],
     cureLog: state.cureLog || [],
-    canaStock: state.canaStock || []
+    canaStock: state.canaStock || [],
+    plants: state.plants || []
   });
 }
 function mergeDocumentsFromRemote(remoteDocs){
@@ -1527,6 +1533,7 @@ function stateFingerprint(){
     curingSessions: state.curingSessions || [],
     cureLog: state.cureLog || [],
     canaStock: state.canaStock || [],
+    plants: state.plants || [],
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || []
   });
@@ -1664,6 +1671,7 @@ async function pullFromGoogleSheet(silent){
       curingSessions: data.curingSessions || [],
       cureLog: data.cureLog || [],
       canaStock: data.canaStock || [],
+      plants: data.plants || [],
       exportLog: data.exportLog || [],
       exportCompanies: data.exportCompanies || []
     });
@@ -1729,6 +1737,7 @@ async function pushToGoogleSheet(silent){
         curingSessions: state.curingSessions || [],
         cureLog: state.cureLog || [],
         canaStock: state.canaStock || [],
+        plants: state.plants || [],
         exportLog: state.exportLog || [],
         exportCompanies: state.exportCompanies || []
       }
@@ -2247,6 +2256,7 @@ function buildStateForStorage(){
     curingSessions: state.curingSessions || [],
     cureLog: state.cureLog || [],
     canaStock: state.canaStock || [],
+    plants: state.plants || [],
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || []
   };
@@ -3128,6 +3138,7 @@ function render(){
   else if(currentView==='allFarms') renderAllFarmsView();
   else if(currentView==='trimming') renderTrimmingView();
   else if(currentView==='curing') renderCuringView();
+  else if(currentView==='plants') renderPlantsView();
   else if(currentView==='canaStock') renderCanaStockView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
@@ -3165,6 +3176,7 @@ function renderTabs(){
   nav.appendChild(navBtn('🌐 All Farms', currentView === 'allFarms', ()=>{ currentView = 'allFarms'; render(); }));
   nav.appendChild(navBtn('✂️ Trimming', currentView === 'trimming', ()=>{ currentView = 'trimming'; render(); }));
   nav.appendChild(navBtn('🌡️ Curing', currentView === 'curing', ()=>{ currentView = 'curing'; render(); }));
+  nav.appendChild(navBtn('🌱 Plants', currentView === 'plants', ()=>{ currentView = 'plants'; plantSelectedIds.clear(); render(); }));
   if(isManager()){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
   }
@@ -3735,7 +3747,7 @@ function openTrimmingModal(id){
   const rec = id ? normalizeTrimRecord({...(state.trimming||[]).find(r=>r.id===id)}) : normalizeTrimRecord({
     id: uid(), type, date: todayISO(), harvestDate: '', sourceFarm: type === 'Cana flower' ? 'Cana' : '',
     room:'', batchId:'', linkedRecordId:'', strain:'', inputWt:'', finishedFlowerG:'', outputBigsG:'', outputPopsG:'',
-    moldG:'', seedsG:'', stemsG:'', wasteG:'', hoursWorked:'', trimmedBy: getCurrentUserName(), status: TRIM_STATUS_OPTIONS[0], notes:''
+    moldG:'', seedsG:'', stemsG:'', wasteG:'', hoursWorked:'', trimmedBy: getCurrentUserName(), status: TRIM_STATUS_OPTIONS[0], notes:'', linkedPlantBatchIds:''
   });
   if(!rec) return;
   const isNew = !id;
@@ -4399,7 +4411,7 @@ function openCanaStockModal(id, prefill){
   if(!requireLogin()) return;
   const rec = id ? {...(state.canaStock||[]).find(s=> s.id === id)} : {
     id: uid(), strain:'', room:'', flowerType:'', cropAge:'', bigsG:'', popsG:'', qtyG:'',
-    status: STOCK_STATUS_OPTIONS[0], harvestDate:'', trimDate:'', linkedTrimId:'', notes:'',
+    status: STOCK_STATUS_OPTIONS[0], harvestDate:'', trimDate:'', linkedTrimId:'', linkedPlantBatchIds:'', notes:'',
     updatedAt: todayISO(), updatedBy:''
   };
   if(prefill) Object.assign(rec, prefill);
@@ -4498,6 +4510,7 @@ function openCanaStockFromTrimModal(){
       harvestDate: t.harvestDate || '',
       trimDate: t.date || '',
       linkedTrimId: t.id,
+      linkedPlantBatchIds: t.linkedPlantBatchIds || '',
       status: STOCK_STATUS_OPTIONS[0]
     });
   };
