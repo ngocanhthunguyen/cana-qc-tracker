@@ -156,6 +156,7 @@ function renderPlantsView(){
     <div class="plant-scan-row">
       <label class="plant-scan-label">🔍 Scan barcode <span class="bi">/ สแกน</span></label>
       <input class="search-box plant-scan-input" id="plantScanInput" placeholder="Scan or type CA-P-000001 then Enter" autocomplete="off">
+      <button type="button" class="primary" id="btnPlantCamera">📷 Camera <span class="bi">/ กล้อง</span></button>
       <button type="button" class="ghost" id="btnPlantTrace">Trace ID</button>
     </div>
     <input class="search-box" id="plantSearchBox" placeholder="Search strain, room, batch ID…" value="${esc(plantSearchText)}" style="margin-bottom:12px;width:100%;max-width:420px;">
@@ -180,7 +181,94 @@ function renderPlantsView(){
     const id = scanInput.value.trim() || prompt('Enter plant batch ID (CA-P-…):', '');
     if(id) openPlantTraceModal(id);
   };
+  document.getElementById('btnPlantCamera').onclick = ()=> openPlantCameraScanModal();
   bindPlantActions(main);
+}
+
+function parsePlantScanCode(raw){
+  const s = String(raw || '').trim().toUpperCase();
+  const m = s.match(/CA-P-\d+/);
+  return m ? m[0] : s;
+}
+
+let plantCameraScanner = null;
+
+async function stopPlantCameraScanner(){
+  if(!plantCameraScanner) return;
+  try {
+    await plantCameraScanner.stop();
+  } catch(e){}
+  try {
+    plantCameraScanner.clear();
+  } catch(e){}
+  plantCameraScanner = null;
+}
+
+async function openPlantCameraScanModal(){
+  if(!requireLogin()) return;
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal plant-camera-modal">
+      <h2>📷 Scan barcode</h2>
+      <p class="sub">Point phone at sticker <code>CA-P-…</code> · allow camera<br><span class="bi">เล็งกล้องที่สติ๊กเกอร์ · อนุญาตใช้กล้อง</span></p>
+      <div id="plantCameraReader" class="plant-camera-reader"></div>
+      <p class="sub" id="plantCameraStatus">Starting camera…</p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btnCameraClose">Close</button>
+      </div>
+    </div>
+  </div>`;
+  const close = async ()=>{
+    await stopPlantCameraScanner();
+    modalDirty = false;
+    closeModal();
+  };
+  root.querySelector('#btnCameraClose').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+
+  const statusEl = document.getElementById('plantCameraStatus');
+  if(typeof Html5Qrcode === 'undefined'){
+    statusEl.textContent = 'Scanner not loaded — hard refresh the page.';
+    return;
+  }
+
+  const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
+    ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39]
+    : undefined;
+  const boxW = Math.min(320, Math.max(240, window.innerWidth - 56));
+  plantCameraScanner = new Html5Qrcode('plantCameraReader');
+  const config = {
+    fps: 12,
+    qrbox: { width: boxW, height: Math.round(boxW * 0.35) },
+    aspectRatio: 1.777
+  };
+  if(formats) config.formatsToSupport = formats;
+
+  try {
+    await plantCameraScanner.start(
+      { facingMode: 'environment' },
+      config,
+      (decodedText)=>{
+        const code = parsePlantScanCode(decodedText);
+        if(!/^CA-P-\d+$/i.test(code)){
+          statusEl.textContent = 'Read: ' + decodedText + ' — not a plant ID (need CA-P-…)';
+          return;
+        }
+        stopPlantCameraScanner().then(()=>{
+          modalDirty = false;
+          closeModal();
+          handlePlantScan(code);
+        });
+      },
+      ()=>{}
+    );
+    statusEl.textContent = 'Ready — hold barcode steady in the box';
+  } catch(err){
+    statusEl.textContent = 'Camera blocked — allow camera in Safari/Chrome settings, or type ID manually.';
+    console.warn('Camera scan failed', err);
+  }
 }
 
 function updatePlantResults(){
@@ -255,7 +343,7 @@ function updatePlantToolbarState(){
 }
 
 function handlePlantScan(raw){
-  const code = String(raw || '').trim().toUpperCase();
+  const code = parsePlantScanCode(raw);
   if(!code) return;
   const plant = getPlantByBatchId(code);
   if(!plant){
@@ -628,6 +716,74 @@ function buildZplForPlants(plants){
 
 let zebraBpBaseCache = null;
 
+function zebraBrowserPrintBases(){
+  if(zebraBpBaseCache) return [zebraBpBaseCache];
+  return [
+    'https://127.0.0.1:9101',
+    'https://localhost:9101',
+    'http://127.0.0.1:9100',
+    'http://localhost:9100'
+  ];
+}
+
+function zebraBrowserPrintRequest(method, path, jsonBody){
+  const bases = zebraBrowserPrintBases();
+  function tryBase(base){
+    return new Promise((resolve, reject)=>{
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, base + path, true);
+      xhr.timeout = 10000;
+      if(jsonBody != null) xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.onload = function(){
+        if(xhr.status >= 200 && xhr.status < 300){
+          resolve({ base, status: xhr.status, text: xhr.responseText || '' });
+        } else {
+          reject(new Error('HTTP ' + xhr.status + (xhr.responseText ? ': ' + xhr.responseText.slice(0, 120) : '')));
+        }
+      };
+      xhr.onerror = function(){ reject(new Error('Network blocked — allow local network in Chrome or trust https://localhost:9101')); };
+      xhr.ontimeout = function(){ reject(new Error('Timeout reaching Browser Print')); };
+      xhr.send(jsonBody != null ? JSON.stringify(jsonBody) : null);
+    });
+  }
+  return bases.reduce((chain, base)=>{
+    return chain.catch(()=> tryBase(base).then(r=>{ zebraBpBaseCache = base; return r; }));
+  }, Promise.reject()).catch(err=>{
+    zebraBpBaseCache = null;
+    throw err;
+  });
+}
+
+async function zebraBrowserPrintFetch(path, options){
+  const method = (options && options.method) || 'GET';
+  let body = null;
+  if(options && options.body){
+    try { body = JSON.parse(options.body); } catch(e){ body = options.body; }
+  }
+  const result = await zebraBrowserPrintRequest(method, path, body);
+  return {
+    base: result.base,
+    res: {
+      ok: result.status >= 200 && result.status < 300,
+      status: result.status,
+      json: async ()=> JSON.parse(result.text || '{}'),
+      text: async ()=> result.text
+    }
+  };
+}
+
+async function getZebraDefaultDevice(base){
+  try {
+    const result = await zebraBrowserPrintRequest('GET', '/default?type=printer');
+    const text = result.text;
+    if(!text || text.trim() === '{}' || !text.trim()) return null;
+    const dev = JSON.parse(text);
+    return (dev && dev.uid) ? dev : null;
+  } catch(e){
+    return null;
+  }
+}
+
 function normalizeZebraDevices(data){
   if(!data) return [];
   if(Array.isArray(data)) return data.filter(Boolean);
@@ -636,40 +792,6 @@ function normalizeZebraDevices(data){
     if(Array.isArray(list) && list.length) return list.filter(Boolean);
   }
   return [];
-}
-
-async function zebraBrowserPrintFetch(path, options){
-  const bases = zebraBpBaseCache
-    ? [zebraBpBaseCache]
-    : [
-        'https://127.0.0.1:9101',
-        'https://localhost:9101',
-        'http://127.0.0.1:9100',
-        'http://localhost:9100'
-      ];
-  let lastErr;
-  for(const base of bases){
-    try {
-      const res = await fetch(base + path, { ...options, mode: 'cors' });
-      zebraBpBaseCache = base;
-      return { res, base };
-    } catch(e){ lastErr = e; }
-  }
-  zebraBpBaseCache = null;
-  throw lastErr || new Error('Zebra Browser Print is not running on this Mac.');
-}
-
-async function getZebraDefaultDevice(base){
-  const url = (base || zebraBpBaseCache || 'https://localhost:9101') + '/default?type=printer';
-  try {
-    const res = await fetch(url, { method: 'GET', mode: 'cors' });
-    const text = await res.text();
-    if(!text || text.trim() === '{}' || !text.trim()) return null;
-    const dev = JSON.parse(text);
-    return (dev && dev.uid) ? dev : null;
-  } catch(e){
-    return null;
-  }
 }
 
 function pickZebraPrinterDevice(devices, ip){
@@ -842,8 +964,15 @@ async function refreshZebraConnUi(ip){
       sel.innerHTML = '';
     }
   }
-  if(printBtn) printBtn.disabled = probe.ok === false;
+  if(printBtn) printBtn.disabled = false;
+  const setupPanel = document.getElementById('zebraSetupPanel');
+  if(setupPanel) setupPanel.hidden = probe.ok === true;
   return probe;
+}
+
+function openZebraTrustPage(){
+  window.open('https://localhost:9101', '_blank', 'noopener');
+  showDocToast('Trust the certificate, then click Refresh connection');
 }
 
 function downloadZplFile(plants){
@@ -894,9 +1023,17 @@ function openPrintPlantLabels(plantIds){
         <span id="zebraConnText">Checking Browser Print…</span>
         <button type="button" class="ghost small" id="btnZebraRefresh">Refresh</button>
       </div>
-      <div class="helpbox plant-print-help" style="margin-bottom:12px;font-size:12px;line-height:1.5;">
-        1. <b>Zebra Browser Print</b> running (menu bar icon). 2. Add printer: icon → Settings → network <b>192.168.1.151</b>.
-        3. First time: <a href="https://localhost:9101" target="_blank" rel="noopener">localhost:9101</a> → trust certificate.
+      <div class="zebra-setup-panel" id="zebraSetupPanel" hidden>
+        <p><b>One-time setup for Print now</b> — you need <b>Zebra Browser Print</b> (separate free app), not the Z-LABEL phone app or Zebra Setup Utilities.</p>
+        <ol class="zebra-setup-steps">
+          <li>Download <a href="https://www.zebra.com/us/en/support-downloads/printer-software/by-request-software.html" target="_blank" rel="noopener">Zebra Browser Print for Mac</a> → install → open from Applications.</li>
+          <li>Look for the <b>Zebra logo in the Mac menu bar</b> (top right, near Wi‑Fi). If missing: open Browser Print from Applications again.</li>
+          <li>Click the icon → <b>Settings</b> → in that window click <b>Manage</b> → Name: Z-LABEL, Address: <b id="zebraSetupIp">${esc(savedIp)}</b>, Port: <b>9100</b> → <b>Add</b>.</li>
+          <li>Same Settings window: tick <b>Broadcast Search</b>. Click <b>Change</b> → pick Z-LABEL → <b>Set</b> as default.</li>
+          <li>Click <b>Trust connection</b> below → Advanced → Proceed → return → <b>Refresh</b>. Status green = Print now works.</li>
+        </ol>
+        <p class="sub" style="margin:8px 0 0;font-size:11px;">No menu bar icon? You may have a different Zebra app — Browser Print is required for direct print from this website.</p>
+        <button type="button" class="ghost small" id="btnZebraTrust">Trust connection</button>
       </div>
       <div class="field" id="zebraPrinterField" hidden style="margin-bottom:10px;max-width:480px;">
         <label>Printer (Browser Print)</label>
@@ -917,7 +1054,7 @@ function openPrintPlantLabels(plantIds){
       </div>
       <div class="row-actions" style="margin-bottom:12px">
         <button type="button" class="primary" id="btnPrintNow">Print now</button>
-        <button type="button" class="ghost" id="btnDownloadZpl">Download .zpl</button>
+        <button type="button" class="ghost" id="btnDownloadZpl" title="Backup only if Browser Print is not set up">Download .zpl (backup)</button>
         <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
@@ -936,8 +1073,13 @@ function openPrintPlantLabels(plantIds){
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnZebraRefresh').onclick = ()=> runConnCheck();
+  root.querySelector('#btnZebraTrust').onclick = ()=> openZebraTrustPage();
   const ipInput = document.getElementById('zebraIpInput');
-  if(ipInput) ipInput.addEventListener('change', ()=> runConnCheck());
+  if(ipInput) ipInput.addEventListener('change', ()=>{
+    const setupIp = document.getElementById('zebraSetupIp');
+    if(setupIp) setupIp.textContent = ipInput.value || savedIp;
+    runConnCheck();
+  });
   const printerSel = document.getElementById('zebraPrinterSelect');
   if(printerSel) printerSel.addEventListener('change', ()=>{
     localStorage.setItem('cana_zebra_uid', printerSel.value);
