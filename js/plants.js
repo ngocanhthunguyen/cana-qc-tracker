@@ -822,9 +822,9 @@ function buildZplLabel(batchId, strain, room, lotId){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
   const id = safe(batchId);
   const lot = lotId ? safe(lotId) : '';
-  const metaLine = lot
-    ? (safe(strain) + ' · ' + lot).slice(0, 28)
-    : [safe(strain), safe(room)].filter(Boolean).join(' · ').slice(0, 28);
+  const metaLine = (lot
+    ? safe(strain) + ' - ' + lot
+    : [safe(strain), safe(room)].filter(Boolean).join(' - ')).slice(0, 28);
   const dpi = getZebraDpi();
   const { w, h } = getLabelSizeIn();
   const pw = inchesToDots(w, dpi);
@@ -836,15 +836,15 @@ function buildZplLabel(batchId, strain, room, lotId){
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const barRatio = 3;
-  const idFs = Math.max(28, Math.round(ll * 0.20));
-  const metaFs = Math.max(22, Math.round(ll * 0.15));
+  const idFs = Math.max(26, Math.round(ll * 0.17));
+  const metaFs = Math.max(20, Math.round(ll * 0.12));
   const gap1 = 2;
   const gap2 = 1;
-  let bh = Math.round(ll * 0.34);
+  let bh = Math.round(ll * 0.44);
   let textBlock = idFs + gap2 + metaFs;
   let totalH = bh + gap1 + textBlock;
   if(totalH > ll - 4){
-    bh = Math.max(Math.round(ll * 0.28), ll - 4 - gap1 - textBlock);
+    bh = Math.max(Math.round(ll * 0.38), ll - 4 - gap1 - textBlock);
     totalH = bh + gap1 + textBlock;
   }
   const by = Math.max(2, Math.round((ll - totalH) / 2));
@@ -862,10 +862,10 @@ function buildZplLabel(batchId, strain, room, lotId){
 function buildLabelsPreviewHtml(plants){
   return plants.map(p=>{
     const lot = p.lotId || p.transferBatchRef || '';
-    const meta = lot ? ((p.strain || '') + ' · ' + lot) : (p.strain || p.room || '—');
+    const meta = lot ? ((p.strain || '') + ' - ' + lot) : (p.strain || p.room || '—');
     return `
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 50, width: 2.2, margin: 1 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 54, width: 2.2, margin: 1 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
       <div class="zebra-label-meta">${esc(meta)}</div>
     </div>`;
