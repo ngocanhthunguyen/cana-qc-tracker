@@ -63,9 +63,9 @@ function allocatePlantBatchIds(count){
 }
 
 function getPlantByBatchId(batchId){
-  const q = String(batchId || '').trim().toUpperCase();
-  if(!q) return null;
-  return (state.plants || []).find(p=> String(p.batchId || '').toUpperCase() === q) || null;
+  const code = parsePlantScanCode(batchId);
+  if(!code) return null;
+  return (state.plants || []).find(p=> parsePlantScanCode(p.batchId) === code) || null;
 }
 
 function getPlantById(id){
@@ -186,12 +186,31 @@ function renderPlantsView(){
 }
 
 function parsePlantScanCode(raw){
-  const s = String(raw || '').trim().toUpperCase();
-  const m = s.match(/CA-P-\d+/);
-  return m ? m[0] : s;
+  let s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  let m = s.match(/CA-P-(\d+)/);
+  if(m) return PLANT_BATCH_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
+  m = s.match(/^(\d{1,6})$/);
+  if(m) return PLANT_BATCH_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
+  return s;
+}
+
+function isPlantBatchCode(code){
+  return /^CA-P-\d+$/.test(String(code || ''));
 }
 
 let plantCameraScanner = null;
+let plantScanLock = false;
+
+function finishCameraScan(code, statusEl){
+  if(plantScanLock) return;
+  plantScanLock = true;
+  if(statusEl) statusEl.textContent = 'Found ' + code + ' — opening…';
+  stopPlantCameraScanner().finally(()=>{
+    plantScanLock = false;
+    modalDirty = false;
+    handlePlantScan(code);
+  });
+}
 
 async function stopPlantCameraScanner(){
   if(!plantCameraScanner) return;
@@ -206,6 +225,7 @@ async function stopPlantCameraScanner(){
 
 async function openPlantCameraScanModal(){
   if(!requireLogin()) return;
+  plantScanLock = false;
   modalDirty = true;
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
@@ -252,15 +272,11 @@ async function openPlantCameraScanModal(){
       config,
       (decodedText)=>{
         const code = parsePlantScanCode(decodedText);
-        if(!/^CA-P-\d+$/i.test(code)){
-          statusEl.textContent = 'Read: ' + decodedText + ' — not a plant ID (need CA-P-…)';
+        if(!isPlantBatchCode(code)){
+          statusEl.textContent = 'Read: ' + decodedText + ' — need CA-P-000001';
           return;
         }
-        stopPlantCameraScanner().then(()=>{
-          modalDirty = false;
-          closeModal();
-          handlePlantScan(code);
-        });
+        finishCameraScan(code, statusEl);
       },
       ()=>{}
     );
@@ -347,12 +363,36 @@ function handlePlantScan(raw){
   if(!code) return;
   const plant = getPlantByBatchId(code);
   if(!plant){
-    alert('Plant not found: ' + code + '\nไม่พบรหัสนี้');
+    openPlantScanNotFoundModal(code);
     return;
   }
   if(!plantSelectedIds.has(plant.id)) plantSelectedIds.add(plant.id);
   openPlantTraceModal(plant.batchId);
+  showDocToast('Trace: ' + plant.batchId + ' ✓');
   if(currentView === 'plants') updatePlantToolbarState();
+}
+
+function openPlantScanNotFoundModal(code){
+  modalDirty = false;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:420px">
+      <h2>ID not found</h2>
+      <p class="sub">Scanned <code class="batch-id">${esc(code)}</code> — not in Plant Registry on this device.<br><span class="bi">ไม่พบรหัสนี้ในระบบ</span></p>
+      <div class="helpbox" style="font-size:12px;margin-bottom:12px;">
+        Tap <b>Reload</b> (top bar) to sync from Google Sheet, then scan again.<br>
+        Or check the sticker matches a plant created in <b>Plants → Potting batch</b>.
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="primary" id="btnScanAgain">Scan again</button>
+        <button type="button" class="ghost" id="btnNotFoundClose">Close</button>
+      </div>
+    </div>
+  </div>`;
+  root.querySelector('#btnNotFoundClose').onclick = closeModal;
+  root.querySelector('#btnScanAgain').onclick = ()=> openPlantCameraScanModal();
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') closeModal(); };
 }
 
 function openPottingBatchModal(){
