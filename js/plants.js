@@ -791,7 +791,7 @@ function renderBarcodeSvg(batchId, opts){
       width: opts.width || 2,
       height: h,
       displayValue: false,
-      margin: 4
+      margin: opts.margin !== undefined ? opts.margin : 4
     });
   } catch(err){
     svg.innerHTML = '<text x="0" y="20">Invalid barcode</text>';
@@ -821,29 +821,38 @@ function estimateCode128Dots(charCount, moduleW){
 function buildZplLabel(batchId, strain, room, lotId){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
   const id = safe(batchId);
-  const strainLine = safe(strain).slice(0, 24);
-  const lotLine = lotId ? ('Lot ' + safe(lotId)).slice(0, 24) : safe(room).slice(0, 24);
+  const strainLine = safe(strain).slice(0, 22);
+  const lotLine = lotId ? ('Lot ' + safe(lotId)).slice(0, 22) : safe(room).slice(0, 22);
   const dpi = getZebraDpi();
   const { w, h } = getLabelSizeIn();
   const pw = inchesToDots(w, dpi);
   const ll = inchesToDots(h, dpi);
   let moduleW = 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > pw - 8){
+  if(barW > pw - 16){
     moduleW = 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
-  const barRatio = 3;
-  const bh = Math.round(ll * 0.42);
-  const by = Math.round(ll * 0.08);
-  const bx = Math.max(4, Math.round((pw - barW) / 2));
-  const idFs = Math.max(16, Math.round(ll * 0.12));
-  const strainFs = Math.max(13, Math.round(ll * 0.095));
-  const lotFs = Math.max(12, Math.round(ll * 0.085));
-  const idY = by + bh + Math.round(ll * 0.025);
-  const strainY = idY + idFs + Math.round(ll * 0.015);
-  const lotY = strainY + strainFs + Math.round(ll * 0.012);
-  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0\n';
+  const barRatio = 2.5;
+  const idFs = Math.max(14, Math.round(ll * 0.105));
+  const strainFs = Math.max(11, Math.round(ll * 0.082));
+  const lotFs = Math.max(10, Math.round(ll * 0.072));
+  const gap1 = Math.max(3, Math.round(ll * 0.018));
+  const gap2 = Math.max(2, Math.round(ll * 0.012));
+  const gap3 = Math.max(2, Math.round(ll * 0.01));
+  let bh = Math.round(ll * 0.36);
+  let textBlock = idFs + gap2 + strainFs + gap3 + lotFs;
+  let totalH = bh + gap1 + textBlock;
+  if(totalH > ll - 8){
+    bh = Math.max(Math.round(ll * 0.28), ll - 8 - gap1 - textBlock);
+    totalH = bh + gap1 + textBlock;
+  }
+  const by = Math.max(6, Math.round((ll - totalH) / 2));
+  const bx = Math.max(8, Math.round((pw - barW) / 2));
+  const idY = by + bh + gap1;
+  const strainY = idY + idFs + gap2;
+  const lotY = strainY + strainFs + gap3;
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
   zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   zpl += '^FO0,' + idY + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
   if(strainLine) zpl += '^FO0,' + strainY + '^A0N,' + strainFs + ',' + strainFs + '^FB' + pw + ',1,0,C^FD' + strainLine + '^FS\n';
@@ -857,7 +866,7 @@ function buildLabelsPreviewHtml(plants){
     const lot = p.lotId || p.transferBatchRef || '';
     return `
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 48, width: 2.2 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 44, width: 2, margin: 2 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
       <div class="zebra-label-meta">${esc(p.strain)}</div>
       <div class="zebra-label-lot">${lot ? 'Lot ' + esc(lot) : esc(p.room || '—')}</div>
