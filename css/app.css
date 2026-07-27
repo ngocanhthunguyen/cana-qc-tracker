@@ -481,11 +481,10 @@
   .trace-barcode svg{max-width:100%;height:auto;}
   .modal-wide{max-width:720px;}
   .plant-print-modal .zebra-label-sheet{display:flex;flex-wrap:wrap;gap:8px;max-height:min(420px,55vh);overflow:auto;padding:8px;background:#f8fafc;border-radius:12px;border:1px solid var(--line);}
-  .zebra-label{width:2in;min-height:1in;padding:0.04in 0.06in;box-sizing:border-box;border:1px dashed #cbd5e1;border-radius:4px;background:#fff;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-inside:avoid;}
-  .zebra-barcode svg{width:1.75in;max-width:1.75in;height:auto;}
-  .zebra-label-id{font-family:ui-monospace,monospace;font-size:10px;font-weight:800;margin-top:2px;letter-spacing:0.02em;}
-  .zebra-label-meta{font-size:9px;color:var(--muted);margin-top:1px;max-width:1.85in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .zebra-label-date{font-size:8px;color:var(--muted);}
+  .zebra-label{width:2in;min-height:1in;padding:0.03in 0.05in;box-sizing:border-box;border:1px dashed #cbd5e1;border-radius:4px;background:#fff;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-inside:avoid;}
+  .zebra-barcode svg{width:1.85in;max-width:1.85in;height:0.5in;}
+  .zebra-label-id{font-family:ui-monospace,monospace;font-size:11px;font-weight:800;margin-top:3px;letter-spacing:0.03em;line-height:1.1;}
+  .zebra-label-meta{font-size:10px;font-weight:600;color:var(--ink);margin-top:2px;max-width:1.9in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   @media print{
     body.print-labels-body{margin:0;padding:0;background:#fff;}
     body.print-labels-body .zebra-label{border:0;margin:0;break-inside:avoid;}

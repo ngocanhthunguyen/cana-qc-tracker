@@ -539,15 +539,53 @@ function renderBarcodeSvg(batchId, opts){
   return svg.outerHTML;
 }
 
+function getZebraDpi(){
+  const d = Number(localStorage.getItem('cana_zebra_dpi'));
+  return (d === 300) ? 300 : 203;
+}
+
+function getLabelSizeIn(){
+  const w = Number(localStorage.getItem('cana_label_w_in'));
+  const h = Number(localStorage.getItem('cana_label_h_in'));
+  return { w: (w > 0 ? w : 2), h: (h > 0 ? h : 1) };
+}
+
+function inchesToDots(inches, dpi){
+  return Math.round(Number(inches) * dpi);
+}
+
+function estimateCode128Dots(charCount, moduleW){
+  return (11 * charCount + 35) * moduleW;
+}
+
 function buildZplLabel(batchId, strain, room){
-  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '');
-  // 2" x 1" tear-off gap labels @ 203 dpi — NOT A4
-  // ^MMT = tear-off mode  ^MNY = gap/mark media  ^PW/^LL = label size
-  return '^XA^MMT^MNY^PW406^LL203^LH0,0\n'
-    + '^FO12,8^BY1.5^BCN,52,Y,N,N^FD' + safe(batchId) + '^FS\n'
-    + '^FO12,72^A0N,22,22^FD' + safe(batchId) + '^FS\n'
-    + '^FO12,98^A0N,18,18^FD' + safe(strain) + '  ' + safe(room) + '^FS\n'
-    + '^PQ1,0,1,Y^XZ\n';
+  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
+  const id = safe(batchId);
+  const meta = [safe(strain), safe(room)].filter(Boolean).join(' · ').slice(0, 28);
+  const dpi = getZebraDpi();
+  const { w, h } = getLabelSizeIn();
+  const pw = inchesToDots(w, dpi);
+  const ll = inchesToDots(h, dpi);
+  let moduleW = 2;
+  let barW = estimateCode128Dots(id.length, moduleW);
+  if(barW > pw - 8){
+    moduleW = 1;
+    barW = estimateCode128Dots(id.length, moduleW);
+  }
+  const barRatio = 3;
+  const bh = Math.round(ll * 0.56);
+  const by = Math.round(ll * 0.03);
+  const bx = Math.max(4, Math.round((pw - barW) / 2));
+  const idFs = Math.max(18, Math.round(ll * 0.14));
+  const metaFs = Math.max(14, Math.round(ll * 0.11));
+  const idY = by + bh + Math.round(ll * 0.04);
+  const metaY = idY + idFs + Math.round(ll * 0.02);
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0\n';
+  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  zpl += '^FO0,' + idY + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
+  if(meta) zpl += '^FO0,' + metaY + '^A0N,' + metaFs + ',' + metaFs + '^FB' + pw + ',1,0,C^FD' + meta + '^FS\n';
+  zpl += '^PQ1^XZ\n';
+  return zpl;
 }
 
 function buildPrintLabelDocument(labelsInnerHtml){
@@ -690,22 +728,33 @@ function openPrintPlantLabels(plantIds){
   const root = document.getElementById('modalRoot');
   const labelsHtml = plants.map(p=>`
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 40, width: 1.6 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
       <div class="zebra-label-meta">${esc(p.strain)} · ${esc(p.room || '—')}</div>
-      <div class="zebra-label-date">${esc(p.potDate || '')}</div>
     </div>`).join('');
   const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
+  const savedDpi = getZebraDpi();
+  const labelSize = getLabelSizeIn();
   root.innerHTML = `
   <div class="overlay" id="overlay">
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
       <div class="helpbox plant-print-help" style="margin-bottom:12px;font-size:12px;">
-        <b>2×1 in sticker roll</b> — click <b>Print now</b> or <b>Copy ZPL</b> if direct print is not set up yet.
+        Fix printer first: Media Settings <b>2 × 1 in</b> → Calibrate → Test label on <b>one</b> sticker.<br>
+        Then <b>Copy ZPL</b> → Terminal: <code>pbpaste | nc 192.168.1.151 9100</code>
       </div>
-      <div class="field" style="margin-bottom:10px;max-width:280px;">
-        <label>Zebra Wi-Fi IP</label>
-        <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151">
+      <div class="form-grid" style="margin-bottom:10px;max-width:480px;">
+        <div class="field"><label>Zebra Wi-Fi IP</label>
+          <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
+        <div class="field"><label>Printer DPI</label>
+          <select id="zebraDpiInput">
+            <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
+            <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
+          </select></div>
+        <div class="field"><label>Label width (in)</label>
+          <input id="labelWIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.w}"></div>
+        <div class="field"><label>Label height (in)</label>
+          <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions" style="margin-bottom:12px">
         <button type="button" class="primary" id="btnPrintNow">Print now → Z-LABEL</button>
@@ -720,22 +769,35 @@ function openPrintPlantLabels(plantIds){
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
-    if(await copyZplToClipboard(plants)) setStatus('ZPL copied to clipboard ✓');
-    else setStatus('Copy failed — try Print now again');
+    saveLabelPrintSettings();
+    if(await copyZplToClipboard(plants)) setStatus('ZPL copied — run: pbpaste | nc ' + (document.getElementById('zebraIpInput').value || savedIp) + ' 9100');
+    else setStatus('Copy failed — try again');
   };
   root.querySelector('#btnPrintNow').onclick = async ()=>{
     const btn = root.querySelector('#btnPrintNow');
+    saveLabelPrintSettings();
     const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
     btn.disabled = true;
-    setStatus('Sending to Z-LABEL…');
+    setStatus('Sending ZPL to Z-LABEL…');
     const result = await printPlantsNow(plants, ip);
     btn.disabled = false;
     if(result.ok){
-      setStatus('Sent to Z-LABEL ✓');
+      setStatus('Sent ✓');
       return;
     }
     showZebraPrintError(setStatus, result.error);
   };
+}
+
+function saveLabelPrintSettings(){
+  const ip = document.getElementById('zebraIpInput');
+  const dpi = document.getElementById('zebraDpiInput');
+  const w = document.getElementById('labelWIn');
+  const h = document.getElementById('labelHIn');
+  if(ip) localStorage.setItem('cana_zebra_ip', String(ip.value || '').trim());
+  if(dpi) localStorage.setItem('cana_zebra_dpi', dpi.value === '300' ? '300' : '203');
+  if(w) localStorage.setItem('cana_label_w_in', String(Number(w.value) || 2));
+  if(h) localStorage.setItem('cana_label_h_in', String(Number(h.value) || 1));
 }
 
 function openPlantTraceModal(batchIdOrRaw){
