@@ -541,11 +541,13 @@ function renderBarcodeSvg(batchId, opts){
 
 function buildZplLabel(batchId, strain, room){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '');
-  // 2" x 1" label @ 203 dpi (406 x 203 dots) — standard Zebra roll
-  return '^XA^PW406^LL203^LH0,0\n'
+  // 2" x 1" tear-off gap labels @ 203 dpi — NOT A4
+  // ^MMT = tear-off mode  ^MNY = gap/mark media  ^PW/^LL = label size
+  return '^XA^MMT^MNY^PW406^LL203^LH0,0\n'
     + '^FO12,8^BY1.5^BCN,52,Y,N,N^FD' + safe(batchId) + '^FS\n'
     + '^FO12,72^A0N,22,22^FD' + safe(batchId) + '^FS\n'
-    + '^FO12,98^A0N,18,18^FD' + safe(strain) + '  ' + safe(room) + '^FS\n^XZ\n';
+    + '^FO12,98^A0N,18,18^FD' + safe(strain) + '  ' + safe(room) + '^FS\n'
+    + '^PQ1,0,1,Y^XZ\n';
 }
 
 function buildPrintLabelDocument(labelsInnerHtml){
@@ -665,14 +667,28 @@ async function printPlantsNow(plants, ip){
 
 function showZebraSetupHint(extra){
   alert(
-    'One-time setup for direct print (no download):\n\n'
-    + '1. Install **Zebra Browser Print** on this Mac (free from zebra.com → Browser Print)\n'
-    + '2. Open Browser Print → add your Z-LABEL printer (Wi-Fi ' + (localStorage.getItem('cana_zebra_ip') || '192.168.1.151') + ')\n'
-    + '3. When prompted, **Allow** this website to connect\n'
-    + '4. Chrome: Settings → Privacy → Local network access → allow this site\n\n'
+    'Sticker labels need Zebra direct print — NOT Mac A4 paper.\n\n'
+    + 'ONE-TIME SETUP:\n'
+    + '1. Install Zebra Browser Print on this Mac (zebra.com → Browser Print)\n'
+    + '2. In Browser Print → add network printer Z-LABEL at '
+    + (localStorage.getItem('cana_zebra_ip') || '192.168.1.151') + '\n'
+    + '3. On the printer app: Media Settings → 2×1 in, Gap/Tear-off → Calibrate Media\n'
+    + '4. Allow this website when Browser Print asks\n'
+    + '5. Chrome → Settings → Privacy → Local network access → allow this site\n\n'
     + (extra ? extra + '\n\n' : '')
-    + 'Then click Print now again.'
+    + 'Then click Print now again (sends 2×1 sticker ZPL, not A4).'
   );
+}
+
+async function copyZplToClipboard(plants){
+  const zpl = buildZplForPlants(plants);
+  try {
+    await navigator.clipboard.writeText(zpl);
+    showDocToast('ZPL copied — paste in Zebra Setup Utilities → Send');
+    return true;
+  } catch(e){
+    return false;
+  }
 }
 
 function openPrintPlantLabels(plantIds){
@@ -692,48 +708,44 @@ function openPrintPlantLabels(plantIds){
   <div class="overlay" id="overlay">
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
-      <div class="helpbox" style="margin-bottom:12px;font-size:12px;">
-        Click <b>Print now</b> — sends directly to Z-LABEL (2×1 in). No file download.<br>
-        One-time: install <b>Zebra Browser Print</b> on this Mac and allow this site when prompted.
+      <div class="helpbox plant-print-help" style="margin-bottom:12px;font-size:12px;">
+        <b>Sticker roll (2×1 in tear-off)</b> — use <b>Print now</b> (Zebra direct).<br>
+        <span style="color:#b45309;">⚠ Do NOT use Mac “Print” on A4 — that will not feed sticker labels correctly.</span><br>
+        Needs <b>Zebra Browser Print</b> on this Mac (one-time install).
       </div>
       <div class="field" style="margin-bottom:10px;max-width:280px;">
         <label>Zebra Wi-Fi IP</label>
         <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151">
       </div>
       <div class="row-actions" style="margin-bottom:12px">
-        <button type="button" class="primary" id="btnPrintNow">Print now</button>
-        <button type="button" class="ghost" id="btnBrowserPrint">Browser print fallback</button>
+        <button type="button" class="primary" id="btnPrintNow">Print now → Z-LABEL</button>
+        <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
       <p class="sub" id="printStatusLine" style="font-size:11px;margin:0 0 8px;color:var(--muted);"></p>
       <div class="zebra-label-sheet" id="zebraLabelSheet">${labelsHtml}</div>
     </div>
   </div>`;
-  const statusEl = ()=> document.getElementById('printStatusLine');
-  const setStatus = (msg)=>{ const el = statusEl(); if(el) el.textContent = msg; };
+  const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
-  root.querySelector('#btnBrowserPrint').onclick = ()=>{
-    openBrowserLabelPrint(document.getElementById('zebraLabelSheet').innerHTML);
+  root.querySelector('#btnCopyZpl').onclick = async ()=>{
+    if(await copyZplToClipboard(plants)) return;
+    alert('Could not copy. Select text manually or use Print now with Browser Print.');
   };
   root.querySelector('#btnPrintNow').onclick = async ()=>{
     const btn = root.querySelector('#btnPrintNow');
     const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
     btn.disabled = true;
-    setStatus('Sending to Z-LABEL…');
+    setStatus('Sending 2×1 sticker ZPL to Z-LABEL…');
     const result = await printPlantsNow(plants, ip);
     btn.disabled = false;
     if(result.ok){
-      setStatus('Printed ✓');
+      setStatus('Sent to Z-LABEL — check printer ✓');
       return;
     }
-    setStatus('Direct print failed — trying browser print…');
-    const usedBrowser = openBrowserLabelPrint(document.getElementById('zebraLabelSheet').innerHTML);
-    if(!usedBrowser){
-      showZebraSetupHint(result.error);
-    } else {
-      showZebraSetupHint('Browser print opened. For one-click Zebra print (no dialog), install Zebra Browser Print.');
-    }
+    setStatus('Could not reach Z-LABEL — see setup steps');
+    showZebraSetupHint(result.error);
   };
 }
 
