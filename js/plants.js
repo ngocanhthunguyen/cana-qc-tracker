@@ -665,19 +665,11 @@ async function printPlantsNow(plants, ip){
   }
 }
 
-function showZebraSetupHint(extra){
-  alert(
-    'Sticker labels need Zebra direct print — NOT Mac A4 paper.\n\n'
-    + 'ONE-TIME SETUP:\n'
-    + '1. Install Zebra Browser Print on this Mac (zebra.com → Browser Print)\n'
-    + '2. In Browser Print → add network printer Z-LABEL at '
-    + (localStorage.getItem('cana_zebra_ip') || '192.168.1.151') + '\n'
-    + '3. On the printer app: Media Settings → 2×1 in, Gap/Tear-off → Calibrate Media\n'
-    + '4. Allow this website when Browser Print asks\n'
-    + '5. Chrome → Settings → Privacy → Local network access → allow this site\n\n'
-    + (extra ? extra + '\n\n' : '')
-    + 'Then click Print now again (sends 2×1 sticker ZPL, not A4).'
-  );
+function showZebraPrintError(statusFn, errMsg){
+  const msg = 'Print failed — install Zebra Browser Print on this Mac, or use Copy ZPL.'
+    + (errMsg ? ' (' + errMsg + ')' : '');
+  if(typeof statusFn === 'function') statusFn(msg);
+  showDocToast('Could not reach Z-LABEL — try Copy ZPL');
 }
 
 async function copyZplToClipboard(plants){
@@ -709,9 +701,7 @@ function openPrintPlantLabels(plantIds){
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
       <div class="helpbox plant-print-help" style="margin-bottom:12px;font-size:12px;">
-        <b>Sticker roll (2×1 in tear-off)</b> — use <b>Print now</b> (Zebra direct).<br>
-        <span style="color:#b45309;">⚠ Do NOT use Mac “Print” on A4 — that will not feed sticker labels correctly.</span><br>
-        Needs <b>Zebra Browser Print</b> on this Mac (one-time install).
+        <b>2×1 in sticker roll</b> — click <b>Print now</b> or <b>Copy ZPL</b> if direct print is not set up yet.
       </div>
       <div class="field" style="margin-bottom:10px;max-width:280px;">
         <label>Zebra Wi-Fi IP</label>
@@ -730,22 +720,21 @@ function openPrintPlantLabels(plantIds){
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
-    if(await copyZplToClipboard(plants)) return;
-    alert('Could not copy. Select text manually or use Print now with Browser Print.');
+    if(await copyZplToClipboard(plants)) setStatus('ZPL copied to clipboard ✓');
+    else setStatus('Copy failed — try Print now again');
   };
   root.querySelector('#btnPrintNow').onclick = async ()=>{
     const btn = root.querySelector('#btnPrintNow');
     const ip = (document.getElementById('zebraIpInput')||{}).value || savedIp;
     btn.disabled = true;
-    setStatus('Sending 2×1 sticker ZPL to Z-LABEL…');
+    setStatus('Sending to Z-LABEL…');
     const result = await printPlantsNow(plants, ip);
     btn.disabled = false;
     if(result.ok){
-      setStatus('Sent to Z-LABEL — check printer ✓');
+      setStatus('Sent to Z-LABEL ✓');
       return;
     }
-    setStatus('Could not reach Z-LABEL — see setup steps');
-    showZebraSetupHint(result.error);
+    showZebraPrintError(setStatus, result.error);
   };
 }
 
