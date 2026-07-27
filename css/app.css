@@ -240,6 +240,7 @@
   .batch-card .stat{background:var(--grey-bg);border-radius:8px;padding:8px;text-align:center;}
   .batch-card .stat .n{font-size:14px;font-weight:800;}
   .batch-card .stat .t{font-size:10px;color:var(--muted);}
+  .card-list .status-chip{font-size:10px;}
 
   /* modal extras */
   .live-preview{background:linear-gradient(135deg,var(--grey-bg),#fff);border:1px solid var(--grey-border);border-radius:12px;padding:14px;margin:14px 0;}

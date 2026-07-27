@@ -186,7 +186,27 @@ function renderTrimStaffDailyPanel(records, tab){
       </tr></thead>
       <tbody>${body}</tbody>
     </table></div>
+    <div class="card-list">${renderTrimStaffDailyCardList(rows, tab)}</div>
   </div>`;
+}
+function renderTrimStaffDailyCardList(rows, tab){
+  const isCana = tab === 'cana';
+  return rows.map(r=>{
+    const gph = r.hasHours && r.hours ? r.flower / r.hours : null;
+    const extra = isCana ? `<div class="card-meta"><span>Mold ${fmtWeight(r.mold)}</span><span>Seeds ${fmtWeight(r.seeds)}</span><span>Stems ${fmtWeight(r.stems)}</span><span>Waste ${fmtWeight(r.waste)}</span></div>` : '';
+    return `<div class="batch-card">
+      <div class="card-top">
+        <div><b style="font-size:15px;">${esc(r.staff)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(r.date)}</span></div>
+        <span class="doc-badge">${r.sessions} entr${r.sessions===1?'y':'ies'}</span>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${fmtWeight(r.flower)||'—'}</div><div class="t">Flower</div></div>
+        <div class="stat"><div class="n">${r.hasHours ? fmtNum(r.hours, 1) : '—'}</div><div class="t">Hours</div></div>
+        <div class="stat"><div class="n">${gph !== null ? fmtWeight(gph) + '/hr' : '—'}</div><div class="t">Speed</div></div>
+      </div>
+      ${extra}
+    </div>`;
+  }).join('');
 }
 function getTrimColsForTab(tab){
   if(tab === 'record'){
@@ -3626,6 +3646,73 @@ function renderTrimStatsKpi(stats){
     <div class="kpi"><span>Avg yield</span><b>${fmtPct(stats.avgYield)||'—'}</b></div>
   </div>`;
 }
+function renderTrimmingCardList(records){
+  const isCana = trimSubTab === 'cana';
+  const isDaily = trimSubTab === 'record';
+  return records.map(rec=>{
+    const c = computeTrimRow(rec);
+    const statusShort = (rec.status||'—').split(' / ')[0];
+    const statusCls = (rec.status||'').indexOf('Complete')>=0?'pass':'pending';
+    const actions = `<div class="action-group">
+      <button class="small purple" data-edit-trim="${rec.id}">Edit</button>
+      <button class="small danger admin-only" data-delete-trim="${rec.id}">Del</button>
+    </div>`;
+    if(isCana){
+      return `<div class="batch-card">
+        <div class="card-top">
+          <div><b style="font-size:15px;">${esc(rec.strain||'—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(rec.room||'—')}</span></div>
+          <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
+        </div>
+        <div class="card-meta">
+          <span>📅 Trim ${esc(rec.date||'—')}</span>
+          <span>🌾 Harvest ${esc(rec.harvestDate||'—')}</span>
+          <span>👤 ${esc(rec.trimmedBy||'—')}</span>
+        </div>
+        <div class="card-stats">
+          <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Flower</div></div>
+          <div class="stat"><div class="n">${fmtWeight(rec.moldG)||'—'}</div><div class="t">Mold</div></div>
+          <div class="stat"><div class="n">${fmtWeight(rec.seedsG)||'—'}</div><div class="t">Seeds</div></div>
+        </div>
+        <div class="card-meta" style="margin-bottom:10px;">
+          <span>Stems ${fmtWeight(rec.stemsG)}</span><span>Waste ${fmtWeight(rec.wasteG)}</span>
+          <span>Hours ${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</span>
+        </div>
+        ${actions}
+      </div>`;
+    }
+    if(isDaily){
+      const notes = rec.notes || '—';
+      return `<div class="batch-card">
+        <div class="card-top">
+          <div><b style="font-size:15px;">${esc(rec.date||'—')}</b></div>
+          <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
+        </div>
+        <div class="card-stats">
+          <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Trimmed</div></div>
+          <div class="stat"><div class="n">${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</div><div class="t">Hours</div></div>
+          <div class="stat"><div class="n" style="font-size:12px;">${esc(rec.trimmedBy||'—')}</div><div class="t">By</div></div>
+        </div>
+        <div class="card-meta" style="margin-bottom:10px;"><span>${esc(notes)}</span></div>
+        ${actions}
+      </div>`;
+    }
+    return `<div class="batch-card">
+      <div class="card-top">
+        <div><b style="font-size:15px;">${esc(rec.strain||'—')}</b><br><span class="batch-id">${esc(rec.batchId||'—')}</span></div>
+        <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
+      </div>
+      <div class="card-meta">
+        <span>📅 ${esc(rec.date||'—')}</span><span>${esc(rec.sourceFarm||'—')}</span><span>👤 ${esc(rec.trimmedBy||'—')}</span>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${fmtWeight(rec.inputWt)||'—'}</div><div class="t">Input</div></div>
+        <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Flower</div></div>
+        <div class="stat"><div class="n">${fmtPct(c.yieldPct)||'—'}</div><div class="t">Yield</div></div>
+      </div>
+      ${actions}
+    </div>`;
+  }).join('');
+}
 function renderTrimmingTable(records){
   if(!records.length){
     return `<div class="panel empty-state"><b>No trimming records for this month.</b><br>Click <b>${trimSubTab === 'record' ? '+ New day' : '+ New session'}</b> to log ${esc(trimTypeForSubTab(trimSubTab))}.</div>`;
@@ -3697,7 +3784,8 @@ function renderTrimmingTable(records){
       </div></td>
     </tr>`;
   }).join('');
-  return `<div class="table-wrap desktop-table"><table class="compact-table trim-table">${head}<tbody>${body}</tbody></table></div>`;
+  return `<div class="table-wrap desktop-table"><table class="compact-table trim-table">${head}<tbody>${body}</tbody></table></div>
+  <div class="card-list">${renderTrimmingCardList(records)}</div>`;
 }
 function renderTrimmingView(){
   if(!requireLogin()) return;
@@ -4123,6 +4211,34 @@ function renderCureLogTable(logs, opts){
     <tbody>${body}</tbody>
   </table></div>`;
 }
+function renderCanaStockCardList(rows){
+  return rows.map(s=>{
+    const g = stockLineTotalG(s);
+    const sc = stockStatusClass(s.status);
+    const typeShort = (s.flowerType || '—').split(' / ')[0];
+    const ageShort = (s.cropAge || '—').split(' / ')[0];
+    return `<div class="batch-card">
+      <div class="card-top">
+        <div><b style="font-size:15px;">${esc(s.strain||'—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(s.room||'—')}</span></div>
+        <span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span>
+      </div>
+      <div class="card-meta">
+        <span>${esc(typeShort)} · ${esc(ageShort)}</span>
+        <span>Harvest ${esc(s.harvestDate||'—')}</span>
+        <span>Trim ${esc(s.trimDate||'—')}</span>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${fmtWeight(s.bigsG)||'—'}</div><div class="t">Bigs</div></div>
+        <div class="stat"><div class="n">${fmtWeight(s.popsG)||'—'}</div><div class="t">Pops</div></div>
+        <div class="stat"><div class="n">${fmtWeight(g)||'—'}</div><div class="t">Total</div></div>
+      </div>
+      <div class="action-group">
+        <button class="small" data-edit-stock="${s.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-stock="${s.id}">Del</button>
+      </div>
+    </div>`;
+  }).join('');
+}
 function renderCanaStockTable(rows){
   if(!rows.length){
     return `<div class="panel empty-state"><b>No Cana stock logged yet.</b><br>Add lines manually or <b>From trim</b> after a Trim Cana session.<br><span class="bi">บันทึกดอก Cana ที่มีในบริษัท</span></div>`;
@@ -4156,7 +4272,8 @@ function renderCanaStockTable(rows){
   <div class="table-wrap desktop-table"><table class="compact-table cana-table cana-stock-table">
     <thead><tr><th>Strain</th><th>Room</th><th>Type</th><th>Age</th><th>Bigs</th><th>Pops</th><th>Total</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
-  </table></div>`;
+  </table></div>
+  <div class="card-list">${renderCanaStockCardList(rows)}</div>`;
 }
 function renderCuringView(){
   if(!requireLogin()) return;
