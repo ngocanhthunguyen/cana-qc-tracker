@@ -501,11 +501,6 @@
   .zebra-barcode svg{width:1.85in;max-width:1.85in;height:0.5in;}
   .zebra-label-id{font-family:ui-monospace,monospace;font-size:11px;font-weight:800;margin-top:3px;letter-spacing:0.03em;line-height:1.1;}
   .zebra-label-meta{font-size:10px;font-weight:600;color:var(--ink);margin-top:2px;max-width:1.9in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  @media print{
-    body.print-labels-body{margin:0;padding:0;background:#fff;}
-    body.print-labels-body .zebra-label{border:0;margin:0;break-inside:avoid;}
-    @page{size:2in 1in;margin:0;}
-  }
 
   @media (max-width:900px){
     .chart-row{grid-template-columns:1fr;}

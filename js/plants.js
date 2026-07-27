@@ -716,40 +716,6 @@ function buildZplLabel(batchId, strain, room){
   return zpl;
 }
 
-function buildPrintLabelDocument(labelsInnerHtml, labelSize){
-  labelSize = labelSize || getLabelSizeIn();
-  const w = labelSize.w + 'in';
-  const h = labelSize.h + 'in';
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Plant labels</title>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0;}
-  html,body{background:#fff;}
-  body.print-labels-body{padding:0;}
-  .zebra-label-sheet{display:block;}
-  .zebra-label{
-    width:${w};height:${h};padding:0.06in 0.08in;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    text-align:center;background:#fff;overflow:hidden;
-    page-break-after:always;break-after:page;
-  }
-  .zebra-label:last-child{page-break-after:auto;}
-  .zebra-barcode svg{width:1.85in;max-width:1.85in;height:0.48in;}
-  .zebra-label-id{font-family:Courier New,monospace;font-size:11pt;font-weight:800;line-height:1.1;margin-top:0.04in;}
-  .zebra-label-meta{font-size:9pt;line-height:1.15;margin-top:0.03in;max-width:1.9in;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  @page{size:${w} ${h};margin:0;}
-  @media print{
-    html,body{width:${w};height:${h};}
-    .zebra-label{width:${w};height:${h};margin:0;border:0;}
-  }
-</style></head><body class="print-labels-body">
-<div class="zebra-label-sheet">${labelsInnerHtml}</div>
-<script>
-window.onload=function(){
-  setTimeout(function(){ window.print(); }, 400);
-};
-<\/script></body></html>`;
-}
-
 function buildLabelsPreviewHtml(plants){
   return plants.map(p=>`
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
@@ -761,26 +727,6 @@ function buildLabelsPreviewHtml(plants){
 
 function buildZplForPlants(plants){
   return plants.map(p=> buildZplLabel(p.batchId, p.strain, p.room)).join('');
-}
-
-function openLocalLabelPrint(plants){
-  saveLabelPrintSettings();
-  const html = buildLabelsPreviewHtml(plants);
-  const w = window.open('', '_blank', 'width=520,height=720');
-  if(!w){
-    showDocToast('Allow pop-ups to print labels');
-    return false;
-  }
-  w.document.write(buildPrintLabelDocument(html, getLabelSizeIn()));
-  w.document.close();
-  showDocToast('Choose your Zebra printer · paper 2×1 in');
-  return true;
-}
-
-function getZplTerminalHint(ip, filename){
-  ip = String(ip || localStorage.getItem('cana_zebra_ip') || '192.168.1.151').trim();
-  filename = filename || 'labels.zpl';
-  return 'nc ' + ip + ' 9100 < ~/' + (filename.includes('/') ? filename.split('/').pop() : 'Downloads/' + filename);
 }
 
 function downloadZplFile(plants){
@@ -809,21 +755,6 @@ async function copyZplToClipboard(plants){
   }
 }
 
-function downloadPrintableLabelsHtml(plants){
-  const html = buildPrintLabelDocument(buildLabelsPreviewHtml(plants), getLabelSizeIn());
-  const id = (plants[0] && plants[0].batchId) ? plants[0].batchId.replace(/[^\w-]/g, '') : 'labels';
-  const filename = id + (plants.length > 1 ? '-batch' : '') + '-labels.html';
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-  showDocToast('Labels file downloaded ✓');
-  return filename;
-}
-
 function openPrintPlantLabels(plantIds){
   const plants = plantIds.map(getPlantById).filter(Boolean);
   if(!plants.length){ alert('No plants selected'); return; }
@@ -838,13 +769,11 @@ function openPrintPlantLabels(plantIds){
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
       <div class="plant-print-help">
-        <p><b>Print on Mac</b> — opens a print window. Pick your Zebra in System Settings, paper <b>2 × 1 in</b>, scale 100%.</p>
-        <p><b>Download labels</b> — saves an HTML file; double-click to open and print (works if pop-ups are blocked).</p>
-        <p><b>ZPL (best sticker quality)</b> — download or copy, then in Terminal:<br>
+        <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/CA-P-….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
       </div>
       <div class="form-grid">
-        <div class="field"><label>Printer IP (ZPL only)</label>
+        <div class="field"><label>Printer IP</label>
           <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
         <div class="field"><label>Printer DPI</label>
           <select id="zebraDpiInput">
@@ -857,9 +786,7 @@ function openPrintPlantLabels(plantIds){
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions">
-        <button type="button" class="primary" id="btnPrintMac">Print on Mac</button>
-        <button type="button" class="ghost" id="btnDownloadHtml">Download labels</button>
-        <button type="button" class="ghost" id="btnDownloadZpl">Download ZPL</button>
+        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL</button>
         <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
@@ -871,16 +798,6 @@ function openPrintPlantLabels(plantIds){
   const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
-  root.querySelector('#btnPrintMac').onclick = ()=>{
-    saveLabelPrintSettings();
-    if(openLocalLabelPrint(plants)) setStatus('Print dialog opened — pick Zebra, 2×1 in paper');
-    else setStatus('Pop-up blocked — use Download labels instead');
-  };
-  root.querySelector('#btnDownloadHtml').onclick = ()=>{
-    saveLabelPrintSettings();
-    const fn = downloadPrintableLabelsHtml(plants);
-    setStatus('Saved to Downloads/' + fn + ' — open file, then print');
-  };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
     saveLabelPrintSettings();
     if(await copyZplToClipboard(plants)){
