@@ -704,10 +704,10 @@ async function printPlantsNow(plants, ip){
 }
 
 function showZebraPrintError(statusFn, errMsg){
-  const msg = 'Print failed — install Zebra Browser Print on this Mac, or use Copy ZPL.'
+  const msg = 'Browser Print not available — use Copy ZPL → Zebra Setup Utilities → Send.'
     + (errMsg ? ' (' + errMsg + ')' : '');
   if(typeof statusFn === 'function') statusFn(msg);
-  showDocToast('Could not reach Z-LABEL — try Copy ZPL');
+  showDocToast('Could not reach Z-LABEL — use Copy ZPL in Zebra Setup Utilities');
 }
 
 async function copyZplToClipboard(plants){
@@ -740,8 +740,8 @@ function openPrintPlantLabels(plantIds){
     <div class="modal modal-wide plant-print-modal">
       <h2>🖨 Print labels — ${plants.length} plant(s)</h2>
       <div class="helpbox plant-print-help" style="margin-bottom:12px;font-size:12px;">
-        Fix printer first: Media Settings <b>2 × 1 in</b> → Calibrate → Test label on <b>one</b> sticker.<br>
-        Then <b>Copy ZPL</b> → Terminal: <code>pbpaste | nc 192.168.1.151 9100</code>
+        <b>Copy ZPL</b> → open <b>Zebra Setup Utilities</b> → your Z-LABEL → <b>Open Communication → Send</b> → paste → Send.<br>
+        Or <b>Print now</b> if Zebra Browser Print is running on this Mac. Media: <b>2 × 1 in</b>, gap stickers.
       </div>
       <div class="form-grid" style="margin-bottom:10px;max-width:480px;">
         <div class="field"><label>Zebra Wi-Fi IP</label>
@@ -757,8 +757,8 @@ function openPrintPlantLabels(plantIds){
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions" style="margin-bottom:12px">
-        <button type="button" class="primary" id="btnPrintNow">Print now → Z-LABEL</button>
-        <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
+        <button type="button" class="primary" id="btnCopyZpl">Copy ZPL → Zebra app</button>
+        <button type="button" class="ghost" id="btnPrintNow">Print now (Browser Print)</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
       <p class="sub" id="printStatusLine" style="font-size:11px;margin:0 0 8px;color:var(--muted);"></p>
@@ -770,7 +770,7 @@ function openPrintPlantLabels(plantIds){
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
     saveLabelPrintSettings();
-    if(await copyZplToClipboard(plants)) setStatus('ZPL copied — run: pbpaste | nc ' + (document.getElementById('zebraIpInput').value || savedIp) + ' 9100');
+    if(await copyZplToClipboard(plants)) setStatus('ZPL copied ✓ — paste in Zebra Setup Utilities → Open Communication → Send');
     else setStatus('Copy failed — try again');
   };
   root.querySelector('#btnPrintNow').onclick = async ()=>{
