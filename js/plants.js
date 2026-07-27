@@ -160,6 +160,7 @@ function renderPlantsView(){
       <button type="button" class="ghost" id="btnPlantTrace">Trace ID</button>
     </div>
     <input class="search-box" id="plantSearchBox" placeholder="Search strain, room, batch ID…" value="${esc(plantSearchText)}" style="margin-bottom:12px;width:100%;max-width:420px;">
+    <div class="mob-section-label mobile-only">Plants</div>
     <div id="plantResultsWrap">${renderPlantsTable(rows)}</div>
   `;
   document.getElementById('btnPotBatch').onclick = ()=> openPottingBatchModal();
@@ -294,6 +295,29 @@ function updatePlantResults(){
   bindPlantActions(document.getElementById('mainArea'));
 }
 
+function renderPlantsCardList(rows){
+  return rows.map(p=>{
+    const sel = plantSelectedIds.has(p.id);
+    return `<div class="batch-card mob-card ${sel ? 'mob-card-selected' : ''}">
+      <div class="card-top">
+        <label class="mob-card-check"><input type="checkbox" data-plant-select="${esc(p.id)}" ${sel ? 'checked' : ''}></label>
+        <div class="card-head-text">
+          <code class="batch-id">${esc(p.batchId)}</code>
+          <div class="card-title">${esc(p.strain||'—')}</div>
+          <div class="card-subtitle">${esc(p.room||'—')} · Pot ${esc(p.potDate||'—')}</div>
+        </div>
+        <span class="pill plant-status">${esc(plantStatusShort(p.status))}</span>
+      </div>
+      <div class="card-meta"><span>Harvest ${esc(p.harvestDate||'—')}</span></div>
+      <div class="action-group">
+        <button type="button" class="small" data-plant-barcode="${esc(p.id)}">Barcode</button>
+        <button type="button" class="small" data-plant-trace="${esc(p.batchId)}">Trace</button>
+        <button type="button" class="small purple" data-plant-edit="${esc(p.id)}">Edit</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 function renderPlantsTable(rows){
   if(!rows.length){
     return `<div class="panel empty-state"><b>No plants yet.</b> Use <b>+ Potting batch</b> after rooting to generate IDs and print Zebra labels.<br><span class="bi">ยังไม่มีข้อมูล — กด Potting batch หลัง pot</span></div>`;
@@ -321,7 +345,8 @@ function renderPlantsTable(rows){
       <th>Batch ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Status</th><th>Harvest</th><th></th>
     </tr></thead>
     <tbody>${body}</tbody>
-  </table></div>`;
+  </table></div>
+  <div class="card-list">${renderPlantsCardList(rows)}</div>`;
 }
 
 function bindPlantActions(root){

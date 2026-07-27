@@ -194,10 +194,12 @@ function renderTrimStaffDailyCardList(rows, tab){
   return rows.map(r=>{
     const gph = r.hasHours && r.hours ? r.flower / r.hours : null;
     const extra = isCana ? `<div class="card-meta"><span>Mold ${fmtWeight(r.mold)}</span><span>Seeds ${fmtWeight(r.seeds)}</span><span>Stems ${fmtWeight(r.stems)}</span><span>Waste ${fmtWeight(r.waste)}</span></div>` : '';
-    return `<div class="batch-card">
+    return `<div class="batch-card mob-card">
       <div class="card-top">
-        <div><b style="font-size:15px;">${esc(r.staff)}</b><br><span style="font-size:12px;color:var(--muted)">${esc(r.date)}</span></div>
-        <span class="doc-badge">${r.sessions} entr${r.sessions===1?'y':'ies'}</span>
+        <div class="card-head-text">
+          <div class="card-title">${esc(r.staff)}</div>
+          <div class="card-subtitle">${esc(r.date)} · ${r.sessions} entr${r.sessions===1?'y':'ies'}</div>
+        </div>
       </div>
       <div class="card-stats">
         <div class="stat"><div class="n">${fmtWeight(r.flower)||'—'}</div><div class="t">Flower</div></div>
@@ -3658,56 +3660,62 @@ function renderTrimmingCardList(records){
       <button class="small danger admin-only" data-delete-trim="${rec.id}">Del</button>
     </div>`;
     if(isCana){
-      return `<div class="batch-card">
+      return `<div class="batch-card mob-card">
         <div class="card-top">
-          <div><b style="font-size:15px;">${esc(rec.strain||'—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(rec.room||'—')}</span></div>
+          <div class="card-head-text">
+            <div class="card-title">${esc(rec.strain||'—')}</div>
+            <div class="card-subtitle">${esc(rec.room||'—')} · ${esc(rec.date||'—')}</div>
+          </div>
           <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
-        </div>
-        <div class="card-meta">
-          <span>📅 Trim ${esc(rec.date||'—')}</span>
-          <span>🌾 Harvest ${esc(rec.harvestDate||'—')}</span>
-          <span>👤 ${esc(rec.trimmedBy||'—')}</span>
         </div>
         <div class="card-stats">
           <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Flower</div></div>
           <div class="stat"><div class="n">${fmtWeight(rec.moldG)||'—'}</div><div class="t">Mold</div></div>
           <div class="stat"><div class="n">${fmtWeight(rec.seedsG)||'—'}</div><div class="t">Seeds</div></div>
         </div>
-        <div class="card-meta" style="margin-bottom:10px;">
-          <span>Stems ${fmtWeight(rec.stemsG)}</span><span>Waste ${fmtWeight(rec.wasteG)}</span>
-          <span>Hours ${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</span>
+        <div class="card-meta">
+          <span>Harvest ${esc(rec.harvestDate||'—')}</span>
+          <span>${esc(rec.trimmedBy||'—')}</span>
+          <span>Stems ${fmtWeight(rec.stemsG)}</span>
+          <span>Waste ${fmtWeight(rec.wasteG)}</span>
         </div>
         ${actions}
       </div>`;
     }
     if(isDaily){
       const notes = rec.notes || '—';
-      return `<div class="batch-card">
+      return `<div class="batch-card mob-card">
         <div class="card-top">
-          <div><b style="font-size:15px;">${esc(rec.date||'—')}</b></div>
+          <div class="card-head-text">
+            <div class="card-title">${esc(rec.date||'—')}</div>
+            <div class="card-subtitle">${esc(rec.trimmedBy||'—')}</div>
+          </div>
           <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
         </div>
         <div class="card-stats">
           <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Trimmed</div></div>
           <div class="stat"><div class="n">${rec.hoursWorked ? fmtNum(rec.hoursWorked, 1) : '—'}</div><div class="t">Hours</div></div>
-          <div class="stat"><div class="n" style="font-size:12px;">${esc(rec.trimmedBy||'—')}</div><div class="t">By</div></div>
         </div>
-        <div class="card-meta" style="margin-bottom:10px;"><span>${esc(notes)}</span></div>
+        <div class="card-meta"><span>${esc(notes)}</span></div>
         ${actions}
       </div>`;
     }
-    return `<div class="batch-card">
+    return `<div class="batch-card mob-card">
       <div class="card-top">
-        <div><b style="font-size:15px;">${esc(rec.strain||'—')}</b><br><span class="batch-id">${esc(rec.batchId||'—')}</span></div>
+        <div class="card-head-text">
+          <div class="card-title">${esc(rec.strain||'—')}</div>
+          <div class="card-subtitle"><span class="batch-id">${esc(rec.batchId||'—')}</span> · ${esc(rec.sourceFarm||'—')}</div>
+        </div>
         <span class="status-chip ${statusCls}">${esc(statusShort)}</span>
-      </div>
-      <div class="card-meta">
-        <span>📅 ${esc(rec.date||'—')}</span><span>${esc(rec.sourceFarm||'—')}</span><span>👤 ${esc(rec.trimmedBy||'—')}</span>
       </div>
       <div class="card-stats">
         <div class="stat"><div class="n">${fmtWeight(rec.inputWt)||'—'}</div><div class="t">Input</div></div>
         <div class="stat"><div class="n">${fmtWeight(c.totalFlower)||'—'}</div><div class="t">Flower</div></div>
         <div class="stat"><div class="n">${fmtPct(c.yieldPct)||'—'}</div><div class="t">Yield</div></div>
+      </div>
+      <div class="card-meta">
+        <span>${esc(rec.date||'—')}</span>
+        <span>${esc(rec.trimmedBy||'—')}</span>
       </div>
       ${actions}
     </div>`;
@@ -3827,6 +3835,7 @@ function renderTrimmingView(){
 
     ${renderTrimStaffDailyPanel(records, trimSubTab)}
 
+    <div class="mob-section-label mobile-only">Records this month</div>
     <div id="trimResultsWrap">${renderTrimmingTable(records)}</div>
   `;
   document.getElementById('btnTrimRecord').onclick = ()=>{ trimSubTab='record'; renderTrimmingView(); };
@@ -4153,6 +4162,59 @@ function openCureSessionLogsModal(sessionId){
   };
   bindCureLogModalActions(root);
 }
+function renderCureSessionsCardList(sessions){
+  return sessions.map(s=>{
+    const days = daysInCure(s);
+    const target = num(s.targetDays);
+    const dayLabel = days !== null ? days + 'd' + (target !== null ? ' / ' + target + 'd' : '') : '—';
+    const logs = getCureLogsForSession(s.id).length;
+    const sc = cureStatusClass(s.status);
+    const strains = (s.strains||'—').slice(0, 80) + ((s.strains||'').length > 80 ? '…' : '');
+    return `<div class="batch-card mob-card">
+      <div class="card-top">
+        <div class="card-head-text">
+          <div class="card-title">${esc(s.room||'—')}</div>
+          <div class="card-subtitle">${esc(strains)}</div>
+        </div>
+        <span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${dayLabel}</div><div class="t">Days</div></div>
+        <div class="stat"><div class="n">${logs}</div><div class="t">Logs</div></div>
+        <div class="stat"><div class="n" style="font-size:12px;">${esc(s.startDate||'—')}</div><div class="t">Start</div></div>
+      </div>
+      <div class="card-meta"><span>${esc(s.assignedTo||'—')}</span></div>
+      <div class="action-group">
+        <button type="button" class="small" data-view-cure-logs="${esc(s.id)}">Logs</button>
+        <button class="small purple" data-log-cure="${s.id}">+ Log</button>
+        <button class="small" data-edit-cure-session="${s.id}">Edit</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function renderCureLogCardList(logs){
+  return logs.map(l=>{
+    const sess = getCureSession(l.sessionId);
+    const desc = (l.description||'—').slice(0, 100) + ((l.description||'').length > 100 ? '…' : '');
+    return `<div class="batch-card mob-card">
+      <div class="card-top">
+        <div class="card-head-text">
+          <div class="card-title">${esc((l.action||'—').split(' / ')[0])}</div>
+          <div class="card-subtitle">${esc(l.room||sess?.room||'—')} · ${esc(l.date||'—')} ${esc(formatCureLogTime(l.time))}</div>
+        </div>
+      </div>
+      <div class="card-stats">
+        <div class="stat"><div class="n">${l.minutes ? fmtNum(l.minutes, 0) : '—'}</div><div class="t">Mins</div></div>
+        <div class="stat"><div class="n" style="font-size:12px;">${esc(l.doneBy||'—')}</div><div class="t">By</div></div>
+      </div>
+      <div class="card-meta"><span>${esc(desc)}</span></div>
+      <div class="action-group">
+        <button class="small" data-edit-cure-log="${l.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-cure-log="${l.id}">Del</button>
+      </div>
+    </div>`;
+  }).join('');
+}
 function renderCureSessionsTable(sessions){
   if(!sessions.length){
     return `<div class="panel empty-state"><b>No cure sessions for this month.</b><br>Start a room cure after <b>Trim Cana</b> is logged.<br><span class="bi">เริ่ม cure หลังทริม Cana · หลายสายพันธุ์ในห้องเดียวได้</span></div>`;
@@ -4181,7 +4243,8 @@ function renderCureSessionsTable(sessions){
   return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
     <thead><tr><th>Room</th><th>Strains</th><th>Start</th><th>Days</th><th>Assigned</th><th>Status</th><th>Logs</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
-  </table></div>`;
+  </table></div>
+  <div class="card-list">${renderCureSessionsCardList(sessions)}</div>`;
 }
 function renderCureLogTable(logs, opts){
   opts = opts || {};
@@ -4209,7 +4272,8 @@ function renderCureLogTable(logs, opts){
   return `<div class="table-wrap desktop-table"><table class="compact-table cana-table">
     <thead><tr><th>Date</th><th>Time (ICT)</th><th>Room</th><th>Action</th><th>Mins</th><th>What exactly</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
-  </table></div>`;
+  </table></div>
+  <div class="card-list">${renderCureLogCardList(logs)}</div>`;
 }
 function renderCanaStockCardList(rows){
   return rows.map(s=>{
@@ -4217,20 +4281,22 @@ function renderCanaStockCardList(rows){
     const sc = stockStatusClass(s.status);
     const typeShort = (s.flowerType || '—').split(' / ')[0];
     const ageShort = (s.cropAge || '—').split(' / ')[0];
-    return `<div class="batch-card">
+    return `<div class="batch-card mob-card">
       <div class="card-top">
-        <div><b style="font-size:15px;">${esc(s.strain||'—')}</b><br><span style="font-size:12px;color:var(--muted)">${esc(s.room||'—')}</span></div>
+        <div class="card-head-text">
+          <div class="card-title">${esc(s.strain||'—')}</div>
+          <div class="card-subtitle">${esc(s.room||'—')} · ${esc(typeShort)} · ${esc(ageShort)}</div>
+        </div>
         <span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span>
-      </div>
-      <div class="card-meta">
-        <span>${esc(typeShort)} · ${esc(ageShort)}</span>
-        <span>Harvest ${esc(s.harvestDate||'—')}</span>
-        <span>Trim ${esc(s.trimDate||'—')}</span>
       </div>
       <div class="card-stats">
         <div class="stat"><div class="n">${fmtWeight(s.bigsG)||'—'}</div><div class="t">Bigs</div></div>
         <div class="stat"><div class="n">${fmtWeight(s.popsG)||'—'}</div><div class="t">Pops</div></div>
         <div class="stat"><div class="n">${fmtWeight(g)||'—'}</div><div class="t">Total</div></div>
+      </div>
+      <div class="card-meta">
+        <span>Harvest ${esc(s.harvestDate||'—')}</span>
+        <span>Trim ${esc(s.trimDate||'—')}</span>
       </div>
       <div class="action-group">
         <button class="small" data-edit-stock="${s.id}">Edit</button>
@@ -4309,6 +4375,7 @@ function renderCuringView(){
       </label>
       <input class="search-box" id="cureSearchBox" placeholder="Search room, strain, staff…" value="${esc(cureSearchText)}">
     </div>
+    <div class="mob-section-label mobile-only">${isSessions ? 'Cure sessions' : 'Cure log'}</div>
     <div id="cureResultsWrap">${isSessions ? renderCureSessionsTable(sessions) : renderCureLogTable(logs)}</div>
   `;
   document.getElementById('btnCureSessions').onclick = ()=>{ cureSubTab='sessions'; renderCuringView(); };
@@ -4531,6 +4598,7 @@ function renderCanaStockView(){
       </select>
       <input class="search-box" id="stockSearchBox" placeholder="Search strain, room…" value="${esc(stockSearchText)}">
     </div>
+    <div class="mob-section-label mobile-only">Stock lines</div>
     <div id="stockResultsWrap">${renderCanaStockTable(rows)}</div>
   `;
   document.getElementById('btnNewStock').onclick = ()=> openCanaStockModal(null);
@@ -5067,15 +5135,14 @@ function renderCardList(records){
     const pend = isPending(rec);
     const badgeClass = passFailBadgeClass(rec);
     const bid = getBatchId(rec, currentFarm);
-    return `<div class="batch-card ${pend?'pending':''}">
+    return `<div class="batch-card mob-card ${pend?'pending':''}">
       <div class="card-top">
-        <div><span class="batch-id">${esc(bid)}</span><br><b style="font-size:15px;">${esc(rec.strain||'No strain')}</b></div>
+        <div class="card-head-text">
+          <span class="batch-id">${esc(bid)}</span>
+          <div class="card-title">${esc(rec.strain||'No strain')}</div>
+          <div class="card-subtitle">${esc(rec.date||'—')} · ${fmtNum(rec.grossWt)} g · ${esc(rec.receivedBy||'—')}</div>
+        </div>
         ${rec.passFail? `<span class="badge ${badgeClass}">${esc(rec.passFail.split(' / ')[0])}</span>` : (pend?'<span class="badge pending">Pending QC</span>':'')}
-      </div>
-      <div class="card-meta">
-        <span>📅 ${esc(rec.date||'—')}</span>
-        <span>⚖️ ${fmtNum(rec.grossWt)} g</span>
-        <span>👤 ${esc(rec.receivedBy||'—')}</span>
       </div>
       <div class="card-stats">
         <div class="stat"><div class="n">${fmtNum(c.totalFlower)||'—'}</div><div class="t">Flower g</div></div>
@@ -5083,9 +5150,9 @@ function renderCardList(records){
         <div class="stat"><div class="n">${fmtPct(c.yieldPct)||'—'}</div><div class="t">Yield</div></div>
       </div>
       <div class="action-group">
-        <button class="small admin-only" data-edit-delivery="${rec.id}">Edit Delivery</button>
+        <button class="small admin-only" data-edit-delivery="${rec.id}">Delivery</button>
         <button class="small purple" data-edit-qc="${rec.id}">${pend?'Enter QC':'Edit QC'}</button>
-        <button class="small danger admin-only" data-delete="${rec.id}">Delete</button>
+        <button class="small danger admin-only" data-delete="${rec.id}">Del</button>
       </div>
     </div>`;
   }).join('');
