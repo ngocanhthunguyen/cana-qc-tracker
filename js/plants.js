@@ -829,25 +829,25 @@ function buildZplLabel(batchId, strain, room, lotId){
   const ll = inchesToDots(h, dpi);
   let moduleW = 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > pw - 16){
+  if(barW > pw - 12){
     moduleW = 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
-  const barRatio = 2.5;
-  const idFs = Math.max(14, Math.round(ll * 0.105));
-  const strainFs = Math.max(11, Math.round(ll * 0.082));
-  const lotFs = Math.max(10, Math.round(ll * 0.072));
-  const gap1 = Math.max(3, Math.round(ll * 0.018));
-  const gap2 = Math.max(2, Math.round(ll * 0.012));
-  const gap3 = Math.max(2, Math.round(ll * 0.01));
-  let bh = Math.round(ll * 0.36);
+  const barRatio = 3;
+  const idFs = Math.max(18, Math.round(ll * 0.125));
+  const strainFs = Math.max(14, Math.round(ll * 0.095));
+  const lotFs = Math.max(12, Math.round(ll * 0.085));
+  const gap1 = 2;
+  const gap2 = 2;
+  const gap3 = 1;
+  let bh = Math.round(ll * 0.44);
   let textBlock = idFs + gap2 + strainFs + gap3 + lotFs;
   let totalH = bh + gap1 + textBlock;
-  if(totalH > ll - 8){
-    bh = Math.max(Math.round(ll * 0.28), ll - 8 - gap1 - textBlock);
+  if(totalH > ll - 6){
+    bh = Math.max(Math.round(ll * 0.38), ll - 6 - gap1 - textBlock);
     totalH = bh + gap1 + textBlock;
   }
-  const by = Math.max(6, Math.round((ll - totalH) / 2));
+  const by = Math.max(4, Math.round((ll - totalH) / 2));
   const bx = Math.max(8, Math.round((pw - barW) / 2));
   const idY = by + bh + gap1;
   const strainY = idY + idFs + gap2;
@@ -866,7 +866,7 @@ function buildLabelsPreviewHtml(plants){
     const lot = p.lotId || p.transferBatchRef || '';
     return `
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 44, width: 2, margin: 2 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2, margin: 1 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
       <div class="zebra-label-meta">${esc(p.strain)}</div>
       <div class="zebra-label-lot">${lot ? 'Lot ' + esc(lot) : esc(p.room || '—')}</div>
