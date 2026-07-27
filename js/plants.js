@@ -561,7 +561,7 @@ function estimateCode128Dots(charCount, moduleW){
 function buildZplLabel(batchId, strain, room){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
   const id = safe(batchId);
-  const meta = [safe(strain), safe(room)].filter(Boolean).join(' · ').slice(0, 28);
+  const meta = [safe(strain), safe(room)].filter(Boolean).join(' - ').slice(0, 28);
   const dpi = getZebraDpi();
   const { w, h } = getLabelSizeIn();
   const pw = inchesToDots(w, dpi);
@@ -573,12 +573,12 @@ function buildZplLabel(batchId, strain, room){
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const barRatio = 3;
-  const bh = Math.round(ll * 0.56);
-  const by = Math.round(ll * 0.03);
+  const bh = Math.round(ll * 0.52);
+  const by = Math.round(ll * 0.10);
   const bx = Math.max(4, Math.round((pw - barW) / 2));
   const idFs = Math.max(18, Math.round(ll * 0.14));
   const metaFs = Math.max(14, Math.round(ll * 0.11));
-  const idY = by + bh + Math.round(ll * 0.04);
+  const idY = by + bh + Math.round(ll * 0.03);
   const metaY = idY + idFs + Math.round(ll * 0.02);
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0\n';
   zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
