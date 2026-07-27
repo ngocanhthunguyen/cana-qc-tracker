@@ -834,20 +834,20 @@ function buildZplLabel(batchId, strain, room, lotId){
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const barRatio = 3;
-  const idFs = Math.max(18, Math.round(ll * 0.125));
-  const strainFs = Math.max(14, Math.round(ll * 0.095));
-  const lotFs = Math.max(12, Math.round(ll * 0.085));
+  const idFs = Math.max(22, Math.round(ll * 0.145));
+  const strainFs = Math.max(17, Math.round(ll * 0.115));
+  const lotFs = Math.max(15, Math.round(ll * 0.105));
   const gap1 = 2;
-  const gap2 = 2;
+  const gap2 = 1;
   const gap3 = 1;
-  let bh = Math.round(ll * 0.44);
+  let bh = Math.round(ll * 0.38);
   let textBlock = idFs + gap2 + strainFs + gap3 + lotFs;
   let totalH = bh + gap1 + textBlock;
-  if(totalH > ll - 6){
-    bh = Math.max(Math.round(ll * 0.38), ll - 6 - gap1 - textBlock);
+  if(totalH > ll - 4){
+    bh = Math.max(Math.round(ll * 0.34), ll - 4 - gap1 - textBlock);
     totalH = bh + gap1 + textBlock;
   }
-  const by = Math.max(4, Math.round((ll - totalH) / 2));
+  const by = Math.max(3, Math.round((ll - totalH) / 2));
   const bx = Math.max(8, Math.round((pw - barW) / 2));
   const idY = by + bh + gap1;
   const strainY = idY + idFs + gap2;
