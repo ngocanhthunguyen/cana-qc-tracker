@@ -16,11 +16,13 @@ const PLANT_STATUS_OPTIONS = [
 ];
 
 const PLANT_BATCH_PREFIX = 'CA-P-';
+const PLANT_LOT_PREFIX = 'CA-L-';
 
 function normalizePlant(rec){
   if(!rec) return rec;
   if(!rec.id) rec.id = uid();
   if(!rec.batchId) rec.batchId = '';
+  if(!rec.lotId) rec.lotId = '';
   if(!rec.strain) rec.strain = '';
   if(!rec.potDate) rec.potDate = '';
   if(!rec.room) rec.room = '';
@@ -33,12 +35,36 @@ function normalizePlant(rec){
   if(!rec.notes) rec.notes = '';
   if(!rec.createdBy) rec.createdBy = '';
   if(!rec.createdAt) rec.createdAt = '';
+  if(!rec.lotId && rec.transferBatchRef && /^CA-L-/i.test(String(rec.transferBatchRef))) rec.lotId = rec.transferBatchRef;
+  if(rec.lotId && !rec.transferBatchRef) rec.transferBatchRef = rec.lotId;
   return rec;
 }
 
 function parsePlantBatchSeq(batchId){
   const m = String(batchId || '').match(/^CA-P-(\d+)$/i);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+function parsePlantLotSeq(lotId){
+  const m = String(lotId || '').match(/^CA-L-(\d+)$/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+function nextPotLotId(){
+  let max = 0;
+  (state.plants || []).forEach(p=>{
+    max = Math.max(max, parsePlantLotSeq(p.lotId), parsePlantLotSeq(p.transferBatchRef));
+  });
+  return PLANT_LOT_PREFIX + String(max + 1).padStart(6, '0');
+}
+
+function getPlantsByLotId(lotId){
+  const code = parsePlantLotScanCode(lotId);
+  if(!code) return [];
+  return (state.plants || []).map(normalizePlant).filter(p=>{
+    const lid = parsePlantLotScanCode(p.lotId) || parsePlantLotScanCode(p.transferBatchRef);
+    return lid === code;
+  }).sort((a, b)=> (a.batchId || '').localeCompare(b.batchId || ''));
 }
 
 function nextPlantBatchId(){
@@ -108,7 +134,7 @@ function getFilteredPlants(){
     if(plantStatusFilter && p.status !== plantStatusFilter) return false;
     if(plantRoomFilter && String(p.room || '').toLowerCase() !== plantRoomFilter.toLowerCase()) return false;
     if(q){
-      const hay = [p.batchId, p.strain, p.room, p.status, p.sourceFarm, p.transferBatchRef, p.notes, p.createdBy].join(' ').toLowerCase();
+      const hay = [p.batchId, p.lotId, p.transferBatchRef, p.strain, p.room, p.status, p.sourceFarm, p.notes, p.createdBy].join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -135,7 +161,7 @@ function renderPlantsView(){
     <div class="cana-header plant-header">
       <div>
         <h2>🌱 Plant Registry — potting IDs & barcodes</h2>
-        <p class="sub">One ID per plant at potting · scan with Zebra · same ID through harvest → trim → stock<br><span class="bi">หนึ่งรหัสต่อหนึ่งต้นเมื่อ pot · ย้ายห้องไม่เปลี่ยนรหัส</span></p>
+        <p class="sub">One plant ID per sticker · shared lot ID per potting run · scan to trace<br><span class="bi">หนึ่งรหัสต่อหนึ่งต้น · lot เดียวกันเมื่อ pot พร้อมกัน</span></p>
       </div>
       <div class="plant-kpi-mini">${(state.plants || []).length} plants · ${activeCount} active</div>
     </div>
@@ -155,7 +181,7 @@ function renderPlantsView(){
     </div>
     <div class="plant-scan-row">
       <label class="plant-scan-label">🔍 Scan barcode <span class="bi">/ สแกน</span></label>
-      <input class="search-box plant-scan-input" id="plantScanInput" placeholder="Scan or type CA-P-000001 then Enter" autocomplete="off">
+      <input class="search-box plant-scan-input" id="plantScanInput" placeholder="Scan CA-P-… or CA-L-… then Enter" autocomplete="off">
       <button type="button" class="primary" id="btnPlantCamera">📷 Camera <span class="bi">/ กล้อง</span></button>
       <button type="button" class="ghost" id="btnPlantTrace">Trace ID</button>
     </div>
@@ -186,13 +212,28 @@ function renderPlantsView(){
   bindPlantActions(main);
 }
 
+function parsePlantLotScanCode(raw){
+  let s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  let m = s.match(/CA-L-(\d+)/);
+  if(m) return PLANT_LOT_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
+  m = s.match(/^L-?(\d{1,6})$/);
+  if(m) return PLANT_LOT_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
+  return '';
+}
+
 function parsePlantScanCode(raw){
   let s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  const lot = parsePlantLotScanCode(s);
+  if(lot) return lot;
   let m = s.match(/CA-P-(\d+)/);
   if(m) return PLANT_BATCH_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
   m = s.match(/^(\d{1,6})$/);
   if(m) return PLANT_BATCH_PREFIX + String(parseInt(m[1], 10)).padStart(6, '0');
   return s;
+}
+
+function isPlantLotCode(code){
+  return /^CA-L-\d+$/.test(String(code || ''));
 }
 
 function isPlantBatchCode(code){
@@ -304,11 +345,11 @@ function renderPlantsCardList(rows){
         <div class="card-head-text">
           <code class="batch-id">${esc(p.batchId)}</code>
           <div class="card-title">${esc(p.strain||'—')}</div>
-          <div class="card-subtitle">${esc(p.room||'—')} · Pot ${esc(p.potDate||'—')}</div>
+          <div class="card-subtitle">${esc(p.room||'—')} · Lot ${esc(p.lotId || p.transferBatchRef || '—')}</div>
         </div>
         <span class="pill plant-status">${esc(plantStatusShort(p.status))}</span>
       </div>
-      <div class="card-meta"><span>Harvest ${esc(p.harvestDate||'—')}</span></div>
+      <div class="card-meta"><span>Pot ${esc(p.potDate || '—')}</span>${(p.lotId || p.transferBatchRef) ? `<span><button type="button" class="ghost small" data-plant-lot="${esc(p.lotId || p.transferBatchRef)}" style="padding:0;border:0;background:transparent;color:var(--blue-700);font-weight:700;">Lot ${esc(p.lotId || p.transferBatchRef)}</button></span>` : ''}<span>Harvest ${esc(p.harvestDate||'—')}</span></div>
       <div class="action-group">
         <button type="button" class="small" data-plant-barcode="${esc(p.id)}">Barcode</button>
         <button type="button" class="small" data-plant-trace="${esc(p.batchId)}">Trace</button>
@@ -327,6 +368,7 @@ function renderPlantsTable(rows){
     return `<tr class="${sel ? 'plant-row-selected' : ''}">
       <td><input type="checkbox" data-plant-select="${esc(p.id)}" ${sel ? 'checked' : ''}></td>
       <td><code class="batch-id">${esc(p.batchId)}</code></td>
+      <td><code class="batch-id">${esc(p.lotId || p.transferBatchRef || '—')}</code>${(p.lotId || p.transferBatchRef) ? `<br><button type="button" class="ghost sm" data-plant-lot="${esc(p.lotId || p.transferBatchRef)}">View lot</button>` : ''}</td>
       <td>${esc(p.strain)}</td>
       <td>${esc(p.potDate || '—')}</td>
       <td>${esc(p.room || '—')}</td>
@@ -342,7 +384,7 @@ function renderPlantsTable(rows){
   return `<div class="table-wrap desktop-table"><table class="compact-table plant-table">
     <thead><tr>
       <th style="width:36px"><input type="checkbox" id="plantSelectAll" title="Select all visible"></th>
-      <th>Batch ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Status</th><th>Harvest</th><th></th>
+      <th>Batch ID</th><th>Lot ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Status</th><th>Harvest</th><th></th>
     </tr></thead>
     <tbody>${body}</tbody>
   </table></div>
@@ -373,6 +415,7 @@ function bindPlantActions(root){
   }
   root.querySelectorAll('[data-plant-barcode]').forEach(el=> el.onclick = ()=> openPrintPlantLabels([el.dataset.plantBarcode]));
   root.querySelectorAll('[data-plant-trace]').forEach(el=> el.onclick = ()=> openPlantTraceModal(el.dataset.plantTrace));
+  root.querySelectorAll('[data-plant-lot]').forEach(el=> el.onclick = ()=> openPlantLotTraceModal(el.dataset.plantLot));
   root.querySelectorAll('[data-plant-edit]').forEach(el=> el.onclick = ()=> openPlantEditModal(el.dataset.plantEdit));
 }
 
@@ -386,6 +429,16 @@ function updatePlantToolbarState(){
 function handlePlantScan(raw){
   const code = parsePlantScanCode(raw);
   if(!code) return;
+  if(isPlantLotCode(code)){
+    const lotPlants = getPlantsByLotId(code);
+    if(!lotPlants.length){
+      openPlantScanNotFoundModal(code);
+      return;
+    }
+    openPlantLotTraceModal(code);
+    showDocToast('Lot: ' + code + ' · ' + lotPlants.length + ' plant(s) ✓');
+    return;
+  }
   const plant = getPlantByBatchId(code);
   if(!plant){
     openPlantScanNotFoundModal(code);
@@ -423,12 +476,16 @@ function openPlantScanNotFoundModal(code){
 function openPottingBatchModal(){
   if(!requireLogin()) return;
   modalDirty = true;
+  const previewLot = nextPotLotId();
   const root = document.getElementById('modalRoot');
   root.innerHTML = `
   <div class="overlay" id="overlay">
     <div class="modal" style="max-width:520px">
       <h2>+ Potting batch</h2>
-      <p class="sub">Creates one permanent ID + barcode per plant<br><span class="bi">สร้างรหัสถาวรและบาร์โค้ดต่อหนึ่งต้น</span></p>
+      <p class="sub">Creates one plant ID per sticker + one shared lot ID for the whole run<br><span class="bi">รหัสต่อต้น · lot เดียวกันทั้งชุด</span></p>
+      <div class="helpbox" style="font-size:12px;margin-bottom:12px;padding:10px 12px;">
+        <b>Lot ID:</b> <code class="batch-id">${esc(previewLot)}</code> — all plants in this batch share this lot (shown on every sticker).
+      </div>
       <form id="potBatchForm" class="form-grid">
         <div class="field"><label>Strain <span class="bi">/ สายพันธุ์</span></label><input name="strain" required placeholder="MAC 1"></div>
         <div class="field"><label>Pot date</label><input type="date" name="potDate" value="${todayISO()}" required></div>
@@ -457,21 +514,22 @@ function openPottingBatchModal(){
     const potDate = String(fd.get('potDate') || '').trim();
     const room = String(fd.get('room') || '').trim();
     if(!strain || !room){ alert('Strain and room required'); return; }
-    const transferBatchRef = 'TB-' + potDate.replace(/-/g,'') + '-' + room.replace(/\s+/g,'');
+    const lotId = nextPotLotId();
     const batchIds = allocatePlantBatchIds(qty);
     const newIds = [];
     if(!state.plants) state.plants = [];
-    batchIds.forEach((batchId, i)=>{
+    batchIds.forEach((batchId)=>{
       const plant = normalizePlant({
         id: uid(),
         batchId,
+        lotId,
         strain,
         potDate,
         room,
         roomHistory: room,
         status: PLANT_STATUS_OPTIONS[0],
         sourceFarm: String(fd.get('sourceFarm') || 'Cana').trim(),
-        transferBatchRef,
+        transferBatchRef: lotId,
         notes: String(fd.get('notes') || '').trim(),
         createdBy: getCurrentUserName(),
         createdAt: new Date().toISOString()
@@ -483,12 +541,8 @@ function openPottingBatchModal(){
     onDataChanged();
     close();
     renderPlantsView();
-    showDocToast('Created ' + qty + ' plant ID(s) ✓');
-    if(fd.get('printAfter')){
-      printPlantsNow(newIds.map(getPlantById).filter(Boolean)).then(r=>{
-        if(!r.ok) openPrintPlantLabels(newIds);
-      });
-    }
+    showDocToast('Created ' + qty + ' plant(s) · Lot ' + lotId + ' ✓');
+    if(fd.get('printAfter')) openPrintPlantLabels(newIds);
   };
 }
 
@@ -503,6 +557,7 @@ function openPlantEditModal(id){
     <div class="modal" style="max-width:520px">
       <h2>Edit plant — <code class="batch-id">${esc(rec.batchId)}</code></h2>
       <form id="plantEditForm" class="form-grid">
+        <div class="field"><label>Lot ID</label><input value="${esc(rec.lotId || rec.transferBatchRef || '—')}" readonly class="readonly"></div>
         <div class="field"><label>Strain</label><input name="strain" value="${esc(rec.strain)}" required></div>
         <div class="field"><label>Current room</label><input name="room" value="${esc(rec.room)}" required></div>
         <div class="field"><label>Status</label>
@@ -711,10 +766,11 @@ function estimateCode128Dots(charCount, moduleW){
   return (11 * charCount + 35) * moduleW;
 }
 
-function buildZplLabel(batchId, strain, room){
+function buildZplLabel(batchId, strain, room, lotId){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
   const id = safe(batchId);
-  const meta = [safe(strain), safe(room)].filter(Boolean).join(' - ').slice(0, 28);
+  const strainLine = safe(strain).slice(0, 24);
+  const lotLine = lotId ? ('Lot ' + safe(lotId)).slice(0, 24) : safe(room).slice(0, 24);
   const dpi = getZebraDpi();
   const { w, h } = getLabelSizeIn();
   const pw = inchesToDots(w, dpi);
@@ -726,32 +782,39 @@ function buildZplLabel(batchId, strain, room){
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const barRatio = 3;
-  const bh = Math.round(ll * 0.52);
-  const by = Math.round(ll * 0.10);
+  const bh = Math.round(ll * 0.42);
+  const by = Math.round(ll * 0.08);
   const bx = Math.max(4, Math.round((pw - barW) / 2));
-  const idFs = Math.max(18, Math.round(ll * 0.14));
-  const metaFs = Math.max(14, Math.round(ll * 0.11));
-  const idY = by + bh + Math.round(ll * 0.03);
-  const metaY = idY + idFs + Math.round(ll * 0.02);
+  const idFs = Math.max(16, Math.round(ll * 0.12));
+  const strainFs = Math.max(13, Math.round(ll * 0.095));
+  const lotFs = Math.max(12, Math.round(ll * 0.085));
+  const idY = by + bh + Math.round(ll * 0.025);
+  const strainY = idY + idFs + Math.round(ll * 0.015);
+  const lotY = strainY + strainFs + Math.round(ll * 0.012);
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0\n';
   zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   zpl += '^FO0,' + idY + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
-  if(meta) zpl += '^FO0,' + metaY + '^A0N,' + metaFs + ',' + metaFs + '^FB' + pw + ',1,0,C^FD' + meta + '^FS\n';
+  if(strainLine) zpl += '^FO0,' + strainY + '^A0N,' + strainFs + ',' + strainFs + '^FB' + pw + ',1,0,C^FD' + strainLine + '^FS\n';
+  if(lotLine) zpl += '^FO0,' + lotY + '^A0N,' + lotFs + ',' + lotFs + '^FB' + pw + ',1,0,C^FD' + lotLine + '^FS\n';
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
 
 function buildLabelsPreviewHtml(plants){
-  return plants.map(p=>`
+  return plants.map(p=>{
+    const lot = p.lotId || p.transferBatchRef || '';
+    return `
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 48, width: 2.2 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
-      <div class="zebra-label-meta">${esc(p.strain)} - ${esc(p.room || '—')}</div>
-    </div>`).join('');
+      <div class="zebra-label-meta">${esc(p.strain)}</div>
+      <div class="zebra-label-lot">${lot ? 'Lot ' + esc(lot) : esc(p.room || '—')}</div>
+    </div>`;
+  }).join('');
 }
 
 function buildZplForPlants(plants){
-  return plants.map(p=> buildZplLabel(p.batchId, p.strain, p.room)).join('');
+  return plants.map(p=> buildZplLabel(p.batchId, p.strain, p.room, p.lotId || p.transferBatchRef)).join('');
 }
 
 function downloadZplFile(plants){
@@ -847,9 +910,51 @@ function saveLabelPrintSettings(){
   if(h) localStorage.setItem('cana_label_h_in', String(Number(h.value) || 1));
 }
 
+function openPlantLotTraceModal(lotIdOrRaw){
+  const lotCode = parsePlantLotScanCode(lotIdOrRaw);
+  const plants = getPlantsByLotId(lotCode);
+  if(!plants.length){ alert('Lot not found: ' + lotIdOrRaw); return; }
+  const sample = plants[0];
+  const active = plants.filter(p=> p.status === PLANT_STATUS_OPTIONS[0] || p.status === PLANT_STATUS_OPTIONS[1]).length;
+  const harvested = plants.filter(p=> p.status === PLANT_STATUS_OPTIONS[2]).length;
+  modalDirty = false;
+  const root = document.getElementById('modalRoot');
+  const listHtml = plants.map(p=>`
+    <button type="button" class="lot-plant-row" data-lot-plant-trace="${esc(p.batchId)}">
+      <code class="batch-id">${esc(p.batchId)}</code>
+      <span>${esc(plantStatusShort(p.status))}</span>
+      <span class="muted">${esc(p.room || '—')}</span>
+    </button>`).join('');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:560px">
+      <h2>Lot — <code class="batch-id">${esc(lotCode)}</code></h2>
+      <div class="trace-timeline">
+        <div class="trace-step"><b>Strain</b> ${esc(sample.strain)} · ${esc(sample.sourceFarm || 'Cana')}</div>
+        <div class="trace-step"><b>Potting</b> ${esc(sample.potDate)} · Room: ${esc(sample.roomHistory || sample.room)}</div>
+        <div class="trace-step"><b>Plants in lot</b> ${plants.length} total · ${active} active · ${harvested} harvested</div>
+        ${sample.notes ? '<div class="trace-step"><b>Notes</b> ' + esc(sample.notes) + '</div>' : ''}
+      </div>
+      <div class="lot-plant-list">${listHtml}</div>
+      <div class="modal-actions">
+        <button type="button" class="primary" id="btnLotPrintAll">Print all labels</button>
+        <button type="button" class="ghost" id="btnLotClose">Close</button>
+      </div>
+    </div>
+  </div>`;
+  root.querySelector('#btnLotClose').onclick = closeModal;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') closeModal(); };
+  root.querySelector('#btnLotPrintAll').onclick = ()=> openPrintPlantLabels(plants.map(p=> p.id));
+  root.querySelectorAll('[data-lot-plant-trace]').forEach(el=>{
+    el.onclick = ()=> openPlantTraceModal(el.dataset.lotPlantTrace);
+  });
+}
+
 function openPlantTraceModal(batchIdOrRaw){
   const plant = getPlantByBatchId(batchIdOrRaw);
   if(!plant){ alert('Plant not found: ' + batchIdOrRaw); return; }
+  const lotId = plant.lotId || plant.transferBatchRef || '';
+  const lotMates = lotId ? getPlantsByLotId(lotId) : [];
   const trim = plant.linkedTrimId ? (state.trimming || []).find(t=> t.id === plant.linkedTrimId) : null;
   const stockLines = (state.canaStock || []).filter(s=>{
     if(trim && s.linkedTrimId === trim.id) return true;
@@ -867,6 +972,7 @@ function openPlantTraceModal(batchIdOrRaw){
     <div class="modal" style="max-width:560px">
       <h2>Trace — <code class="batch-id">${esc(plant.batchId)}</code></h2>
       <div class="trace-timeline">
+        <div class="trace-step"><b>Lot</b> ${lotId ? '<code class="batch-id">' + esc(lotId) + '</code> · ' + lotMates.length + ' plant(s) · <button type="button" class="ghost small" id="btnTraceLot">View lot</button>' : '—'}</div>
         <div class="trace-step"><b>Potting</b> ${esc(plant.potDate)} · ${esc(plant.strain)} · ${esc(plant.sourceFarm)}<br>Room: ${esc(plant.roomHistory || plant.room)}</div>
         <div class="trace-step"><b>Status</b> ${esc(plant.status)}${plant.harvestDate ? '<br>Harvest: ' + esc(plant.harvestDate) : ''}</div>
         <div class="trace-step"><b>Trim Cana</b> ${trim ? esc(trim.date) + ' · ' + esc(trim.room) + ' · ' + esc(trim.strain) + (trim.finishedFlowerG ? ' · ' + fmtWeight(trim.finishedFlowerG) : '') : '— not linked yet —'}</div>
@@ -883,4 +989,6 @@ function openPlantTraceModal(batchIdOrRaw){
   root.querySelector('#btnTraceClose').onclick = closeModal;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') closeModal(); };
   root.querySelector('#btnTracePrint').onclick = ()=> openPrintPlantLabels([plant.id]);
+  const lotBtn = root.querySelector('#btnTraceLot');
+  if(lotBtn) lotBtn.onclick = ()=> openPlantLotTraceModal(lotId);
 }
