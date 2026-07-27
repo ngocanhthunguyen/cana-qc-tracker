@@ -170,6 +170,7 @@ function renderPlantsView(){
       <button id="btnMoveRoom" ${plantSelectedIds.size ? '' : 'disabled'}>Move room <span class="bi">/ ย้ายห้อง</span></button>
       <button id="btnHarvestPlants" ${plantSelectedIds.size ? '' : 'disabled'}>Harvest <span class="bi">/ เก็บเกี่ยว</span></button>
       <button id="btnPrintLabels" ${plantSelectedIds.size ? '' : 'disabled'}>🖨 Print labels <span class="bi">/ พิมพ์</span></button>
+      <button class="danger admin-only" id="btnDeletePlants" ${plantSelectedIds.size ? '' : 'disabled'}>Delete selected <span class="bi">/ ลบ</span></button>
       <select id="plantStatusFilter">
         <option value="">All status</option>
         ${PLANT_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${plantStatusFilter===o?'selected':''}>${esc(plantStatusShort(o))}</option>`).join('')}
@@ -193,6 +194,7 @@ function renderPlantsView(){
   document.getElementById('btnMoveRoom').onclick = ()=> openMoveRoomModal([...plantSelectedIds]);
   document.getElementById('btnHarvestPlants').onclick = ()=> openHarvestPlantsModal([...plantSelectedIds]);
   document.getElementById('btnPrintLabels').onclick = ()=> openPrintPlantLabels([...plantSelectedIds]);
+  document.getElementById('btnDeletePlants').onclick = ()=> deleteSelectedPlants();
   document.getElementById('plantStatusFilter').onchange = (e)=>{ plantStatusFilter = e.target.value; renderPlantsView(); };
   document.getElementById('plantRoomFilter').onchange = (e)=>{ plantRoomFilter = e.target.value; renderPlantsView(); };
   document.getElementById('plantSearchBox').oninput = (e)=>{ plantSearchText = e.target.value; updatePlantResults(); };
@@ -354,6 +356,7 @@ function renderPlantsCardList(rows){
         <button type="button" class="small" data-plant-barcode="${esc(p.id)}">Barcode</button>
         <button type="button" class="small" data-plant-trace="${esc(p.batchId)}">Trace</button>
         <button type="button" class="small purple" data-plant-edit="${esc(p.id)}">Edit</button>
+        <button type="button" class="small danger admin-only" data-delete-plant="${esc(p.id)}">Del</button>
       </div>
     </div>`;
   }).join('');
@@ -378,6 +381,7 @@ function renderPlantsTable(rows){
         <button type="button" class="ghost sm" data-plant-barcode="${esc(p.id)}">Barcode</button>
         <button type="button" class="ghost sm" data-plant-trace="${esc(p.batchId)}">Trace</button>
         <button type="button" class="ghost sm" data-plant-edit="${esc(p.id)}">Edit</button>
+        <button type="button" class="ghost sm danger admin-only" data-delete-plant="${esc(p.id)}">Del</button>
       </td>
     </tr>`;
   }).join('');
@@ -417,10 +421,55 @@ function bindPlantActions(root){
   root.querySelectorAll('[data-plant-trace]').forEach(el=> el.onclick = ()=> openPlantTraceModal(el.dataset.plantTrace));
   root.querySelectorAll('[data-plant-lot]').forEach(el=> el.onclick = ()=> openPlantLotTraceModal(el.dataset.plantLot));
   root.querySelectorAll('[data-plant-edit]').forEach(el=> el.onclick = ()=> openPlantEditModal(el.dataset.plantEdit));
+  root.querySelectorAll('[data-delete-plant]').forEach(el=> el.onclick = ()=> deletePlantRecord(el.dataset.deletePlant));
+  updateAdminUI();
+}
+
+function deletePlantRecords(ids){
+  ids = [...new Set((ids || []).filter(Boolean))];
+  if(!ids.length) return;
+  const idSet = new Set(ids);
+  state.plants = (state.plants || []).filter(p=> !idSet.has(p.id));
+  ids.forEach(id=> plantSelectedIds.delete(id));
+  modalDirty = false;
+  closeModal();
+  onDataChanged();
+  if(appsScriptUrl){
+    clearTimeout(sheetSaveTimer);
+    pushToGoogleSheet(true);
+  }
+  renderPlantsView();
+  showDocToast('Deleted ' + ids.length + ' plant(s) ✓');
+}
+
+function deletePlantRecord(id){
+  if(!requireAdmin('delete plant record', ()=> deletePlantRecord(id))) return;
+  const plant = getPlantById(id);
+  if(!plant) return;
+  if(!confirm('Delete plant ' + plant.batchId + '?\nลบรายการนี้?')) return;
+  deletePlantRecords([id]);
+}
+
+function deleteSelectedPlants(){
+  if(!requireAdmin('delete plant records', ()=> deleteSelectedPlants())) return;
+  const ids = [...plantSelectedIds];
+  if(!ids.length){ alert('Select plants first'); return; }
+  const label = ids.length === 1 ? getPlantById(ids[0])?.batchId || '1 plant' : ids.length + ' plants';
+  if(!confirm('Delete ' + label + '?\nลบรายการที่เลือก?')) return;
+  deletePlantRecords(ids);
+}
+
+function deletePlantLot(lotIdOrRaw){
+  if(!requireAdmin('delete plant lot', ()=> deletePlantLot(lotIdOrRaw))) return;
+  const lotCode = parsePlantLotScanCode(lotIdOrRaw);
+  const plants = getPlantsByLotId(lotCode);
+  if(!plants.length){ alert('Lot not found'); return; }
+  if(!confirm('Delete entire lot ' + lotCode + ' (' + plants.length + ' plant(s))?\nThis cannot be undone.\nลบ lot ทั้งชุด?')) return;
+  deletePlantRecords(plants.map(p=> p.id));
 }
 
 function updatePlantToolbarState(){
-  ['btnMoveRoom', 'btnHarvestPlants', 'btnPrintLabels'].forEach(id=>{
+  ['btnMoveRoom', 'btnHarvestPlants', 'btnPrintLabels', 'btnDeletePlants'].forEach(id=>{
     const btn = document.getElementById(id);
     if(btn) btn.disabled = !plantSelectedIds.size;
   });
@@ -569,6 +618,7 @@ function openPlantEditModal(id){
         <div class="field full"><label>Notes</label><textarea name="notes" rows="2">${esc(rec.notes)}</textarea></div>
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelPlantEdit">Cancel</button>
+          <button type="button" class="danger admin-only" id="btnDeletePlantEdit">Delete</button>
           <button type="submit" class="primary">Save</button>
         </div>
       </form>
@@ -577,6 +627,8 @@ function openPlantEditModal(id){
   const close = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#btnCancelPlantEdit').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const delBtn = root.querySelector('#btnDeletePlantEdit');
+  if(delBtn) delBtn.onclick = ()=> deletePlantRecord(rec.id);
   root.querySelector('#plantEditForm').onsubmit = (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -938,6 +990,7 @@ function openPlantLotTraceModal(lotIdOrRaw){
       <div class="lot-plant-list">${listHtml}</div>
       <div class="modal-actions">
         <button type="button" class="primary" id="btnLotPrintAll">Print all labels</button>
+        <button type="button" class="danger admin-only" id="btnLotDelete">Delete entire lot</button>
         <button type="button" class="ghost" id="btnLotClose">Close</button>
       </div>
     </div>
@@ -945,6 +998,8 @@ function openPlantLotTraceModal(lotIdOrRaw){
   root.querySelector('#btnLotClose').onclick = closeModal;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') closeModal(); };
   root.querySelector('#btnLotPrintAll').onclick = ()=> openPrintPlantLabels(plants.map(p=> p.id));
+  const lotDel = root.querySelector('#btnLotDelete');
+  if(lotDel) lotDel.onclick = ()=> deletePlantLot(lotCode);
   root.querySelectorAll('[data-lot-plant-trace]').forEach(el=>{
     el.onclick = ()=> openPlantTraceModal(el.dataset.lotPlantTrace);
   });
