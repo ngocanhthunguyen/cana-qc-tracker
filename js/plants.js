@@ -821,42 +821,40 @@ function estimateCode128Dots(charCount, moduleW){
 function buildZplLabel(batchId, strain, room, lotId){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 28);
   const id = safe(batchId);
-  const strainLine = safe(strain).slice(0, 22);
-  const lotLine = lotId ? ('Lot ' + safe(lotId)).slice(0, 22) : safe(room).slice(0, 22);
+  const lot = lotId ? safe(lotId) : '';
+  const metaLine = lot
+    ? (safe(strain) + ' · ' + lot).slice(0, 28)
+    : [safe(strain), safe(room)].filter(Boolean).join(' · ').slice(0, 28);
   const dpi = getZebraDpi();
   const { w, h } = getLabelSizeIn();
   const pw = inchesToDots(w, dpi);
   const ll = inchesToDots(h, dpi);
   let moduleW = 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > pw - 12){
+  if(barW > pw - 10){
     moduleW = 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const barRatio = 3;
-  const idFs = Math.max(22, Math.round(ll * 0.145));
-  const strainFs = Math.max(17, Math.round(ll * 0.115));
-  const lotFs = Math.max(15, Math.round(ll * 0.105));
+  const idFs = Math.max(28, Math.round(ll * 0.20));
+  const metaFs = Math.max(22, Math.round(ll * 0.15));
   const gap1 = 2;
   const gap2 = 1;
-  const gap3 = 1;
-  let bh = Math.round(ll * 0.38);
-  let textBlock = idFs + gap2 + strainFs + gap3 + lotFs;
+  let bh = Math.round(ll * 0.34);
+  let textBlock = idFs + gap2 + metaFs;
   let totalH = bh + gap1 + textBlock;
   if(totalH > ll - 4){
-    bh = Math.max(Math.round(ll * 0.34), ll - 4 - gap1 - textBlock);
+    bh = Math.max(Math.round(ll * 0.28), ll - 4 - gap1 - textBlock);
     totalH = bh + gap1 + textBlock;
   }
-  const by = Math.max(3, Math.round((ll - totalH) / 2));
-  const bx = Math.max(8, Math.round((pw - barW) / 2));
+  const by = Math.max(2, Math.round((ll - totalH) / 2));
+  const bx = Math.max(6, Math.round((pw - barW) / 2));
   const idY = by + bh + gap1;
-  const strainY = idY + idFs + gap2;
-  const lotY = strainY + strainFs + gap3;
+  const metaY = idY + idFs + gap2;
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
   zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   zpl += '^FO0,' + idY + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
-  if(strainLine) zpl += '^FO0,' + strainY + '^A0N,' + strainFs + ',' + strainFs + '^FB' + pw + ',1,0,C^FD' + strainLine + '^FS\n';
-  if(lotLine) zpl += '^FO0,' + lotY + '^A0N,' + lotFs + ',' + lotFs + '^FB' + pw + ',1,0,C^FD' + lotLine + '^FS\n';
+  if(metaLine) zpl += '^FO0,' + metaY + '^A0N,' + metaFs + ',' + metaFs + '^FB' + pw + ',1,0,C^FD' + metaLine + '^FS\n';
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
@@ -864,12 +862,12 @@ function buildZplLabel(batchId, strain, room, lotId){
 function buildLabelsPreviewHtml(plants){
   return plants.map(p=>{
     const lot = p.lotId || p.transferBatchRef || '';
+    const meta = lot ? ((p.strain || '') + ' · ' + lot) : (p.strain || p.room || '—');
     return `
     <div class="zebra-label" data-batch="${esc(p.batchId)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 52, width: 2.2, margin: 1 })}</div>
+      <div class="zebra-barcode">${renderBarcodeSvg(p.batchId, { height: 50, width: 2.2, margin: 1 })}</div>
       <div class="zebra-label-id">${esc(p.batchId)}</div>
-      <div class="zebra-label-meta">${esc(p.strain)}</div>
-      <div class="zebra-label-lot">${lot ? 'Lot ' + esc(lot) : esc(p.room || '—')}</div>
+      <div class="zebra-label-meta">${esc(meta)}</div>
     </div>`;
   }).join('');
 }
