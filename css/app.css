@@ -480,6 +480,13 @@
   .trace-barcode{margin:12px auto;text-align:center;}
   .trace-barcode svg{max-width:100%;height:auto;}
   .modal-wide{max-width:720px;}
+  .zebra-conn-box{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;font-size:12px;line-height:1.4;}
+  .zebra-conn-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#94a3b8;}
+  .zebra-conn-dot.on{background:#16a34a;box-shadow:0 0 0 3px #dcfce7;}
+  .zebra-conn-dot.warn{background:#d97706;box-shadow:0 0 0 3px #fef3c7;}
+  .zebra-conn-dot.off{background:#dc2626;box-shadow:0 0 0 3px #fee2e2;}
+  .zebra-conn-dot.pending{background:#94a3b8;animation:navPulse 1.2s ease infinite;}
+  #zebraConnText{flex:1;color:var(--ink);}
   .plant-print-modal .zebra-label-sheet{display:flex;flex-wrap:wrap;gap:8px;max-height:min(420px,55vh);overflow:auto;padding:8px;background:#f8fafc;border-radius:12px;border:1px solid var(--line);}
   .zebra-label{width:2in;min-height:1in;padding:0.03in 0.05in;box-sizing:border-box;border:1px dashed #cbd5e1;border-radius:4px;background:#fff;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;page-break-inside:avoid;}
   .zebra-barcode svg{width:1.85in;max-width:1.85in;height:0.5in;}
