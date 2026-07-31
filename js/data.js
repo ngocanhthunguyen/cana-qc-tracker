@@ -122,7 +122,8 @@ function defaultState(){
     exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }],
     exportPicks: [],
     companyOrders: [],
-    shipments: []
+    shipments: [],
+    packingPlans: []
   };
 }
 
@@ -221,6 +222,17 @@ const CANA_STOCK_KEYS = ['strain','room','flowerType','cropAge','bigsG','popsG',
 
 /** Export Lot ID — 4 characters, one per kg "pick" from a farm+strain pool at export time */
 const EXPORT_LOT_ID_LEN = 4;
+
+/** Packing — physical bag/box/pallet breakdown for shipment, per Thai partner spec:
+ *  1 bag = 1 kg · 1 box (carton) = 5 bags = 5 kg · 1 pallet = 16 boxes = 80 kg
+ *  Bags/boxes/pallets are packed by flattening all selected picks' kg into a single bag
+ *  sequence and chunking it — this naturally mixes strains only at the boundary between
+ *  two picks (minimising partial boxes) and mixes pallets only when a strain's boxes don't
+ *  divide evenly by 16. */
+const PACKING_BAG_KG = 1;
+const PACKING_BOX_BAGS = 5;
+const PACKING_PALLET_BOXES = 16;
+const PACKING_PLAN_CODE_LEN = 4;
 
 /** Company Orders — standalone monthly order tracker per company/strain (not yet linked to export picks) */
 const COMPANY_ORDER_COLS = [

@@ -972,7 +972,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -1219,6 +1219,7 @@ function readAllFarms() {
     exportPicks: readExportPicks(ss),
     companyOrders: readCompanyOrders(ss),
     shipments: readShipments(ss),
+    packingPlans: readPackingPlans(ss),
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
@@ -1283,7 +1284,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1297,6 +1298,7 @@ function writeAllFarms(state) {
   if (state.exportPicks !== undefined) writeExportPicks(ss, state.exportPicks);
   if (state.companyOrders !== undefined) writeCompanyOrders(ss, state.companyOrders);
   if (state.shipments !== undefined) writeShipments(ss, state.shipments);
+  if (state.packingPlans !== undefined) writePackingPlans(ss, state.packingPlans);
   updateMeta(ss);
   updateDashboard(ss);
   orderTabs(ss);
@@ -2734,6 +2736,88 @@ function upgradeExportPicksAndCompanyOrdersTabs() {
   orderTabs(ss);
   SpreadsheetApp.flush();
   Logger.log('Export Picks + Company Orders + Shipments tabs ready. Open app to sync.');
+}
+
+/* ---------- Packing Plans — bag/box/pallet breakdown + barcode label data for a shipment ---------- */
+
+var PACKING_PLANS_SHEET = 'Packing Plans';
+var PACKING_PLANS_HEADERS = ['_id', 'Code', 'Company', 'Label', 'Pick IDs (JSON)', 'Bags (JSON)', 'Boxes (JSON)', 'Pallets (JSON)', 'Total Bags', 'Total Kg', 'Created By', 'Created At'];
+var PACKING_PLANS_NUM_COLS = PACKING_PLANS_HEADERS.length;
+
+function readPackingPlans(ss) {
+  ss = ss || getSpreadsheet();
+  var sheet = ss.getSheetByName(PACKING_PLANS_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, PACKING_PLANS_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1]) return;
+    var pickIds = [], bags = [], boxes = [], pallets = [];
+    try { pickIds = row[4] ? JSON.parse(row[4]) : []; } catch (e) { pickIds = []; }
+    try { bags = row[5] ? JSON.parse(row[5]) : []; } catch (e) { bags = []; }
+    try { boxes = row[6] ? JSON.parse(row[6]) : []; } catch (e) { boxes = []; }
+    try { pallets = row[7] ? JSON.parse(row[7]) : []; } catch (e) { pallets = []; }
+    list.push({
+      id: String(row[0] || '') || newId(),
+      code: String(row[1] || ''),
+      company: String(row[2] || ''),
+      label: String(row[3] || ''),
+      pickIds: pickIds,
+      bags: bags,
+      boxes: boxes,
+      pallets: pallets,
+      totalBags: Number(row[8] || 0),
+      totalKg: Number(row[9] || 0),
+      createdBy: String(row[10] || ''),
+      createdAt: String(row[11] || '')
+    });
+  });
+  return list;
+}
+
+function writePackingPlans(ss, plans) {
+  setupCanaFlowerTab(ss, PACKING_PLANS_SHEET, 'CANA QC TRACKER  ·  PACKING PLANS',
+    'Bag/box/pallet breakdown per shipment · 1 bag = 1kg · 1 box = 5 bags · 1 pallet = 16 boxes · barcode label data',
+    '#7c3aed', PACKING_PLANS_HEADERS);
+  var sheet = ss.getSheetByName(PACKING_PLANS_SHEET);
+  var rows = (plans || []).map(function(p) {
+    return [
+      p.id || newId(),
+      p.code || '',
+      p.company || '',
+      p.label || '',
+      JSON.stringify(p.pickIds || []),
+      JSON.stringify(p.bags || []),
+      JSON.stringify(p.boxes || []),
+      JSON.stringify(p.pallets || []),
+      p.totalBags || 0,
+      p.totalKg === '' || p.totalKg === null || p.totalKg === undefined ? '' : p.totalKg,
+      p.createdBy || '',
+      p.createdAt || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, PACKING_PLANS_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, PACKING_PLANS_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, PACKING_PLANS_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#ede9fe')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+/** Run once — creates Packing Plans tab */
+function upgradePackingPlansTab() {
+  var ss = getSpreadsheet();
+  writePackingPlans(ss, readPackingPlans(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Packing Plans tab ready. Open app to sync.');
 }
 
 /* ---------- Export Log tab ---------- */

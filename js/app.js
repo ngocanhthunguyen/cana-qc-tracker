@@ -31,6 +31,7 @@ let companyOrdersMonth = '';
 let companyOrdersSearchText = '';
 let shipmentsMonth = '';
 let shipmentsSearchText = '';
+let packingSelectedPickIds = new Set();
 let viewMode = 'compact'; // 'compact' | 'full'
 let filterStatus = '';
 let filterDateFrom = '';
@@ -1043,6 +1044,7 @@ function ensureStateShape(){
   if(!state.exportPicks) state.exportPicks = [];
   if(!state.companyOrders) state.companyOrders = [];
   if(!state.shipments) state.shipments = [];
+  if(!state.packingPlans) state.packingPlans = [];
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
@@ -1400,6 +1402,7 @@ function mergeSharedModulesFromRemote(data){
   if(!localDirty && Array.isArray(data.exportPicks)) state.exportPicks = data.exportPicks.slice();
   if(!localDirty && Array.isArray(data.companyOrders)) state.companyOrders = data.companyOrders.slice();
   if(!localDirty && Array.isArray(data.shipments)) state.shipments = data.shipments.slice();
+  if(!localDirty && Array.isArray(data.packingPlans)) state.packingPlans = data.packingPlans.slice();
 }
 function mergeTrimmingFromRemote(remoteTrimming){
   if(!Array.isArray(remoteTrimming)) return;
@@ -1597,7 +1600,8 @@ function stateFingerprint(){
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
     companyOrders: state.companyOrders || [],
-    shipments: state.shipments || []
+    shipments: state.shipments || [],
+    packingPlans: state.packingPlans || []
   });
 }
 function debouncedPushToSheet(){
@@ -1738,7 +1742,8 @@ async function pullFromGoogleSheet(silent){
       exportCompanies: data.exportCompanies || [],
       exportPicks: data.exportPicks || [],
       companyOrders: data.companyOrders || [],
-      shipments: data.shipments || []
+      shipments: data.shipments || [],
+      packingPlans: data.packingPlans || []
     });
     const docsBefore = JSON.stringify(stripDocsForSheet(state.documents));
     const sharedBefore = sharedModulesFingerprint();
@@ -1807,7 +1812,8 @@ async function pushToGoogleSheet(silent){
         exportCompanies: state.exportCompanies || [],
         exportPicks: state.exportPicks || [],
         companyOrders: state.companyOrders || [],
-        shipments: state.shipments || []
+        shipments: state.shipments || [],
+        packingPlans: state.packingPlans || []
       }
     };
     const data = await callAppsScript(payload);
@@ -2329,7 +2335,8 @@ function buildStateForStorage(){
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
     companyOrders: state.companyOrders || [],
-    shipments: state.shipments || []
+    shipments: state.shipments || [],
+    packingPlans: state.packingPlans || []
   };
 }
 function saveLocal(){
@@ -3279,6 +3286,432 @@ function deleteExportPick(id){
 function exportPickToLabelShape(p){
   return { batchId: p.lotId, strain: (p.strain || '') + ' ' + fmtNum(p.kg,1) + 'kg', room: p.farm, lotId: '' };
 }
+
+/* ============ PACKING: bags → boxes → pallets ============ */
+function chunkArray(arr, size){
+  const out = [];
+  for(let i=0;i<arr.length;i+=size) out.push(arr.slice(i, i+size));
+  return out;
+}
+function nextPackingPlanCode(){
+  for(let i=0;i<5000;i++){
+    const code = String(Math.floor(1000 + Math.random()*9000));
+    if(!(state.packingPlans || []).some(pl=> pl.code === code)) return code;
+  }
+  return String(Date.now()).slice(-4);
+}
+function summarizeStrainContents(items, kgPerItem){
+  const map = {};
+  items.forEach(it=>{
+    const key = (it.strain||'') + '||' + (it.lotId||'');
+    if(!map[key]) map[key] = { strain: it.strain, lotId: it.lotId, farm: it.farm, bagCount: 0 };
+    map[key].bagCount += 1;
+  });
+  return Object.values(map).map(c=> ({ ...c, kg: Number((c.bagCount * kgPerItem).toFixed(3)) }));
+}
+/** Build an (unsaved) preview: flattens every selected pick into 1kg bags, in pick order,
+ *  then chunks into boxes of 5 and pallets of 16. Mixing across strains only happens at
+ *  the boundary between two picks, so most boxes/pallets end up strain-pure. */
+function buildPackingPlanPreview(pickIds){
+  const picks = (pickIds || []).map(id=> (state.exportPicks || []).find(p=> p.id === id)).filter(Boolean);
+  if(!picks.length) return null;
+  const roundingNotes = [];
+  const bags = [];
+  picks.forEach(p=>{
+    const exactKg = num(p.kg) || 0;
+    const bagCount = Math.max(0, Math.round(exactKg));
+    if(Math.abs(bagCount - exactKg) > 0.01){
+      roundingNotes.push(`${p.strain} (Lot ${p.lotId}): ${fmtNum(exactKg,3)} kg rounded to ${bagCount} bag(s) of ${PACKING_BAG_KG}kg`);
+    }
+    for(let i=0;i<bagCount;i++) bags.push({ pickId: p.id, lotId: p.lotId, strain: p.strain, farm: p.farm });
+  });
+  const boxGroups = chunkArray(bags, PACKING_BOX_BAGS);
+  const boxes = boxGroups.map((bagGroup, idx)=>{
+    const contents = summarizeStrainContents(bagGroup, PACKING_BAG_KG);
+    return {
+      seq: idx + 1,
+      bagCount: bagGroup.length,
+      kg: Number((bagGroup.length * PACKING_BAG_KG).toFixed(3)),
+      contents,
+      mixed: contents.length > 1
+    };
+  });
+  const palletGroups = chunkArray(boxes, PACKING_PALLET_BOXES);
+  const pallets = palletGroups.map((boxGroup, idx)=>{
+    const map = {};
+    boxGroup.forEach(box=> box.contents.forEach(c=>{
+      const key = c.strain + '||' + c.lotId;
+      if(!map[key]) map[key] = { strain: c.strain, lotId: c.lotId, kg: 0 };
+      map[key].kg = Number((map[key].kg + c.kg).toFixed(3));
+    }));
+    return {
+      seq: idx + 1,
+      boxCount: boxGroup.length,
+      kg: Number(boxGroup.reduce((s,b)=> s + b.kg, 0).toFixed(3)),
+      contents: Object.values(map),
+      mixed: Object.keys(map).length > 1
+    };
+  });
+  return {
+    picks, pickIds: picks.map(p=> p.id), bagsFlat: bags, boxes, pallets,
+    totalBags: bags.length,
+    totalKg: Number((bags.length * PACKING_BAG_KG).toFixed(3)),
+    roundingNotes
+  };
+}
+function savePackingPlan(pickIds, meta){
+  const preview = buildPackingPlanPreview(pickIds);
+  if(!preview || !preview.totalBags) return null;
+  const code = nextPackingPlanCode();
+  const bags = preview.bagsFlat.map((b, idx)=>{
+    const seq = idx + 1;
+    return { ...b, seq, code: code + '-G' + String(seq).padStart(4,'0'), boxSeq: Math.floor(idx / PACKING_BOX_BAGS) + 1 };
+  });
+  const boxes = preview.boxes.map(box=> ({
+    ...box,
+    code: code + '-B' + String(box.seq).padStart(3,'0'),
+    palletSeq: Math.ceil(box.seq / PACKING_PALLET_BOXES)
+  }));
+  const pallets = preview.pallets.map(pl=> ({ ...pl, code: code + '-P' + String(pl.seq).padStart(2,'0') }));
+  const plan = {
+    id: uid(),
+    code,
+    company: (meta && meta.company) || '',
+    label: (meta && meta.label) || '',
+    pickIds: preview.pickIds,
+    bags, boxes, pallets,
+    totalBags: preview.totalBags,
+    totalKg: preview.totalKg,
+    createdBy: getCurrentUserName(),
+    createdAt: new Date().toISOString()
+  };
+  if(!state.packingPlans) state.packingPlans = [];
+  state.packingPlans.push(plan);
+  onDataChanged();
+  if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+  return plan;
+}
+function deletePackingPlan(id){
+  const plan = (state.packingPlans || []).find(pl=> pl.id === id);
+  if(!plan) return;
+  if(!requireAdmin('delete packing plan', ()=> deletePackingPlan(id))) return;
+  if(!confirm(`Delete packing plan "${plan.code}" (${plan.totalBags} bags · ${fmtNum(plan.totalKg,3)} kg)?\nThis does not affect the underlying export picks/QC records.`)) return;
+  state.packingPlans = (state.packingPlans || []).filter(pl=> pl.id !== id);
+  onDataChanged();
+  refreshExportView();
+  showDocToast('Packing plan deleted ✓');
+}
+function parsePackingScanCode(raw){
+  const s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  const m = s.match(/^([A-Z0-9]{4})-(G|B|P)0*(\d+)$/);
+  if(!m) return null;
+  return { planCode: m[1], type: m[2] === 'G' ? 'bag' : (m[2] === 'B' ? 'box' : 'pallet'), seq: parseInt(m[3], 10) };
+}
+function findPackingPlanByCode(code){
+  return (state.packingPlans || []).find(pl=> pl.code === String(code || '').toUpperCase());
+}
+function lookupPackingUnit(rawCode){
+  const parsed = parsePackingScanCode(rawCode);
+  if(!parsed) return null;
+  const plan = findPackingPlanByCode(parsed.planCode);
+  if(!plan) return null;
+  const list = parsed.type === 'bag' ? plan.bags : (parsed.type === 'box' ? plan.boxes : plan.pallets);
+  const unit = (list || []).find(u=> u.seq === parsed.seq);
+  if(!unit) return null;
+  return { plan, type: parsed.type, unit };
+}
+function packingUnitLabelShape(type, unit){
+  if(type === 'bag'){
+    return {
+      code: unit.code,
+      title: unit.strain || '—',
+      lines: [`Lot ${unit.lotId || '—'}`, `Box ${unit.boxSeq}`, `${fmtNum(PACKING_BAG_KG,1)} kg`]
+    };
+  }
+  if(type === 'box'){
+    const contentLines = unit.mixed
+      ? unit.contents.map(c=> `${c.strain} (Lot ${c.lotId}): ${c.bagCount} bag${c.bagCount===1?'':'s'}`)
+      : [`${(unit.contents[0]||{}).strain || '—'} (Lot ${(unit.contents[0]||{}).lotId || '—'})`];
+    return {
+      code: unit.code,
+      title: (unit.mixed ? 'MIXED - ' : '') + `${unit.bagCount} bag${unit.bagCount===1?'':'s'} / ${fmtNum(unit.kg,1)} kg`,
+      lines: [...contentLines, `Pallet ${unit.palletSeq}`]
+    };
+  }
+  return {
+    code: unit.code,
+    title: `${unit.boxCount} box${unit.boxCount===1?'':'es'} / ${fmtNum(unit.kg,1)} kg`,
+    lines: unit.contents.map(c=> `${c.strain}: ${fmtNum(c.kg,1)} kg`)
+  };
+}
+function buildPackingLabelsPreviewHtml(plan, type){
+  const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
+  return (list || []).map(unit=>{
+    const shape = packingUnitLabelShape(type, unit);
+    return `
+    <div class="zebra-label packing-label ${unit.mixed?'mixed':''}" data-code="${esc(shape.code)}">
+      <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 40, width: 1.9, margin: 1 })}</div>
+      <div class="zebra-label-id">${esc(shape.code)}</div>
+      <div class="zebra-label-title">${esc(shape.title)}</div>
+      <div class="zebra-label-manifest">${shape.lines.map(l=> `<div>${esc(l)}</div>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
+function buildZplLabelMulti(code, title, lines){
+  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 34);
+  const id = safe(code);
+  const titleSafe = safe(title);
+  const lineTexts = (lines || []).map(l=> safe(l)).filter(Boolean).slice(0, 4);
+  const dpi = getZebraDpi();
+  const { w, h } = getLabelSizeIn();
+  const pw = inchesToDots(w, dpi);
+  const ll = inchesToDots(h, dpi);
+  let moduleW = 2;
+  let barW = estimateCode128Dots(id.length, moduleW);
+  if(barW > pw - 10){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const barRatio = 3;
+  const idFs = Math.max(20, Math.round(ll * 0.12));
+  const titleFs = Math.max(16, Math.round(ll * 0.09));
+  const lineFs = Math.max(13, Math.round(ll * 0.07));
+  const gap = 2;
+  let bh = Math.round(ll * 0.30);
+  const textBlockH = idFs + gap + (titleSafe ? titleFs + gap : 0) + lineTexts.length * (lineFs + 1);
+  let totalH = bh + gap + textBlockH;
+  if(totalH > ll - 4){
+    bh = Math.max(Math.round(ll * 0.22), ll - 4 - gap - textBlockH);
+    totalH = bh + gap + textBlockH;
+  }
+  const by = Math.max(2, Math.round((ll - totalH) / 2));
+  const bx = Math.max(6, Math.round((pw - barW) / 2));
+  let y = by + bh + gap;
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
+  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  zpl += '^FO0,' + y + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
+  y += idFs + gap;
+  if(titleSafe){
+    zpl += '^FO0,' + y + '^A0N,' + titleFs + ',' + titleFs + '^FB' + pw + ',1,0,C^FD' + titleSafe + '^FS\n';
+    y += titleFs + gap;
+  }
+  lineTexts.forEach(l=>{
+    zpl += '^FO0,' + y + '^A0N,' + lineFs + ',' + lineFs + '^FB' + pw + ',1,0,C^FD' + l + '^FS\n';
+    y += lineFs + 1;
+  });
+  zpl += '^PQ1^XZ\n';
+  return zpl;
+}
+function buildZplForPackingUnits(type, units){
+  return (units || []).map(unit=>{
+    const shape = packingUnitLabelShape(type, unit);
+    return buildZplLabelMulti(shape.code, shape.title, shape.lines);
+  }).join('');
+}
+function downloadPackingZpl(plan, type, units){
+  const zpl = buildZplForPackingUnits(type, units);
+  const filename = plan.code + '-' + type + 's.zpl';
+  const blob = new Blob([zpl], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  showDocToast('ZPL downloaded ✓');
+  return filename;
+}
+async function copyPackingZplToClipboard(type, units){
+  const zpl = buildZplForPackingUnits(type, units);
+  try {
+    await navigator.clipboard.writeText(zpl);
+    showDocToast('ZPL copied ✓');
+    return true;
+  } catch(e){
+    return false;
+  }
+}
+function openPrintPackingLabelsModal(planId){
+  const plan = (state.packingPlans || []).find(pl=> pl.id === planId);
+  if(!plan){ alert('Packing plan not found'); return; }
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
+  const savedDpi = getZebraDpi();
+  const labelSize = getLabelSizeIn();
+  let tier = 'pallet';
+  const currentUnits = ()=> tier === 'bag' ? plan.bags : (tier === 'box' ? plan.boxes : plan.pallets);
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal modal-wide plant-print-modal">
+      <h2>🖨 Print packing labels — ${esc(plan.code)}</h2>
+      <p class="sub">${plan.totalBags} bags · ${plan.boxes.length} boxes · ${plan.pallets.length} pallets · <b>${fmtNum(plan.totalKg,3)} kg</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
+      <div class="view-toggle" id="packingTierToggle">
+        <button type="button" class="active" data-tier="pallet">Pallets (${plan.pallets.length})</button>
+        <button type="button" data-tier="box">Boxes (${plan.boxes.length})</button>
+        <button type="button" data-tier="bag">Bags (${plan.bags.length})</button>
+      </div>
+      <div class="plant-print-help">
+        <p>Download or copy ZPL, then send to the printer in Terminal:<br>
+        <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Printer IP</label>
+          <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
+        <div class="field"><label>Printer DPI</label>
+          <select id="zebraDpiInput">
+            <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
+            <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
+          </select></div>
+        <div class="field"><label>Label width (in)</label>
+          <input id="labelWIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.w}"></div>
+        <div class="field"><label>Label height (in)</label>
+          <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.pallets.length}</span>)</button>
+        <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
+        <button type="button" class="ghost" id="btnClosePrint">Close</button>
+      </div>
+      <p class="sub" id="printStatusLine"></p>
+      <div class="zebra-label-sheet" id="packingLabelSheet">${buildPackingLabelsPreviewHtml(plan, tier)}</div>
+    </div>
+  </div>`;
+  const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
+  const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
+  root.querySelectorAll('#packingTierToggle button').forEach(btn=>{
+    btn.onclick = ()=>{
+      tier = btn.dataset.tier;
+      root.querySelectorAll('#packingTierToggle button').forEach(b=> b.classList.toggle('active', b===btn));
+      document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
+      document.getElementById('packingTierCount').textContent = currentUnits().length;
+      setStatus('');
+    };
+  });
+  root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
+  root.querySelector('#btnCopyZpl').onclick = async ()=>{
+    saveLabelPrintSettings();
+    if(await copyPackingZplToClipboard(tier, currentUnits())) setStatus('Copied — run: pbpaste | nc ' + getIp() + ' 9100');
+    else setStatus('Copy failed — try Download ZPL');
+  };
+  root.querySelector('#btnDownloadZpl').onclick = ()=>{
+    saveLabelPrintSettings();
+    const fn = downloadPackingZpl(plan, tier, currentUnits());
+    setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
+  };
+}
+function renderPackingPlansSection(){
+  const plans = (state.packingPlans || []).slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  const body = plans.length ? plans.map(pl=>{
+    const strains = [...new Set(pl.pallets.flatMap(p=> p.contents.map(c=> c.strain)))];
+    return `<div class="export-pick-row" style="grid-template-columns:90px 1fr 1fr auto;">
+      <code class="batch-id">${esc(pl.code)}</code>
+      <span>${esc(strains.join(', ') || '—')}${pl.company ? ' <span class="company-badge">'+esc(pl.company)+'</span>' : ''}</span>
+      <span class="muted">${fmtNum(pl.totalKg,3)} kg · ${pl.totalBags} bags · ${pl.boxes.length} boxes · ${pl.pallets.length} pallets</span>
+      <div class="action-group">
+        <button type="button" class="small purple" data-print-plan="${esc(pl.id)}">🖨 Labels</button>
+        <button type="button" class="small danger admin-only" data-delete-plan="${esc(pl.id)}">Del</button>
+      </div>
+    </div>`;
+  }).join('') : `<p class="sub" style="margin:8px 0 0;">No packing plans yet — select some Lot ID picks above and click "Pack selected".</p>`;
+  return `
+  <div class="panel">
+    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;">
+      <div>
+        <h3 style="margin:0 0 4px;font-size:15px;">📦 Packing plans — bags · boxes · pallets</h3>
+        <p class="sub" style="margin:0;font-size:12px;color:var(--muted);">1 bag = ${PACKING_BAG_KG}kg · 1 box = ${PACKING_BOX_BAGS} bags · 1 pallet = ${PACKING_PALLET_BOXES} boxes. Scan a box/bag/pallet barcode to see exactly what's inside.<br><span class="bi">สแกนบาร์โค้ดกล่อง/ถุง/พาเลทเพื่อดูรายละเอียดข้างใน</span></p>
+      </div>
+      <button type="button" class="small" id="btnPackingLookup">🔍 Look up a code</button>
+    </div>
+    <div class="export-picks-list" style="margin-top:10px;">${body}</div>
+  </div>`;
+}
+function bindPackingPlansSection(main){
+  main.querySelectorAll('[data-print-plan]').forEach(btn=> btn.onclick = ()=> openPrintPackingLabelsModal(btn.dataset.printPlan));
+  main.querySelectorAll('[data-delete-plan]').forEach(btn=> btn.onclick = ()=> deletePackingPlan(btn.dataset.deletePlan));
+  const btnLookup = main.querySelector('#btnPackingLookup');
+  if(btnLookup) btnLookup.onclick = ()=> openPackingLookupModal();
+}
+function renderPackingLookupResult(rawCode){
+  const found = lookupPackingUnit(rawCode);
+  if(!found){
+    return `<div class="pending-banner"><span>⚠ Code "${esc(rawCode)}" not found. Check the code and try again.</span></div>`;
+  }
+  const { plan, type, unit } = found;
+  const shape = packingUnitLabelShape(type, unit);
+  const typeLabel = type === 'bag' ? 'Bag' : (type === 'box' ? 'Box' : 'Pallet');
+  return `<div class="panel" style="margin:0;background:var(--grey-bg);">
+    <h3 style="margin:0 0 6px;font-size:15px;">${typeLabel} <code class="batch-id">${esc(shape.code)}</code></h3>
+    <p style="margin:0 0 6px;font-weight:700;">${esc(shape.title)}</p>
+    <div style="font-size:13px;line-height:1.7;">${shape.lines.map(l=> esc(l)).join('<br>')}</div>
+    <p class="sub" style="margin:10px 0 0;">Part of packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
+  </div>`;
+}
+let packingCameraScanner = null;
+let packingScanLock = false;
+async function stopPackingCameraScanner(){
+  if(!packingCameraScanner) return;
+  try { await packingCameraScanner.stop(); } catch(e){}
+  try { packingCameraScanner.clear(); } catch(e){}
+  packingCameraScanner = null;
+}
+function openPackingLookupModal(){
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:460px">
+      <h2>🔍 Look up bag / box / pallet</h2>
+      <p class="sub">Type/paste the code printed under the barcode, or scan it with the camera (e.g. <code>2383-B015</code>)<br><span class="bi">พิมพ์หรือวางรหัส หรือสแกนด้วยกล้อง</span></p>
+      <div class="row-actions">
+        <input id="packingLookupInput" placeholder="e.g. 2383-B015" style="flex:1;" autofocus>
+        <button type="button" class="primary" id="btnPackingLookupGo">Look up</button>
+        <button type="button" class="ghost" id="btnPackingCamera">📷 Scan</button>
+      </div>
+      <div id="packingCameraWrap"></div>
+      <div id="packingLookupResult" style="margin-top:14px;"></div>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btnClosePackingLookup">Close</button>
+      </div>
+    </div>
+  </div>`;
+  const close = ()=>{ stopPackingCameraScanner(); modalDirty = false; closeModal(); };
+  root.querySelector('#btnClosePackingLookup').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const input = root.querySelector('#packingLookupInput');
+  const go = ()=>{ document.getElementById('packingLookupResult').innerHTML = renderPackingLookupResult(input.value); };
+  root.querySelector('#btnPackingLookupGo').onclick = go;
+  input.onkeydown = (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } };
+  root.querySelector('#btnPackingCamera').onclick = ()=> openPackingCameraReader(root, input, go);
+}
+async function openPackingCameraReader(root, input, go){
+  const wrap = root.querySelector('#packingCameraWrap');
+  if(typeof Html5Qrcode === 'undefined'){
+    wrap.innerHTML = '<p class="sub">Scanner not loaded — hard refresh the page.</p>';
+    return;
+  }
+  packingScanLock = false;
+  wrap.innerHTML = `<div id="packingCameraReader" class="plant-camera-reader" style="margin-top:10px;"></div><p class="sub" id="packingCameraStatus">Starting camera…</p>`;
+  const statusEl = wrap.querySelector('#packingCameraStatus');
+  const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
+    ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39]
+    : undefined;
+  const boxW = Math.min(320, Math.max(240, window.innerWidth - 56));
+  packingCameraScanner = new Html5Qrcode('packingCameraReader');
+  const config = { fps: 12, qrbox: { width: boxW, height: Math.round(boxW * 0.35) }, aspectRatio: 1.777 };
+  if(formats) config.formatsToSupport = formats;
+  try{
+    await packingCameraScanner.start({ facingMode: 'environment' }, config, (decodedText)=>{
+      if(packingScanLock) return;
+      packingScanLock = true;
+      stopPackingCameraScanner().finally(()=>{
+        wrap.innerHTML = '';
+        input.value = decodedText;
+        go();
+      });
+    });
+  }catch(e){
+    if(statusEl) statusEl.textContent = 'Camera unavailable: ' + (e.message || e);
+  }
+}
 function openPrintExportLotLabels(pickIds){
   const ids = Array.isArray(pickIds) ? pickIds : [pickIds];
   const picks = ids.map(id=> (state.exportPicks || []).find(p=> p.id === id)).filter(Boolean);
@@ -3352,6 +3785,7 @@ function renderFarmStrainTotalsPanel(month){
   }).join('') : `<tr><td colspan="8" class="muted" style="text-align:center;padding:16px;">No finished QC batches yet.</td></tr>`;
   const picksHtml = picks.length ? picks.map(p=>`
     <div class="export-pick-row">
+      <label class="chk"><input type="checkbox" class="packing-pick-cb" data-pick-id="${esc(p.id)}" ${packingSelectedPickIds.has(p.id)?'checked':''}></label>
       <code class="batch-id">${esc(p.lotId)}</code>
       <span><b>${esc(p.strain)}</b> · ${esc(p.farm)}</span>
       <span>${fmtNum(p.kg,3)} kg</span>
@@ -3362,6 +3796,7 @@ function renderFarmStrainTotalsPanel(month){
         <button type="button" class="small danger admin-only" data-delete-pick="${esc(p.id)}">Del</button>
       </div>
     </div>`).join('') : `<p class="sub" style="margin:8px 0 0;">No kg picked yet for ${esc(month)}.</p>`;
+  const selectedCount = picks.filter(p=> packingSelectedPickIds.has(p.id)).length;
   return `
   <div class="panel export-farm-strain-panel">
     <h3 style="margin:0 0 4px;font-size:15px;">📊 Farm × Strain totals — all-time available stock</h3>
@@ -3373,15 +3808,96 @@ function renderFarmStrainTotalsPanel(month){
     </table></div>
     <h4 style="margin:16px 0 6px;font-size:13px;">Export picks / Lot IDs — ${esc(month)}</h4>
     <div class="export-picks-list">${picksHtml}</div>
+    ${picks.length ? `<div class="row-actions" style="margin-top:10px;">
+      <button type="button" class="small primary" id="btnPackSelectedPicks" ${selectedCount ? '' : 'disabled'}>📦 Pack selected (${selectedCount}) → bags/boxes/pallets</button>
+      <span class="muted" style="font-size:12px;">Tick the Lot IDs going into this shipment, then generate the physical bag/box/pallet breakdown + barcode labels.</span>
+    </div>` : ''}
   </div>`;
 }
 function bindFarmStrainTotalsEvents(main, month){
   main.querySelectorAll('[data-pick-farm]').forEach(btn=>{
     btn.onclick = ()=> openExportPickModal(btn.dataset.pickFarm, btn.dataset.pickStrain, month, Number(btn.dataset.pickRemaining) || 0);
   });
+  main.querySelectorAll('.packing-pick-cb').forEach(cb=>{
+    cb.onchange = ()=>{
+      if(cb.checked) packingSelectedPickIds.add(cb.dataset.pickId);
+      else packingSelectedPickIds.delete(cb.dataset.pickId);
+      const btn = main.querySelector('#btnPackSelectedPicks');
+      if(btn){
+        btn.disabled = packingSelectedPickIds.size === 0;
+        btn.textContent = `📦 Pack selected (${packingSelectedPickIds.size}) → bags/boxes/pallets`;
+      }
+    };
+  });
+  const btnPack = main.querySelector('#btnPackSelectedPicks');
+  if(btnPack) btnPack.onclick = ()=> openPackingPreviewModal(Array.from(packingSelectedPickIds));
   main.querySelectorAll('[data-edit-pick-lot]').forEach(btn=> btn.onclick = ()=> openEditPickLotIdModal(btn.dataset.editPickLot));
   main.querySelectorAll('[data-print-pick]').forEach(btn=> btn.onclick = ()=> openPrintExportLotLabels([btn.dataset.printPick]));
   main.querySelectorAll('[data-delete-pick]').forEach(btn=> btn.onclick = ()=> deleteExportPick(btn.dataset.deletePick));
+}
+function openPackingPreviewModal(pickIds){
+  if(!requireAdmin('generate a packing plan', ()=> openPackingPreviewModal(pickIds))) return;
+  const preview = buildPackingPlanPreview(pickIds);
+  if(!preview || !preview.totalBags){ alert('Select at least one Lot ID pick with 1 kg or more to pack.'); return; }
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const companies = getExportCompanies();
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal modal-wide">
+      <h2>📦 Packing plan preview</h2>
+      <p class="sub">${preview.picks.length} pick(s) selected · <b>${fmtNum(preview.totalKg,3)} kg</b> → <b>${preview.totalBags}</b> bag(s) · <b>${preview.boxes.length}</b> box(es) · <b>${preview.pallets.length}</b> pallet(s)<br>
+      <span class="bi">1 bag = ${PACKING_BAG_KG}kg · 1 box = ${PACKING_BOX_BAGS} bags (${PACKING_BOX_BAGS*PACKING_BAG_KG}kg) · 1 pallet = ${PACKING_PALLET_BOXES} boxes (${PACKING_PALLET_BOXES*PACKING_BOX_BAGS*PACKING_BAG_KG}kg)</span></p>
+      ${preview.roundingNotes.length ? `<div class="pending-banner"><span>⚠ ${preview.roundingNotes.join('<br>⚠ ')}</span></div>` : ''}
+      <div class="form-grid">
+        <div class="field"><label>Company (optional)</label>
+          <input list="packingCompanyList" id="packingCompanyInput" placeholder="e.g. BLS">
+          <datalist id="packingCompanyList">${companies.map(c=> `<option value="${esc(c.name)}">`).join('')}</datalist>
+        </div>
+        <div class="field"><label>Label / reference (optional)</label>
+          <input id="packingLabelInput" placeholder="e.g. Aug shipment #1"></div>
+      </div>
+      <h3 style="margin:16px 0 8px;font-size:14px;">Pallets</h3>
+      <div class="table-wrap"><table class="compact-table">
+        <thead><tr><th>Pallet</th><th>Boxes</th><th>Kg</th><th>Contents</th></tr></thead>
+        <tbody>${preview.pallets.map(pl=> `<tr>
+          <td><b>Pallet ${pl.seq}</b>${pl.mixed?' <span class="cond-badge cond">MIXED</span>':''}</td>
+          <td>${pl.boxCount}</td>
+          <td>${fmtNum(pl.kg,3)}</td>
+          <td>${pl.contents.map(c=> esc(c.strain) + ' (' + fmtNum(c.kg,3) + 'kg)').join(', ')}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <h3 style="margin:16px 0 8px;font-size:14px;">Boxes (${preview.boxes.length})</h3>
+      <div class="table-wrap" style="max-height:240px;overflow:auto;"><table class="compact-table">
+        <thead><tr><th>Box</th><th>Pallet</th><th>Bags</th><th>Contents</th></tr></thead>
+        <tbody>${preview.boxes.map(box=> `<tr>
+          <td><b>Box ${box.seq}</b>${box.mixed?' <span class="cond-badge cond">MIXED</span>':''}</td>
+          <td>Pallet ${Math.ceil(box.seq / PACKING_PALLET_BOXES)}</td>
+          <td>${box.bagCount}</td>
+          <td>${box.contents.map(c=> esc(c.strain) + ' × ' + c.bagCount).join(', ')}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="btnCancelPacking">Cancel</button>
+        <button type="button" class="primary" id="btnConfirmPacking">Confirm & generate labels</button>
+      </div>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCancelPacking').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#btnConfirmPacking').onclick = ()=>{
+    const company = root.querySelector('#packingCompanyInput').value.trim();
+    const label = root.querySelector('#packingLabelInput').value.trim();
+    const plan = savePackingPlan(pickIds, { company, label });
+    if(!plan){ alert('Could not create packing plan.'); return; }
+    packingSelectedPickIds.clear();
+    modalDirty = false;
+    closeModal();
+    refreshExportView();
+    showDocToast(`Packing plan ${plan.code} created ✓ (${plan.totalBags} bags)`);
+    openPrintPackingLabelsModal(plan.id);
+  };
 }
 function renderExportDownloadSection(month){
   const selected = getSelectedExportItems(month);
@@ -6483,11 +6999,13 @@ function renderExportView(){
     <div id="shipmentsQcBannerWrap">${renderShipmentsQcBanner()}</div>
     ${renderShipmentsSection()}
     ${renderFarmStrainTotalsPanel(dashMonth)}
+    ${renderPackingPlansSection()}
     ${renderCompanyOrdersSection()}
     ${renderExportDownloadSection(dashMonth)}
   `;
   document.getElementById('exportMonthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderExportView(); };
   bindShipmentsSection(main);
+  bindPackingPlansSection(main);
   bindCompanyOrdersSection(main);
   bindExportBuilderEvents(main, dashMonth);
 }
