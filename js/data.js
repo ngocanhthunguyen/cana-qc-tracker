@@ -121,7 +121,8 @@ function defaultState(){
     exportLog: [],
     exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }],
     exportPicks: [],
-    companyOrders: []
+    companyOrders: [],
+    shipments: []
   };
 }
 

@@ -5,7 +5,7 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders' | 'shipments'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
@@ -30,6 +30,8 @@ let pendingOnly = false;
 let searchText = '';
 let companyOrdersMonth = '';
 let companyOrdersSearchText = '';
+let shipmentsMonth = '';
+let shipmentsSearchText = '';
 let viewMode = 'compact'; // 'compact' | 'full'
 let filterStatus = '';
 let filterDateFrom = '';
@@ -1041,6 +1043,7 @@ function ensureStateShape(){
   }
   if(!state.exportPicks) state.exportPicks = [];
   if(!state.companyOrders) state.companyOrders = [];
+  if(!state.shipments) state.shipments = [];
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
@@ -1082,6 +1085,7 @@ function enforceStaffViewAccess(){
   if(!isStaff()) return;
   if(currentView === 'canaStock') currentView = 'dashboard';
   if(currentView === 'companyOrders') currentView = 'dashboard';
+  if(currentView === 'shipments') currentView = 'dashboard';
   if(currentFarmTab === 'documents') currentFarmTab = 'qc';
 }
 function bindFarmSubtabs(root){
@@ -1397,6 +1401,7 @@ function mergeSharedModulesFromRemote(data){
   }
   if(!localDirty && Array.isArray(data.exportPicks)) state.exportPicks = data.exportPicks.slice();
   if(!localDirty && Array.isArray(data.companyOrders)) state.companyOrders = data.companyOrders.slice();
+  if(!localDirty && Array.isArray(data.shipments)) state.shipments = data.shipments.slice();
 }
 function mergeTrimmingFromRemote(remoteTrimming){
   if(!Array.isArray(remoteTrimming)) return;
@@ -1593,7 +1598,8 @@ function stateFingerprint(){
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
-    companyOrders: state.companyOrders || []
+    companyOrders: state.companyOrders || [],
+    shipments: state.shipments || []
   });
 }
 function debouncedPushToSheet(){
@@ -1733,7 +1739,8 @@ async function pullFromGoogleSheet(silent){
       exportLog: data.exportLog || [],
       exportCompanies: data.exportCompanies || [],
       exportPicks: data.exportPicks || [],
-      companyOrders: data.companyOrders || []
+      companyOrders: data.companyOrders || [],
+      shipments: data.shipments || []
     });
     const docsBefore = JSON.stringify(stripDocsForSheet(state.documents));
     const sharedBefore = sharedModulesFingerprint();
@@ -1801,7 +1808,8 @@ async function pushToGoogleSheet(silent){
         exportLog: state.exportLog || [],
         exportCompanies: state.exportCompanies || [],
         exportPicks: state.exportPicks || [],
-        companyOrders: state.companyOrders || []
+        companyOrders: state.companyOrders || [],
+        shipments: state.shipments || []
       }
     };
     const data = await callAppsScript(payload);
@@ -2322,7 +2330,8 @@ function buildStateForStorage(){
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
-    companyOrders: state.companyOrders || []
+    companyOrders: state.companyOrders || [],
+    shipments: state.shipments || []
   };
 }
 function saveLocal(){
@@ -3441,6 +3450,13 @@ function currentMonthLabel(){
   const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return months[d.getMonth()]+' '+d.getFullYear();
 }
+function nextMonthLabel(){
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth()+1);
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months[d.getMonth()]+' '+d.getFullYear();
+}
 function computeDashboard(month){
   const perFarm = getFarmList().map(farm=>{
     const recs = (state.farms[farm]||[]).filter(r => (r.date?formatMonth(r.date):'') === month);
@@ -3479,6 +3495,7 @@ function render(){
   else if(currentView==='plants') renderPlantsView();
   else if(currentView==='canaStock') renderCanaStockView();
   else if(currentView==='companyOrders') renderCompanyOrdersView();
+  else if(currentView==='shipments') renderShipmentsView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
@@ -3518,6 +3535,7 @@ function renderTabs(){
   nav.appendChild(navBtn('🌱 Plants', currentView === 'plants', ()=>{ currentView = 'plants'; plantSelectedIds.clear(); render(); }));
   if(isManager()){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
+    nav.appendChild(navBtn('📥 Shipments', currentView === 'shipments', ()=>{ currentView = 'shipments'; render(); }));
     nav.appendChild(navBtn('🧾 Company Orders', currentView === 'companyOrders', ()=>{ currentView = 'companyOrders'; render(); }));
   }
 
@@ -5199,6 +5217,248 @@ function deleteCompanyOrder(id){
   onDataChanged();
   if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
   updateCompanyOrdersResults();
+}
+
+/* ============ INCOMING SHIPMENTS (bulk plan → auto pending QC batches) ============ */
+function getLastGacpForFarm(farm){
+  const list = (state.shipments || []).filter(s=> s.farm === farm && s.gacpLicence)
+    .slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+  return list.length ? list[0].gacpLicence : '';
+}
+function getShipmentMonths(){
+  const months = new Set((state.shipments||[]).map(s=> s.month).filter(Boolean));
+  months.add(nextMonthLabel());
+  return Array.from(months).sort((a,b)=> new Date('1 '+a) - new Date('1 '+b));
+}
+function getFilteredShipments(){
+  const q = shipmentsSearchText.trim().toLowerCase();
+  return (state.shipments || []).filter(s=>{
+    if(shipmentsMonth && s.month !== shipmentsMonth) return false;
+    if(!q) return true;
+    const hay = [s.strain, s.farm, s.gacpLicence, s.notes].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
+}
+function shipmentBatchStatus(s){
+  if(!s.linkedBatchId) return { label: 'No linked batch', cls: 'pending' };
+  const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
+  if(!rec) return { label: 'Batch removed', cls: 'fail' };
+  if(isPending(rec)) return { label: 'Awaiting QC', cls: 'cond' };
+  return { label: 'QC done', cls: 'pass' };
+}
+function openBulkShipmentModal(){
+  if(!requireManager('shipment planning')) return;
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const farms = getFarmList();
+  const draft = { month: nextMonthLabel(), rows: [] };
+  const newRow = ()=> ({ strain:'', bigsKg:'', popsKg:'', farm: farms[0] || '', gacpLicence: getLastGacpForFarm(farms[0] || '') });
+  draft.rows.push(newRow());
+  const grandTotal = ()=> draft.rows.reduce((n,r)=> n + (num(r.bigsKg)||0) + (num(r.popsKg)||0), 0);
+  const close = ()=>{ if(modalDirty && !confirm('Discard this shipment plan?')) return; modalDirty = false; closeModal(); };
+
+  function rowHtml(row, i){
+    return `<tr data-row="${i}">
+      <td><input type="text" class="ship-strain" value="${esc(row.strain)}" placeholder="Strain" style="min-width:110px;"></td>
+      <td><input type="number" step="any" min="0" class="ship-bigs" value="${esc(row.bigsKg)}" placeholder="0" style="width:80px;"></td>
+      <td><input type="number" step="any" min="0" class="ship-pops" value="${esc(row.popsKg)}" placeholder="0" style="width:80px;"></td>
+      <td class="ship-total" style="text-align:right;font-weight:700;">${fmtNum((num(row.bigsKg)||0)+(num(row.popsKg)||0),2)}</td>
+      <td><select class="ship-farm">${farms.map(f=>`<option value="${esc(f)}" ${f===row.farm?'selected':''}>${esc(f)}</option>`).join('')}</select></td>
+      <td><input type="text" class="ship-gacp" value="${esc(row.gacpLicence)}" placeholder="TH-GACP …" style="width:130px;"></td>
+      <td><button type="button" class="small danger ship-remove-row" ${draft.rows.length<=1?'disabled':''}>✕</button></td>
+    </tr>`;
+  }
+  function renderAll(){
+    root.innerHTML = `
+    <div class="overlay" id="overlay">
+      <div class="modal modal-wide">
+        <h2>📥 New shipment plan</h2>
+        <p class="sub">Enter next month's expected shipment — pick strain, weight, and which farm it's from. Saving creates a pending QC batch in that farm automatically.<br>
+        <span class="bi">กรอกแผนรับสินค้าเดือนถัดไป แยกตามสายพันธุ์และฟาร์ม — บันทึกแล้วจะสร้างรายการรอ QC ให้อัตโนมัติ</span></p>
+        <div class="field" style="max-width:220px;margin-bottom:10px;">
+          <label>Shipment month</label>
+          <input type="text" id="shipMonthInput" value="${esc(draft.month)}" placeholder="e.g. Aug 2026">
+        </div>
+        <div class="table-wrap"><table class="compact-table" id="shipDraftTable">
+          <thead><tr><th>Strain</th><th>Bigs (kg)</th><th>Smalls (kg)</th><th>Total (kg)</th><th>Farm</th><th>GACP Licence</th><th></th></tr></thead>
+          <tbody>${draft.rows.map(rowHtml).join('')}</tbody>
+          <tfoot><tr><td colspan="3" style="text-align:right;font-weight:700;">Grand total</td><td style="text-align:right;font-weight:700;" id="shipGrandTotal">${fmtNum(grandTotal(),2)} kg</td><td colspan="3"></td></tr></tfoot>
+        </table></div>
+        <div class="row-actions">
+          <button type="button" class="ghost" id="btnAddShipRow">+ Add row</button>
+          <button type="button" class="ghost" id="btnManageFarmsFromShip">⚙ Manage farms</button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" id="btnCancelShip">Cancel</button>
+          <button type="button" class="primary" id="btnSaveShip">Save shipment plan</button>
+        </div>
+      </div>
+    </div>`;
+    bindAll();
+  }
+  function updateRowTotal(tr, i){
+    const cell = tr.querySelector('.ship-total');
+    if(cell) cell.textContent = fmtNum((num(draft.rows[i].bigsKg)||0)+(num(draft.rows[i].popsKg)||0),2);
+    const gt = document.getElementById('shipGrandTotal');
+    if(gt) gt.textContent = fmtNum(grandTotal(),2) + ' kg';
+  }
+  function bindAll(){
+    modalDirty = true;
+    root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+    root.querySelector('#btnCancelShip').onclick = close;
+    root.querySelector('#shipMonthInput').oninput = (e)=>{ draft.month = e.target.value; };
+    root.querySelector('#btnAddShipRow').onclick = ()=>{ draft.rows.push(newRow()); renderAll(); };
+    root.querySelector('#btnManageFarmsFromShip').onclick = ()=> openManageFarmsModal();
+    root.querySelector('#btnSaveShip').onclick = save;
+    root.querySelectorAll('#shipDraftTable tbody tr').forEach(tr=>{
+      const i = Number(tr.dataset.row);
+      tr.querySelector('.ship-strain').oninput = (e)=>{ draft.rows[i].strain = e.target.value; };
+      tr.querySelector('.ship-bigs').oninput = (e)=>{ draft.rows[i].bigsKg = e.target.value; updateRowTotal(tr, i); };
+      tr.querySelector('.ship-pops').oninput = (e)=>{ draft.rows[i].popsKg = e.target.value; updateRowTotal(tr, i); };
+      tr.querySelector('.ship-farm').onchange = (e)=>{
+        draft.rows[i].farm = e.target.value;
+        const g = getLastGacpForFarm(e.target.value);
+        draft.rows[i].gacpLicence = g;
+        const gacpInput = tr.querySelector('.ship-gacp');
+        if(gacpInput) gacpInput.value = g;
+      };
+      tr.querySelector('.ship-gacp').oninput = (e)=>{ draft.rows[i].gacpLicence = e.target.value; };
+      const rm = tr.querySelector('.ship-remove-row');
+      if(rm) rm.onclick = ()=>{ if(draft.rows.length<=1) return; draft.rows.splice(i,1); renderAll(); };
+    });
+  }
+  function save(){
+    const validRows = draft.rows.filter(r=> r.strain.trim() && r.farm && ((num(r.bigsKg)||0) + (num(r.popsKg)||0) > 0));
+    if(!validRows.length){ alert('Add at least one row with strain, farm, and weight.'); return; }
+    const month = draft.month.trim() || nextMonthLabel();
+    if(!state.shipments) state.shipments = [];
+    validRows.forEach(r=>{
+      const bigsKg = num(r.bigsKg) || 0;
+      const popsKg = num(r.popsKg) || 0;
+      const totalKg = bigsKg + popsKg;
+      const gacp = (r.gacpLicence || '').trim();
+      const qcRec = {
+        id: uid(), date: '', strain: r.strain.trim(),
+        bigsCount:'', popsCount:'', grossWt: String(Math.round(totalKg*1000)),
+        condition:'', eurofinsTest:'', tnrTest:'', invoice:'', receivedBy:'',
+        notes: '📥 From shipment plan (' + month + ') · Bigs ' + fmtNum(bigsKg,2) + 'kg / Smalls ' + fmtNum(popsKg,2) + 'kg' + (gacp ? ' · GACP ' + gacp : ''),
+        qcStart:'', qcEnd:'', startWt:'', bigsG:'', popsG:'', scrapsG:'', seedsG:'', moldG:'', wasteG:'', passFail:'', qcBy:''
+      };
+      assignBatchId(qcRec, r.farm);
+      if(!state.farms[r.farm]) state.farms[r.farm] = [];
+      state.farms[r.farm].push(qcRec);
+      state.shipments.push({
+        id: uid(), month, strain: r.strain.trim(),
+        bigsKg: bigsKg ? String(bigsKg) : '', popsKg: popsKg ? String(popsKg) : '', totalKg: String(totalKg),
+        farm: r.farm, gacpLicence: gacp, notes: '',
+        linkedBatchId: qcRec.id,
+        createdBy: getCurrentUserName(), createdAt: new Date().toISOString()
+      });
+    });
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    currentView = 'shipments';
+    render();
+    showDocToast(validRows.length + ' shipment line(s) added · pending QC batch(es) created ✓');
+  }
+  renderAll();
+}
+function renderShipmentsView(){
+  if(!requireLogin()) return;
+  if(!isManager()){ currentView = 'dashboard'; render(); return; }
+  if(!shipmentsMonth) shipmentsMonth = nextMonthLabel();
+  const months = getShipmentMonths();
+  const rows = getFilteredShipments();
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="cana-header">
+      <div>
+        <h2>📥 Incoming Shipments — plan next month's delivery</h2>
+        <p class="sub">Bulk-enter expected shipment by strain + farm — automatically creates a pending QC batch per line<br><span class="bi">กรอกแผนรับสินค้าล่วงหน้า แยกตามสายพันธุ์และฟาร์ม — สร้างรายการรอ QC ให้อัตโนมัติ</span></p>
+      </div>
+    </div>
+    <div class="row-actions cana-toolbar">
+      <button class="primary" id="btnNewShipment">+ New shipment plan <span class="bi">/ เพิ่มแผน</span></button>
+      <select id="shipmentMonthFilter">
+        <option value="">All months / ทุกเดือน</option>
+        ${months.map(m=>`<option value="${esc(m)}" ${shipmentsMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
+      </select>
+      <input class="search-box" id="shipmentSearchBox" placeholder="Search strain, farm, GACP…" value="${esc(shipmentsSearchText)}">
+    </div>
+    <div class="mob-section-label mobile-only">Shipment lines</div>
+    <div id="shipmentResultsWrap">${renderShipmentsTable(rows)}</div>
+  `;
+  document.getElementById('btnNewShipment').onclick = ()=> openBulkShipmentModal();
+  document.getElementById('shipmentMonthFilter').onchange = (e)=>{ shipmentsMonth = e.target.value; updateShipmentsResults(); };
+  document.getElementById('shipmentSearchBox').oninput = (e)=>{ shipmentsSearchText = e.target.value; updateShipmentsResults(); };
+  bindShipmentsActions(main);
+}
+function updateShipmentsResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'shipments') return;
+  const wrap = document.getElementById('shipmentResultsWrap');
+  if(wrap) wrap.innerHTML = renderShipmentsTable(getFilteredShipments());
+  bindShipmentsActions(main);
+}
+function renderShipmentsTable(rows){
+  if(!rows.length){
+    return `<div class="panel empty-state"><b>No shipment plans yet.</b><br>Click <b>+ New shipment plan</b> to bulk-enter next month's expected delivery by strain + farm.<br><span class="bi">ยังไม่มีแผนรับสินค้า</span></div>`;
+  }
+  let totalKg = 0;
+  const body = rows.map(s=>{
+    const kg = num(s.totalKg) || 0;
+    totalKg += kg;
+    const st = shipmentBatchStatus(s);
+    return `<tr>
+      <td><b>${esc(s.strain||'—')}</b></td>
+      <td>${fmtNum(num(s.bigsKg)||0,2)}</td>
+      <td>${fmtNum(num(s.popsKg)||0,2)}</td>
+      <td><b>${fmtNum(kg,2)}</b></td>
+      <td>${esc(s.farm||'—')}</td>
+      <td>${esc(s.gacpLicence||'—')}</td>
+      <td>${esc(s.month||'—')}</td>
+      <td><span class="badge ${st.cls}">${esc(st.label)}</span></td>
+      <td><div class="action-group">
+        ${s.linkedBatchId ? `<button class="small" data-goto-shipment-batch="${s.id}">Go to batch</button>` : ''}
+        <button class="small danger admin-only" data-delete-shipment="${s.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="cana-stock-summary"><span class="doc-badge">${rows.length} line${rows.length===1?'':'s'}</span><span class="doc-badge"><b>${fmtNum(totalKg,2)} kg</b> planned</span></div>
+  <div class="table-wrap desktop-table"><table class="compact-table cana-table">
+    <thead><tr><th>Strain</th><th>Bigs (kg)</th><th>Smalls (kg)</th><th>Total (kg)</th><th>Farm</th><th>GACP Licence</th><th>Month</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+function bindShipmentsActions(root){
+  root.querySelectorAll('[data-goto-shipment-batch]').forEach(el=> el.onclick = ()=> goToShipmentBatch(el.dataset.gotoShipmentBatch));
+  root.querySelectorAll('[data-delete-shipment]').forEach(el=> el.onclick = ()=> deleteShipment(el.dataset.deleteShipment));
+  updateAdminUI();
+}
+function goToShipmentBatch(id){
+  const s = (state.shipments || []).find(x=> x.id === id);
+  if(!s || !s.linkedBatchId) return;
+  currentView = 'farm';
+  currentFarm = s.farm;
+  currentFarmTab = 'qc';
+  searchText = s.strain || '';
+  render();
+}
+function deleteShipment(id){
+  if(!requireAdmin('delete shipment line', ()=> deleteShipment(id))) return;
+  const s = (state.shipments || []).find(x=> x.id === id);
+  if(!s) return;
+  const alsoDeleteBatch = s.linkedBatchId && confirm('Also delete the linked pending QC batch for "' + (s.strain||'') + '" at ' + (s.farm||'') + '?\nOK = delete both · Cancel = keep the batch, just remove this shipment line');
+  if(alsoDeleteBatch){
+    const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
+    if(rec && !isPending(rec) && !confirm('That batch already has QC data entered. Delete it anyway?')) return;
+    state.farms[s.farm] = (state.farms[s.farm] || []).filter(r=> r.id !== s.linkedBatchId);
+  }
+  state.shipments = (state.shipments || []).filter(x=> x.id !== id);
+  onDataChanged();
+  updateShipmentsResults();
+  showDocToast('Shipment line deleted ✓');
 }
 
 /* ============ RENDER: FARM DOCUMENTS ============ */
