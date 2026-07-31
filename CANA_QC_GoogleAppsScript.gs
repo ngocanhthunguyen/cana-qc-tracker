@@ -2651,7 +2651,7 @@ function upgradePlantRegistryTab() {
 /* ---------- Shipments — bulk incoming delivery plan (strain + farm + kg + GACP), linked to a pending QC batch ---------- */
 
 var SHIPMENTS_SHEET = 'Shipments';
-var SHIPMENTS_HEADERS = ['_id', 'Month', 'Strain', 'Bigs (kg)', 'Smalls (kg)', 'Total (kg)', 'Farm', 'Source', 'GACP Licence', 'Notes', 'Linked Batch ID', 'Stock Allocations (JSON)', 'Created By', 'Created At'];
+var SHIPMENTS_HEADERS = ['_id', 'Month', 'Strain', 'Bigs (kg)', 'Smalls (kg)', 'Total (kg)', 'Farm', 'Source', 'GACP Licence', 'Notes', 'Linked Batch ID', 'Allocations (JSON)', 'Created By', 'Created At'];
 var SHIPMENTS_NUM_COLS = SHIPMENTS_HEADERS.length;
 
 function readShipments(ss) {
@@ -2664,9 +2664,10 @@ function readShipments(ss) {
   var list = [];
   values.forEach(function(row) {
     if (!row[2] && !row[6]) return;
-    var stockAllocations = [];
-    try { stockAllocations = row[11] ? JSON.parse(row[11]) : []; } catch (e) { stockAllocations = []; }
-    list.push({
+    var allocations = [];
+    try { allocations = row[11] ? JSON.parse(row[11]) : []; } catch (e) { allocations = []; }
+    var source = String(row[7] || '') || 'farm';
+    var entry = {
       id: String(row[0] || '') || newId(),
       month: String(row[1] || ''),
       strain: String(row[2] || ''),
@@ -2674,21 +2675,23 @@ function readShipments(ss) {
       popsKg: cellStr(row[4]),
       totalKg: cellStr(row[5]),
       farm: String(row[6] || ''),
-      source: String(row[7] || '') || 'farm',
+      source: source,
       gacpLicence: String(row[8] || ''),
       notes: String(row[9] || ''),
       linkedBatchId: String(row[10] || ''),
-      stockAllocations: stockAllocations,
       createdBy: String(row[12] || ''),
       createdAt: String(row[13] || '')
-    });
+    };
+    if (source === 'farm_qc') entry.farmAllocations = allocations;
+    else entry.stockAllocations = allocations;
+    list.push(entry);
   });
   return list;
 }
 
 function writeShipments(ss, shipments) {
   setupCanaFlowerTab(ss, SHIPMENTS_SHEET, 'CANA QC TRACKER  ·  SHIPMENTS',
-    'Bulk incoming delivery plan · strain + farm + kg + GACP · auto-linked to a pending QC batch or Cana Stock deduction',
+    'Bulk incoming delivery plan · strain + farm + kg + GACP · auto-linked to a pending QC batch, Cana Stock deduction, or a pick from a farm\'s already-QC\'d flower',
     '#0369a1', SHIPMENTS_HEADERS);
   var sheet = ss.getSheetByName(SHIPMENTS_SHEET);
   var rows = (shipments || []).map(function(s) {
@@ -2704,7 +2707,7 @@ function writeShipments(ss, shipments) {
       s.gacpLicence || '',
       s.notes || '',
       s.linkedBatchId || '',
-      JSON.stringify(s.stockAllocations || []),
+      JSON.stringify(s.stockAllocations || s.farmAllocations || []),
       s.createdBy || '',
       s.createdAt || ''
     ];
