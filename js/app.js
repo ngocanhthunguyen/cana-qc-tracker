@@ -3076,51 +3076,50 @@ function renderExportLogPanel(month){
   </div>`;
 }
 /* ============ FARM × STRAIN TOTALS + EXPORT PICKS (Lot IDs) ============ */
-function computeFarmStrainRows(month){
-  const pool = {};
-  recordsForMonth(month).forEach(({rec, farm})=>{
+/**
+ * Farm × Strain overview — ALL-TIME available finished QC flower (not restricted to one delivery
+ * month, since flower QC'd in one month can still be exported in a later month). Strain names are
+ * grouped canonically so "G Puzzy bigs" / "G Puzzy Smalls" / "G Puzzy Popcorn" roll up into one
+ * "G Puzzy" row, with the actual Bigs/Pops split coming from each batch's own bigsG/popsG.
+ */
+function computeFarmStrainRows(){
+  const seen = {};
+  getAllFarmRecords().forEach(({rec, farm})=>{
     const c = computeRow(rec);
     if(c.totalFlower === null) return;
-    const strain = (rec.strain || '').trim() || '(no strain)';
-    const key = farm + '||' + strain;
-    if(!pool[key]) pool[key] = { farm, strain, totalKg: 0, batches: [] };
-    const kg = c.totalFlower / 1000;
-    pool[key].totalKg += kg;
-    pool[key].batches.push({ batchId: getBatchId(rec, farm), date: rec.date || '', kg });
+    const strain = canonicalStrainName(rec.strain) || '(no strain)';
+    const key = farm + '||' + strain.toLowerCase();
+    if(!seen[key]) seen[key] = { farm, strain };
   });
-  Object.values(pool).forEach(p=> p.batches.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || a.batchId.localeCompare(b.batchId)));
-  const pickedByKey = {};
-  getExportPicksFor(month).forEach(p=>{
-    const key = p.farm + '||' + p.strain;
-    pickedByKey[key] = (pickedByKey[key] || 0) + (num(p.kg) || 0);
-  });
-  return Object.values(pool).map(p=>{
-    const key = p.farm + '||' + p.strain;
-    const pickedKg = pickedByKey[key] || 0;
-    return { ...p, pickedKg, remainingKg: Math.max(0, Number((p.totalKg - pickedKg).toFixed(3))) };
+  return Object.values(seen).map(({farm, strain})=>{
+    const avail = getFarmStrainQcAvailability(farm, strain);
+    const totalKg = Number((avail.totalBigsKg + avail.totalPopsKg).toFixed(3));
+    const remainingKg = Number((avail.remainingBigsKg + avail.remainingPopsKg).toFixed(3));
+    const pickedKg = Math.max(0, Number((totalKg - remainingKg).toFixed(3)));
+    return {
+      farm, strain, totalKg, pickedKg, remainingKg,
+      totalBigsKg: avail.totalBigsKg, totalPopsKg: avail.totalPopsKg,
+      remainingBigsKg: avail.remainingBigsKg, remainingPopsKg: avail.remainingPopsKg,
+      batches: avail.batches.map(b=> ({ batchId: b.batchId, date: b.date, kg: (b.bigsG + b.popsG)/1000 }))
+    };
   }).sort((a,b)=> a.farm.localeCompare(b.farm) || a.strain.localeCompare(b.strain));
 }
 function getExportPicksFor(month){
   return (state.exportPicks || []).filter(p=> p.month === month);
 }
-function allocatePickFifo(farm, strain, month, kgToPick){
-  const rows = computeFarmStrainRows(month);
-  const row = rows.find(r=> r.farm === farm && r.strain === strain);
-  if(!row) return { allocations: [], shortfall: kgToPick };
-  const usedByBatch = {};
-  getExportPicksFor(month).filter(p=> p.farm === farm && p.strain === strain)
-    .forEach(p=> (p.allocations || []).forEach(a=>{ usedByBatch[a.batchId] = (usedByBatch[a.batchId] || 0) + (num(a.kg) || 0); }));
-  let remaining = kgToPick;
+function allocatePickFifo(farm, strain, kgToPick){
+  const { batches } = getFarmStrainQcAvailability(farm, strain);
+  let remainingG = Math.round((kgToPick||0)*1000);
   const allocations = [];
-  for(const b of row.batches){
-    if(remaining <= 0.0001) break;
-    const avail = Math.max(0, b.kg - (usedByBatch[b.batchId] || 0));
-    if(avail <= 0.0001) continue;
-    const take = Math.min(avail, remaining);
-    allocations.push({ batchId: b.batchId, kg: Number(take.toFixed(3)) });
-    remaining -= take;
+  for(const b of batches){
+    if(remainingG <= 0) break;
+    const avail = b.remBigsG + b.remPopsG;
+    if(avail <= 0) continue;
+    const take = Math.min(avail, remainingG);
+    allocations.push({ batchId: b.batchId, kg: Number((take/1000).toFixed(3)) });
+    remainingG -= take;
   }
-  return { allocations, shortfall: Math.max(0, Number(remaining.toFixed(3))) };
+  return { allocations, shortfall: Math.max(0, Number((remainingG/1000).toFixed(3))) };
 }
 function isValidLotId(code){ return /^[A-Za-z0-9]{4}$/.test(String(code || '').trim()); }
 function isLotIdTaken(code, excludeId){
@@ -3176,7 +3175,7 @@ function openExportPickModal(farm, strain, month, remainingKg){
     }
     if(!isValidLotId(lotId)){ alert('Lot ID must be exactly 4 characters (letters/numbers).'); return; }
     if(isLotIdTaken(lotId)){ if(!confirm('Lot ID "' + lotId + '" is already used. Use anyway?')) return; }
-    const { allocations, shortfall } = allocatePickFifo(farm, strain, month, kg);
+    const { allocations, shortfall } = allocatePickFifo(farm, strain, kg);
     const pick = {
       id: uid(), month, farm, strain, kg: Number(kg.toFixed(3)), lotId,
       allocations, notes: String(fd.get('notes') || '').trim(),
@@ -3303,18 +3302,20 @@ function openPrintExportLotLabels(pickIds){
   };
 }
 function renderFarmStrainTotalsPanel(month){
-  const rows = computeFarmStrainRows(month);
+  const rows = computeFarmStrainRows();
   const picks = getExportPicksFor(month);
   const body = rows.length ? rows.map(r=>{
     return `<tr>
       <td><b>${esc(r.farm)}</b></td>
       <td>${esc(r.strain)}</td>
+      <td>${fmtNum(r.totalBigsKg,3)}</td>
+      <td>${fmtNum(r.totalPopsKg,3)}</td>
       <td>${fmtNum(r.totalKg,3)}</td>
       <td>${fmtNum(r.pickedKg,3)}</td>
       <td><b>${fmtNum(r.remainingKg,3)}</b></td>
       <td><button type="button" class="small primary" data-pick-farm="${esc(r.farm)}" data-pick-strain="${esc(r.strain)}" data-pick-remaining="${r.remainingKg}" ${r.remainingKg<=0 ? 'disabled' : ''}>+ Pick kg</button></td>
     </tr>`;
-  }).join('') : `<tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">No QC'd batches with delivery date in ${esc(month)} yet.</td></tr>`;
+  }).join('') : `<tr><td colspan="8" class="muted" style="text-align:center;padding:16px;">No finished QC batches yet.</td></tr>`;
   const picksHtml = picks.length ? picks.map(p=>`
     <div class="export-pick-row">
       <code class="batch-id">${esc(p.lotId)}</code>
@@ -3329,10 +3330,11 @@ function renderFarmStrainTotalsPanel(month){
     </div>`).join('') : `<p class="sub" style="margin:8px 0 0;">No kg picked yet for ${esc(month)}.</p>`;
   return `
   <div class="panel export-farm-strain-panel">
-    <h3 style="margin:0 0 4px;font-size:15px;">📊 Farm × Strain totals — ${esc(month)}</h3>
-    <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">QC'd flower grouped by farm + strain · pick kg to export and assign a 4-char Lot ID (traceable to source batches, FIFO)</p>
+    <h3 style="margin:0 0 4px;font-size:15px;">📊 Farm × Strain totals — all-time available stock</h3>
+    <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">Every finished QC batch, grouped by farm + strain (bigs/smalls/popcorn batches of the same strain are combined) · pick kg to export and assign a 4-char Lot ID (traceable to source batches, FIFO)<br>
+    <span class="bi">รวมทุกล็อตที่ QC เสร็จแล้ว แยกตามฟาร์ม + สายพันธุ์ (รวมล็อต bigs/smalls/popcorn ของสายพันธุ์เดียวกัน) · เลือกหยิบ กก. เพื่อส่งออกและออก Lot ID</span></p>
     <div class="table-wrap"><table class="compact-table">
-      <thead><tr><th>Farm</th><th>Strain</th><th>Total QC kg</th><th>Picked</th><th>Remaining</th><th></th></tr></thead>
+      <thead><tr><th>Farm</th><th>Strain</th><th>Bigs kg</th><th>Pops kg</th><th>Total QC kg</th><th>Picked</th><th>Remaining</th><th></th></tr></thead>
       <tbody>${body}</tbody>
     </table></div>
     <h4 style="margin:16px 0 6px;font-size:13px;">Export picks / Lot IDs — ${esc(month)}</h4>
@@ -5271,21 +5273,33 @@ function getLastGacpForFarm(farm){
   return list.length ? list[0].gacpLicence : '';
 }
 /* ---- Pick from a farm's already-finished (non-pending) QC flower — all-time pool, shared with Export Picks ledger ---- */
+/**
+ * Some farms receive/QC bigs, smalls and popcorn of the same strain as separate batches
+ * (e.g. "G Puzzy bigs", "G Puzzy Smalls", "G Puzzy Popcorn"). For any farm+strain overview
+ * or picking, those need to be grouped back into one strain ("G Puzzy") — the actual big/pop
+ * split still comes from each batch's own bigsG/popsG fields, not from the name itself.
+ */
+const STRAIN_GRADE_SUFFIX_RE = /[\s\-_]*\b(bigs?|smalls?|pop(?:corn)?s?|trims?|shakes?)\b\.?\s*$/i;
+function canonicalStrainName(raw){
+  const s = String(raw || '').trim();
+  const stripped = s.replace(STRAIN_GRADE_SUFFIX_RE, '').trim();
+  return stripped || s;
+}
 function getFarmQcBatchesForStrain(farm, strain){
-  const norm = (strain||'').trim().toLowerCase();
+  const norm = canonicalStrainName(strain).toLowerCase();
   return (state.farms[farm] || [])
-    .filter(r=> (r.strain||'').trim().toLowerCase() === norm && !isPending(r) && ((num(r.bigsG)||0) + (num(r.popsG)||0) > 0))
+    .filter(r=> canonicalStrainName(r.strain).toLowerCase() === norm && !isPending(r) && ((num(r.bigsG)||0) + (num(r.popsG)||0) > 0))
     .slice().sort((a,b)=> (a.date||'').localeCompare(b.date||'') || getBatchId(a,farm).localeCompare(getBatchId(b,farm)));
 }
 function getFarmQcUsedByBatch(farm, strain){
-  const norm = (strain||'').trim().toLowerCase();
+  const norm = canonicalStrainName(strain).toLowerCase();
   const used = {};
   const add = (batchId, bigsG, popsG)=>{
     if(!used[batchId]) used[batchId] = { bigsG:0, popsG:0 };
     used[batchId].bigsG += bigsG || 0;
     used[batchId].popsG += popsG || 0;
   };
-  (state.exportPicks || []).filter(p=> p.farm === farm && (p.strain||'').trim().toLowerCase() === norm)
+  (state.exportPicks || []).filter(p=> p.farm === farm && canonicalStrainName(p.strain).toLowerCase() === norm)
     .forEach(p=> (p.allocations || []).forEach(a=>{
       const batch = (state.farms[farm] || []).find(r=> getBatchId(r, farm) === a.batchId);
       const bigsG = num(batch && batch.bigsG) || 0, popsG = num(batch && batch.popsG) || 0;
@@ -5294,25 +5308,31 @@ function getFarmQcUsedByBatch(farm, strain){
       if(total > 0) add(a.batchId, Math.round(kgG * bigsG / total), Math.round(kgG * popsG / total));
       else add(a.batchId, kgG, 0);
     }));
-  (state.shipments || []).filter(s=> s.source === 'farm_qc' && s.farm === farm && (s.strain||'').trim().toLowerCase() === norm)
+  (state.shipments || []).filter(s=> s.source === 'farm_qc' && s.farm === farm && canonicalStrainName(s.strain).toLowerCase() === norm)
     .forEach(s=> (s.farmAllocations || []).forEach(a=> add(a.batchId, a.bigsG, a.popsG)));
   return used;
 }
 function getFarmStrainQcAvailability(farm, strain){
   const batches = getFarmQcBatchesForStrain(farm, strain);
   const used = getFarmQcUsedByBatch(farm, strain);
-  let remainingBigsG = 0, remainingPopsG = 0;
+  let totalBigsG = 0, totalPopsG = 0, remainingBigsG = 0, remainingPopsG = 0;
   const detail = batches.map(rec=>{
     const batchId = getBatchId(rec, farm);
     const bigsG = num(rec.bigsG) || 0, popsG = num(rec.popsG) || 0;
     const u = used[batchId] || { bigsG:0, popsG:0 };
     const remBigsG = Math.max(0, bigsG - u.bigsG);
     const remPopsG = Math.max(0, popsG - u.popsG);
+    totalBigsG += bigsG;
+    totalPopsG += popsG;
     remainingBigsG += remBigsG;
     remainingPopsG += remPopsG;
-    return { batchId, remBigsG, remPopsG };
+    return { batchId, date: rec.date || '', rawStrain: rec.strain || '', bigsG, popsG, remBigsG, remPopsG };
   });
-  return { remainingBigsKg: remainingBigsG/1000, remainingPopsKg: remainingPopsG/1000, batches: detail };
+  return {
+    totalBigsKg: totalBigsG/1000, totalPopsKg: totalPopsG/1000,
+    remainingBigsKg: remainingBigsG/1000, remainingPopsKg: remainingPopsG/1000,
+    batches: detail
+  };
 }
 function allocateFarmQcPickFifo(farm, strain, bigsKgNeeded, popsKgNeeded){
   const { batches } = getFarmStrainQcAvailability(farm, strain);
