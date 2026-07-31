@@ -5220,6 +5220,51 @@ function deleteCompanyOrder(id){
 }
 
 /* ============ INCOMING SHIPMENTS (bulk plan → auto pending QC batches) ============ */
+const CANA_STOCK_SHIPMENT_SOURCE = '__cana_stock__';
+function deductCanaStockForShipment(strain, totalKgNeeded){
+  const norm = (strain||'').trim().toLowerCase();
+  const lines = (state.canaStock||[]).filter(s=> (s.strain||'').trim().toLowerCase() === norm && isStockOnHandStatus(s.status))
+    .slice().sort((a,b)=> (a.updatedAt||a.harvestDate||'').localeCompare(b.updatedAt||b.harvestDate||''));
+  let remainingG = Math.round((totalKgNeeded||0)*1000);
+  const allocations = [];
+  for(const line of lines){
+    if(remainingG <= 0) break;
+    const lineTotal = stockLineTotalG(line) || 0;
+    if(lineTotal <= 0) continue;
+    const take = Math.min(lineTotal, remainingG);
+    const ratio = take / lineTotal;
+    const bigs = num(line.bigsG) || 0, pops = num(line.popsG) || 0;
+    let removedBigsG = 0, removedPopsG = 0, removedQtyG = 0;
+    if(bigs || pops){
+      removedBigsG = Math.round(bigs * ratio);
+      removedPopsG = Math.round(pops * ratio);
+      line.bigsG = String(Math.max(0, bigs - removedBigsG));
+      line.popsG = String(Math.max(0, pops - removedPopsG));
+    } else {
+      removedQtyG = take;
+      line.qtyG = String(Math.max(0, lineTotal - take));
+    }
+    line.qtyG = String(stockLineTotalG(line));
+    line.updatedAt = todayISO();
+    line.updatedBy = getCurrentUserName();
+    if(stockLineTotalG(line) <= 0) line.status = STOCK_STATUS_OPTIONS[3];
+    allocations.push({ stockId: line.id, bigsG: removedBigsG, popsG: removedPopsG, qtyG: removedQtyG });
+    remainingG -= take;
+  }
+  return { allocations, shortfallKg: Math.max(0, Number((remainingG/1000).toFixed(3))) };
+}
+function restoreCanaStockAllocations(allocations){
+  (allocations || []).forEach(a=>{
+    const line = (state.canaStock || []).find(s=> s.id === a.stockId);
+    if(!line) return;
+    if(a.bigsG) line.bigsG = String((num(line.bigsG)||0) + a.bigsG);
+    if(a.popsG) line.popsG = String((num(line.popsG)||0) + a.popsG);
+    if(a.qtyG) line.qtyG = String((num(line.qtyG)||0) + a.qtyG);
+    line.qtyG = String(stockLineTotalG(line));
+    line.updatedAt = todayISO();
+    line.updatedBy = getCurrentUserName();
+  });
+}
 function getLastGacpForFarm(farm){
   const list = (state.shipments || []).filter(s=> s.farm === farm && s.gacpLicence)
     .slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
@@ -5240,6 +5285,7 @@ function getFilteredShipments(){
   }).slice().sort((a,b)=> (b.createdAt||'').localeCompare(a.createdAt||''));
 }
 function shipmentBatchStatus(s){
+  if(s.source === 'stock') return { label: 'From own stock', cls: 'pass' };
   if(!s.linkedBatchId) return { label: 'No linked batch', cls: 'pending' };
   const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
   if(!rec) return { label: 'Batch removed', cls: 'fail' };
@@ -5258,13 +5304,21 @@ function openBulkShipmentModal(){
   const close = ()=>{ if(modalDirty && !confirm('Discard this shipment plan?')) return; modalDirty = false; closeModal(); };
 
   function rowHtml(row, i){
+    const isOwnStock = row.farm === CANA_STOCK_SHIPMENT_SOURCE;
     return `<tr data-row="${i}">
       <td><input type="text" class="ship-strain" value="${esc(row.strain)}" placeholder="Strain" style="min-width:110px;"></td>
       <td><input type="number" step="any" min="0" class="ship-bigs" value="${esc(row.bigsKg)}" placeholder="0" style="width:80px;"></td>
       <td><input type="number" step="any" min="0" class="ship-pops" value="${esc(row.popsKg)}" placeholder="0" style="width:80px;"></td>
       <td class="ship-total" style="text-align:right;font-weight:700;">${fmtNum((num(row.bigsKg)||0)+(num(row.popsKg)||0),2)}</td>
-      <td><select class="ship-farm">${farms.map(f=>`<option value="${esc(f)}" ${f===row.farm?'selected':''}>${esc(f)}</option>`).join('')}</select></td>
-      <td><input type="text" class="ship-gacp" value="${esc(row.gacpLicence)}" placeholder="TH-GACP …" style="width:130px;"></td>
+      <td><select class="ship-farm">
+        <optgroup label="Farms">
+          ${farms.map(f=>`<option value="${esc(f)}" ${f===row.farm?'selected':''}>${esc(f)}</option>`).join('')}
+        </optgroup>
+        <optgroup label="Own stock">
+          <option value="${CANA_STOCK_SHIPMENT_SOURCE}" ${isOwnStock?'selected':''}>📦 Cana (own stock)</option>
+        </optgroup>
+      </select></td>
+      <td><input type="text" class="ship-gacp" value="${esc(row.gacpLicence)}" placeholder="${isOwnStock?'N/A':'TH-GACP …'}" style="width:130px;" ${isOwnStock?'disabled':''}></td>
       <td><button type="button" class="small danger ship-remove-row" ${draft.rows.length<=1?'disabled':''}>✕</button></td>
     </tr>`;
   }
@@ -5317,10 +5371,8 @@ function openBulkShipmentModal(){
       tr.querySelector('.ship-pops').oninput = (e)=>{ draft.rows[i].popsKg = e.target.value; updateRowTotal(tr, i); };
       tr.querySelector('.ship-farm').onchange = (e)=>{
         draft.rows[i].farm = e.target.value;
-        const g = getLastGacpForFarm(e.target.value);
-        draft.rows[i].gacpLicence = g;
-        const gacpInput = tr.querySelector('.ship-gacp');
-        if(gacpInput) gacpInput.value = g;
+        draft.rows[i].gacpLicence = e.target.value === CANA_STOCK_SHIPMENT_SOURCE ? '' : getLastGacpForFarm(e.target.value);
+        renderAll();
       };
       tr.querySelector('.ship-gacp').oninput = (e)=>{ draft.rows[i].gacpLicence = e.target.value; };
       const rm = tr.querySelector('.ship-remove-row');
@@ -5332,13 +5384,28 @@ function openBulkShipmentModal(){
     if(!validRows.length){ alert('Add at least one row with strain, farm, and weight.'); return; }
     const month = draft.month.trim() || nextMonthLabel();
     if(!state.shipments) state.shipments = [];
+    let stockShortfalls = [];
     validRows.forEach(r=>{
       const bigsKg = num(r.bigsKg) || 0;
       const popsKg = num(r.popsKg) || 0;
       const totalKg = bigsKg + popsKg;
+      const strain = r.strain.trim();
+      if(r.farm === CANA_STOCK_SHIPMENT_SOURCE){
+        const { allocations, shortfallKg } = deductCanaStockForShipment(strain, totalKg);
+        if(shortfallKg > 0) stockShortfalls.push(strain + ' short by ' + fmtNum(shortfallKg,2) + ' kg');
+        state.shipments.push({
+          id: uid(), month, strain,
+          bigsKg: bigsKg ? String(bigsKg) : '', popsKg: popsKg ? String(popsKg) : '', totalKg: String(totalKg),
+          farm: '📦 Cana (own stock)', source: 'stock', gacpLicence: '',
+          notes: shortfallKg > 0 ? ('⚠ ' + fmtNum(shortfallKg,2) + ' kg short of on-hand stock') : '',
+          stockAllocations: allocations, linkedBatchId: '',
+          createdBy: getCurrentUserName(), createdAt: new Date().toISOString()
+        });
+        return;
+      }
       const gacp = (r.gacpLicence || '').trim();
       const qcRec = {
-        id: uid(), date: '', strain: r.strain.trim(),
+        id: uid(), date: '', strain,
         bigsCount:'', popsCount:'', grossWt: String(Math.round(totalKg*1000)),
         condition:'', eurofinsTest:'', tnrTest:'', invoice:'', receivedBy:'',
         notes: '📥 From shipment plan (' + month + ') · Bigs ' + fmtNum(bigsKg,2) + 'kg / Smalls ' + fmtNum(popsKg,2) + 'kg' + (gacp ? ' · GACP ' + gacp : ''),
@@ -5348,9 +5415,9 @@ function openBulkShipmentModal(){
       if(!state.farms[r.farm]) state.farms[r.farm] = [];
       state.farms[r.farm].push(qcRec);
       state.shipments.push({
-        id: uid(), month, strain: r.strain.trim(),
+        id: uid(), month, strain,
         bigsKg: bigsKg ? String(bigsKg) : '', popsKg: popsKg ? String(popsKg) : '', totalKg: String(totalKg),
-        farm: r.farm, gacpLicence: gacp, notes: '',
+        farm: r.farm, source: 'farm', gacpLicence: gacp, notes: '',
         linkedBatchId: qcRec.id,
         createdBy: getCurrentUserName(), createdAt: new Date().toISOString()
       });
@@ -5360,7 +5427,7 @@ function openBulkShipmentModal(){
     closeModal();
     currentView = 'shipments';
     render();
-    showDocToast(validRows.length + ' shipment line(s) added · pending QC batch(es) created ✓');
+    showDocToast(validRows.length + ' shipment line(s) saved ✓' + (stockShortfalls.length ? ' — ⚠ ' + stockShortfalls.join(', ') : ''));
   }
   renderAll();
 }
@@ -5416,11 +5483,11 @@ function renderShipmentsTable(rows){
       <td>${fmtNum(num(s.popsKg)||0,2)}</td>
       <td><b>${fmtNum(kg,2)}</b></td>
       <td>${esc(s.farm||'—')}</td>
-      <td>${esc(s.gacpLicence||'—')}</td>
+      <td>${s.source === 'stock' ? '—' : esc(s.gacpLicence||'—')}</td>
       <td>${esc(s.month||'—')}</td>
       <td><span class="badge ${st.cls}">${esc(st.label)}</span></td>
       <td><div class="action-group">
-        ${s.linkedBatchId ? `<button class="small" data-goto-shipment-batch="${s.id}">Go to batch</button>` : ''}
+        ${s.source === 'stock' ? `<button class="small" data-goto-shipment-batch="${s.id}">View stock</button>` : (s.linkedBatchId ? `<button class="small" data-goto-shipment-batch="${s.id}">Go to batch</button>` : '')}
         <button class="small danger admin-only" data-delete-shipment="${s.id}">Del</button>
       </div></td>
     </tr>`;
@@ -5438,7 +5505,14 @@ function bindShipmentsActions(root){
 }
 function goToShipmentBatch(id){
   const s = (state.shipments || []).find(x=> x.id === id);
-  if(!s || !s.linkedBatchId) return;
+  if(!s) return;
+  if(s.source === 'stock'){
+    currentView = 'canaStock';
+    stockSearchText = s.strain || '';
+    render();
+    return;
+  }
+  if(!s.linkedBatchId) return;
   currentView = 'farm';
   currentFarm = s.farm;
   currentFarmTab = 'qc';
@@ -5449,11 +5523,17 @@ function deleteShipment(id){
   if(!requireAdmin('delete shipment line', ()=> deleteShipment(id))) return;
   const s = (state.shipments || []).find(x=> x.id === id);
   if(!s) return;
-  const alsoDeleteBatch = s.linkedBatchId && confirm('Also delete the linked pending QC batch for "' + (s.strain||'') + '" at ' + (s.farm||'') + '?\nOK = delete both · Cancel = keep the batch, just remove this shipment line');
-  if(alsoDeleteBatch){
-    const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
-    if(rec && !isPending(rec) && !confirm('That batch already has QC data entered. Delete it anyway?')) return;
-    state.farms[s.farm] = (state.farms[s.farm] || []).filter(r=> r.id !== s.linkedBatchId);
+  if(s.source === 'stock'){
+    if(confirm('Restore ' + fmtNum(num(s.totalKg)||0,2) + ' kg back to Cana Stock for "' + (s.strain||'') + '"?\nOK = restore stock · Cancel = just remove this shipment line')){
+      restoreCanaStockAllocations(s.stockAllocations);
+    }
+  } else {
+    const alsoDeleteBatch = s.linkedBatchId && confirm('Also delete the linked pending QC batch for "' + (s.strain||'') + '" at ' + (s.farm||'') + '?\nOK = delete both · Cancel = keep the batch, just remove this shipment line');
+    if(alsoDeleteBatch){
+      const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
+      if(rec && !isPending(rec) && !confirm('That batch already has QC data entered. Delete it anyway?')) return;
+      state.farms[s.farm] = (state.farms[s.farm] || []).filter(r=> r.id !== s.linkedBatchId);
+    }
   }
   state.shipments = (state.shipments || []).filter(x=> x.id !== id);
   onDataChanged();

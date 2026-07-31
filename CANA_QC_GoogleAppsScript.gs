@@ -2651,7 +2651,7 @@ function upgradePlantRegistryTab() {
 /* ---------- Shipments — bulk incoming delivery plan (strain + farm + kg + GACP), linked to a pending QC batch ---------- */
 
 var SHIPMENTS_SHEET = 'Shipments';
-var SHIPMENTS_HEADERS = ['_id', 'Month', 'Strain', 'Bigs (kg)', 'Smalls (kg)', 'Total (kg)', 'Farm', 'GACP Licence', 'Notes', 'Linked Batch ID', 'Created By', 'Created At'];
+var SHIPMENTS_HEADERS = ['_id', 'Month', 'Strain', 'Bigs (kg)', 'Smalls (kg)', 'Total (kg)', 'Farm', 'Source', 'GACP Licence', 'Notes', 'Linked Batch ID', 'Stock Allocations (JSON)', 'Created By', 'Created At'];
 var SHIPMENTS_NUM_COLS = SHIPMENTS_HEADERS.length;
 
 function readShipments(ss) {
@@ -2664,6 +2664,8 @@ function readShipments(ss) {
   var list = [];
   values.forEach(function(row) {
     if (!row[2] && !row[6]) return;
+    var stockAllocations = [];
+    try { stockAllocations = row[11] ? JSON.parse(row[11]) : []; } catch (e) { stockAllocations = []; }
     list.push({
       id: String(row[0] || '') || newId(),
       month: String(row[1] || ''),
@@ -2672,11 +2674,13 @@ function readShipments(ss) {
       popsKg: cellStr(row[4]),
       totalKg: cellStr(row[5]),
       farm: String(row[6] || ''),
-      gacpLicence: String(row[7] || ''),
-      notes: String(row[8] || ''),
-      linkedBatchId: String(row[9] || ''),
-      createdBy: String(row[10] || ''),
-      createdAt: String(row[11] || '')
+      source: String(row[7] || '') || 'farm',
+      gacpLicence: String(row[8] || ''),
+      notes: String(row[9] || ''),
+      linkedBatchId: String(row[10] || ''),
+      stockAllocations: stockAllocations,
+      createdBy: String(row[12] || ''),
+      createdAt: String(row[13] || '')
     });
   });
   return list;
@@ -2684,7 +2688,7 @@ function readShipments(ss) {
 
 function writeShipments(ss, shipments) {
   setupCanaFlowerTab(ss, SHIPMENTS_SHEET, 'CANA QC TRACKER  ·  SHIPMENTS',
-    'Bulk incoming delivery plan · strain + farm + kg + GACP · auto-linked to a pending QC batch',
+    'Bulk incoming delivery plan · strain + farm + kg + GACP · auto-linked to a pending QC batch or Cana Stock deduction',
     '#0369a1', SHIPMENTS_HEADERS);
   var sheet = ss.getSheetByName(SHIPMENTS_SHEET);
   var rows = (shipments || []).map(function(s) {
@@ -2696,9 +2700,11 @@ function writeShipments(ss, shipments) {
       s.popsKg === '' || s.popsKg === null || s.popsKg === undefined ? '' : s.popsKg,
       s.totalKg === '' || s.totalKg === null || s.totalKg === undefined ? '' : s.totalKg,
       s.farm || '',
+      s.source || 'farm',
       s.gacpLicence || '',
       s.notes || '',
       s.linkedBatchId || '',
+      JSON.stringify(s.stockAllocations || []),
       s.createdBy || '',
       s.createdAt || ''
     ];
