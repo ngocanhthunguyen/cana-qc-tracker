@@ -119,7 +119,9 @@ function defaultState(){
     canaStock: [],
     plants: [],
     exportLog: [],
-    exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }]
+    exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }],
+    exportPicks: [],
+    companyOrders: []
   };
 }
 
@@ -215,6 +217,20 @@ const CANA_STOCK_COLS = [
   {key:'updatedBy', label:'Updated by', labelTh:'โดย', type:'text'},
 ];
 const CANA_STOCK_KEYS = ['strain','room','flowerType','cropAge','bigsG','popsG','qtyG','status','harvestDate','trimDate','linkedTrimId','linkedPlantBatchIds','notes','updatedAt','updatedBy'];
+
+/** Export Lot ID — 4 characters, one per kg "pick" from a farm+strain pool at export time */
+const EXPORT_LOT_ID_LEN = 4;
+
+/** Company Orders — standalone monthly order tracker per company/strain (not yet linked to export picks) */
+const COMPANY_ORDER_COLS = [
+  {key:'company', label:'Company', labelTh:'บริษัท', type:'text'},
+  {key:'month', label:'Order month', labelTh:'เดือนที่สั่ง', type:'text'},
+  {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
+  {key:'orderedKg', label:'Ordered (kg)', labelTh:'สั่งซื้อ (กก.)', type:'number'},
+  {key:'status', label:'Status', labelTh:'สถานะ', type:'select', options: ['Open / เปิดรับ','Confirmed / ยืนยันแล้ว','Fulfilled / ส่งแล้ว','Cancelled / ยกเลิก']},
+  {key:'notes', label:'Notes', labelTh:'หมายเหตุ', type:'textarea'},
+];
+const COMPANY_ORDER_KEYS = ['company','month','strain','orderedKg','status','notes'];
 
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 

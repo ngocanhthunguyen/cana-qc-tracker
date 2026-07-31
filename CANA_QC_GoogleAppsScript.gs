@@ -972,7 +972,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -1216,6 +1216,8 @@ function readAllFarms() {
     plants: readPlants(ss),
     exportLog: readExportLog(ss),
     exportCompanies: readExportCompaniesFromMeta(ss) || [{ id: 'bls', name: 'BLS', templateId: 'bls' }],
+    exportPicks: readExportPicks(ss),
+    companyOrders: readCompanyOrders(ss),
     farmList: farmList,
     farmCodes: readFarmCodesFromMeta(ss),
     farmDriveFolders: readFarmDriveFoldersFromMeta(ss),
@@ -1280,7 +1282,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1291,6 +1293,8 @@ function writeAllFarms(state) {
   if (state.plants !== undefined) writePlants(ss, state.plants);
   if (state.exportLog) writeExportLog(ss, state.exportLog);
   if (state.exportCompanies) writeExportCompanies(ss, state.exportCompanies);
+  if (state.exportPicks !== undefined) writeExportPicks(ss, state.exportPicks);
+  if (state.companyOrders !== undefined) writeCompanyOrders(ss, state.companyOrders);
   updateMeta(ss);
   updateDashboard(ss);
   orderTabs(ss);
@@ -2508,6 +2512,131 @@ function writePlants(ss, plants) {
   }
 }
 
+/* ---------- Export Picks — kg picked from a farm+strain QC pool, 4-char Lot IDs, FIFO batch trace ---------- */
+
+var EXPORT_PICKS_SHEET = 'Export Picks';
+var EXPORT_PICKS_HEADERS = ['_id', 'Month', 'Farm', 'Strain', 'Kg', 'Lot ID', 'Allocations (JSON)', 'Notes', 'Created By', 'Created At'];
+var EXPORT_PICKS_NUM_COLS = EXPORT_PICKS_HEADERS.length;
+
+function readExportPicks(ss) {
+  ss = ss || getSpreadsheet();
+  var sheet = ss.getSheetByName(EXPORT_PICKS_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, EXPORT_PICKS_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[2] && !row[3] && !row[5]) return;
+    var allocations = [];
+    try { allocations = row[6] ? JSON.parse(row[6]) : []; } catch (e) { allocations = []; }
+    list.push({
+      id: String(row[0] || '') || newId(),
+      month: String(row[1] || ''),
+      farm: String(row[2] || ''),
+      strain: String(row[3] || ''),
+      kg: cellStr(row[4]),
+      lotId: String(row[5] || ''),
+      allocations: allocations,
+      notes: String(row[7] || ''),
+      createdBy: String(row[8] || ''),
+      createdAt: String(row[9] || '')
+    });
+  });
+  return list;
+}
+
+function writeExportPicks(ss, picks) {
+  setupCanaFlowerTab(ss, EXPORT_PICKS_SHEET, 'CANA QC TRACKER  ·  EXPORT PICKS',
+    'Kg picked from farm + strain QC pools · 4-char Lot ID · FIFO batch allocations',
+    '#b45309', EXPORT_PICKS_HEADERS);
+  var sheet = ss.getSheetByName(EXPORT_PICKS_SHEET);
+  var rows = (picks || []).map(function(p) {
+    return [
+      p.id || newId(),
+      p.month || '',
+      p.farm || '',
+      p.strain || '',
+      p.kg === '' || p.kg === null || p.kg === undefined ? '' : p.kg,
+      p.lotId || '',
+      JSON.stringify(p.allocations || []),
+      p.notes || '',
+      p.createdBy || '',
+      p.createdAt || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, EXPORT_PICKS_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, EXPORT_PICKS_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, EXPORT_PICKS_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#fef3c7')
+        .setFontSize(10).setWrap(true);
+    }
+    sheet.getRange(CANA_FLOWER_DATA_START, 6, rows.length, 1).setFontFamily('Courier New').setFontWeight('bold');
+  }
+}
+
+/* ---------- Company Orders — standalone monthly order tracker per company + strain ---------- */
+
+var COMPANY_ORDERS_SHEET = 'Company Orders';
+var COMPANY_ORDERS_HEADERS = ['_id', 'Company', 'Month', 'Strain', 'Ordered (kg)', 'Status', 'Notes'];
+var COMPANY_ORDERS_NUM_COLS = COMPANY_ORDERS_HEADERS.length;
+
+function readCompanyOrders(ss) {
+  ss = ss || getSpreadsheet();
+  var sheet = ss.getSheetByName(COMPANY_ORDERS_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, COMPANY_ORDERS_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[1] && !row[3]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      company: String(row[1] || ''),
+      month: String(row[2] || ''),
+      strain: String(row[3] || ''),
+      orderedKg: cellStr(row[4]),
+      status: String(row[5] || ''),
+      notes: String(row[6] || '')
+    });
+  });
+  return list;
+}
+
+function writeCompanyOrders(ss, orders) {
+  setupCanaFlowerTab(ss, COMPANY_ORDERS_SHEET, 'CANA QC TRACKER  ·  COMPANY ORDERS',
+    'Standalone monthly order tracker per company + strain — not yet linked to export picks',
+    '#5b21b6', COMPANY_ORDERS_HEADERS);
+  var sheet = ss.getSheetByName(COMPANY_ORDERS_SHEET);
+  var rows = (orders || []).map(function(o) {
+    return [
+      o.id || newId(),
+      o.company || '',
+      o.month || '',
+      o.strain || '',
+      o.orderedKg === '' || o.orderedKg === null || o.orderedKg === undefined ? '' : o.orderedKg,
+      o.status || '',
+      o.notes || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, COMPANY_ORDERS_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, COMPANY_ORDERS_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, COMPANY_ORDERS_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#f3e8ff')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
 /** Run once — creates Plant Registry tab (does NOT rewrite trim unless data exists) */
 function upgradePlantRegistryTab() {
   var ss = getSpreadsheet();
@@ -2515,6 +2644,16 @@ function upgradePlantRegistryTab() {
   orderTabs(ss);
   SpreadsheetApp.flush();
   Logger.log('Plant Registry tab ready. Trim/Cana Stock sheets unchanged — open app to sync.');
+}
+
+/** Run once — creates Export Picks + Company Orders tabs */
+function upgradeExportPicksAndCompanyOrdersTabs() {
+  var ss = getSpreadsheet();
+  writeExportPicks(ss, readExportPicks(ss));
+  writeCompanyOrders(ss, readCompanyOrders(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Export Picks + Company Orders tabs ready. Open app to sync.');
 }
 
 /* ---------- Export Log tab ---------- */

@@ -5,7 +5,7 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders'
 let dashSubTab = 'overview'; // 'overview' | 'exports'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
@@ -28,6 +28,8 @@ let fileType = 'xlsx'; // 'xlsx' | 'json' — format of the currently linked fil
 let dashMonth = '';
 let pendingOnly = false;
 let searchText = '';
+let companyOrdersMonth = '';
+let companyOrdersSearchText = '';
 let viewMode = 'compact'; // 'compact' | 'full'
 let filterStatus = '';
 let filterDateFrom = '';
@@ -1037,6 +1039,8 @@ function ensureStateShape(){
   if(!state.exportCompanies || !state.exportCompanies.length){
     state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
   }
+  if(!state.exportPicks) state.exportPicks = [];
+  if(!state.companyOrders) state.companyOrders = [];
   if(!state.farmList || !state.farmList.length) state.farmList = DEFAULT_FARMS.slice();
   if(!state.farmCodes) state.farmCodes = {...DEFAULT_FARM_CODES};
   if(!state.farmDriveFolders) state.farmDriveFolders = {};
@@ -1077,6 +1081,7 @@ function farmSubtabsHtml(){
 function enforceStaffViewAccess(){
   if(!isStaff()) return;
   if(currentView === 'canaStock') currentView = 'dashboard';
+  if(currentView === 'companyOrders') currentView = 'dashboard';
   if(currentFarmTab === 'documents') currentFarmTab = 'qc';
 }
 function bindFarmSubtabs(root){
@@ -1390,6 +1395,8 @@ function mergeSharedModulesFromRemote(data){
   if(!localDirty && Array.isArray(data.exportCompanies) && data.exportCompanies.length){
     state.exportCompanies = data.exportCompanies.slice();
   }
+  if(!localDirty && Array.isArray(data.exportPicks)) state.exportPicks = data.exportPicks.slice();
+  if(!localDirty && Array.isArray(data.companyOrders)) state.companyOrders = data.companyOrders.slice();
 }
 function mergeTrimmingFromRemote(remoteTrimming){
   if(!Array.isArray(remoteTrimming)) return;
@@ -1584,7 +1591,9 @@ function stateFingerprint(){
     canaStock: state.canaStock || [],
     plants: state.plants || [],
     exportLog: state.exportLog || [],
-    exportCompanies: state.exportCompanies || []
+    exportCompanies: state.exportCompanies || [],
+    exportPicks: state.exportPicks || [],
+    companyOrders: state.companyOrders || []
   });
 }
 function debouncedPushToSheet(){
@@ -1722,7 +1731,9 @@ async function pullFromGoogleSheet(silent){
       canaStock: data.canaStock || [],
       plants: data.plants || [],
       exportLog: data.exportLog || [],
-      exportCompanies: data.exportCompanies || []
+      exportCompanies: data.exportCompanies || [],
+      exportPicks: data.exportPicks || [],
+      companyOrders: data.companyOrders || []
     });
     const docsBefore = JSON.stringify(stripDocsForSheet(state.documents));
     const sharedBefore = sharedModulesFingerprint();
@@ -1788,7 +1799,9 @@ async function pushToGoogleSheet(silent){
         canaStock: state.canaStock || [],
         plants: state.plants || [],
         exportLog: state.exportLog || [],
-        exportCompanies: state.exportCompanies || []
+        exportCompanies: state.exportCompanies || [],
+        exportPicks: state.exportPicks || [],
+        companyOrders: state.companyOrders || []
       }
     };
     const data = await callAppsScript(payload);
@@ -2307,7 +2320,9 @@ function buildStateForStorage(){
     canaStock: state.canaStock || [],
     plants: state.plants || [],
     exportLog: state.exportLog || [],
-    exportCompanies: state.exportCompanies || []
+    exportCompanies: state.exportCompanies || [],
+    exportPicks: state.exportPicks || [],
+    companyOrders: state.companyOrders || []
   };
 }
 function saveLocal(){
@@ -3051,6 +3066,278 @@ function renderExportLogPanel(month){
     </table></div>
   </div>`;
 }
+/* ============ FARM × STRAIN TOTALS + EXPORT PICKS (Lot IDs) ============ */
+function computeFarmStrainRows(month){
+  const pool = {};
+  recordsForMonth(month).forEach(({rec, farm})=>{
+    const c = computeRow(rec);
+    if(c.totalFlower === null) return;
+    const strain = (rec.strain || '').trim() || '(no strain)';
+    const key = farm + '||' + strain;
+    if(!pool[key]) pool[key] = { farm, strain, totalKg: 0, batches: [] };
+    const kg = c.totalFlower / 1000;
+    pool[key].totalKg += kg;
+    pool[key].batches.push({ batchId: getBatchId(rec, farm), date: rec.date || '', kg });
+  });
+  Object.values(pool).forEach(p=> p.batches.sort((a,b)=> (a.date||'').localeCompare(b.date||'') || a.batchId.localeCompare(b.batchId)));
+  const pickedByKey = {};
+  getExportPicksFor(month).forEach(p=>{
+    const key = p.farm + '||' + p.strain;
+    pickedByKey[key] = (pickedByKey[key] || 0) + (num(p.kg) || 0);
+  });
+  return Object.values(pool).map(p=>{
+    const key = p.farm + '||' + p.strain;
+    const pickedKg = pickedByKey[key] || 0;
+    return { ...p, pickedKg, remainingKg: Math.max(0, Number((p.totalKg - pickedKg).toFixed(3))) };
+  }).sort((a,b)=> a.farm.localeCompare(b.farm) || a.strain.localeCompare(b.strain));
+}
+function getExportPicksFor(month){
+  return (state.exportPicks || []).filter(p=> p.month === month);
+}
+function allocatePickFifo(farm, strain, month, kgToPick){
+  const rows = computeFarmStrainRows(month);
+  const row = rows.find(r=> r.farm === farm && r.strain === strain);
+  if(!row) return { allocations: [], shortfall: kgToPick };
+  const usedByBatch = {};
+  getExportPicksFor(month).filter(p=> p.farm === farm && p.strain === strain)
+    .forEach(p=> (p.allocations || []).forEach(a=>{ usedByBatch[a.batchId] = (usedByBatch[a.batchId] || 0) + (num(a.kg) || 0); }));
+  let remaining = kgToPick;
+  const allocations = [];
+  for(const b of row.batches){
+    if(remaining <= 0.0001) break;
+    const avail = Math.max(0, b.kg - (usedByBatch[b.batchId] || 0));
+    if(avail <= 0.0001) continue;
+    const take = Math.min(avail, remaining);
+    allocations.push({ batchId: b.batchId, kg: Number(take.toFixed(3)) });
+    remaining -= take;
+  }
+  return { allocations, shortfall: Math.max(0, Number(remaining.toFixed(3))) };
+}
+function isValidLotId(code){ return /^[A-Za-z0-9]{4}$/.test(String(code || '').trim()); }
+function isLotIdTaken(code, excludeId){
+  const c = String(code || '').trim().toUpperCase();
+  return (state.exportPicks || []).some(p=> p.id !== excludeId && String(p.lotId || '').toUpperCase() === c);
+}
+function nextExportLotId(){
+  for(let i=0;i<5000;i++){
+    const code = String(Math.floor(1000 + Math.random()*9000));
+    if(!isLotIdTaken(code)) return code;
+  }
+  return String(Date.now()).slice(-4);
+}
+function openExportPickModal(farm, strain, month, remainingKg){
+  if(!requireAdmin('pick export kg', ()=> openExportPickModal(farm, strain, month, remainingKg))) return;
+  modalDirty = true;
+  const suggested = nextExportLotId();
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:440px">
+      <h2>Pick export kg</h2>
+      <p class="sub"><b>${esc(strain)}</b> · ${esc(farm)} · ${esc(month)}<br>Available: <b>${fmtNum(remainingKg,3)} kg</b></p>
+      <form id="exportPickForm" class="form-grid">
+        <div class="field full"><label>Kg to pick</label>
+          <input type="number" step="0.001" min="0.001" name="kg" required autofocus></div>
+        <div class="field full"><label>Lot ID <span style="font-weight:400;color:var(--muted)">4 characters — auto-generated, or type your own</span></label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" name="lotId" value="${esc(suggested)}" maxlength="4" style="text-transform:uppercase;flex:1;">
+            <button type="button" class="ghost small" id="btnRegenLot">🔄 New</button>
+          </div>
+        </div>
+        <div class="field full"><label>Notes (optional)</label><textarea name="notes" rows="2"></textarea></div>
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelPick">Cancel</button>
+          <button type="submit" class="primary">Add pick</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCancelPick').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#btnRegenLot').onclick = ()=>{ root.querySelector('[name=lotId]').value = nextExportLotId(); };
+  root.querySelector('#exportPickForm').onsubmit = (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const kg = num(fd.get('kg'));
+    const lotId = String(fd.get('lotId') || '').trim().toUpperCase();
+    if(!kg || kg <= 0){ alert('Enter kg to pick.'); return; }
+    if(kg > remainingKg + 0.0001){
+      if(!confirm('Kg exceeds remaining available (' + fmtNum(remainingKg,3) + ' kg). Add anyway?')) return;
+    }
+    if(!isValidLotId(lotId)){ alert('Lot ID must be exactly 4 characters (letters/numbers).'); return; }
+    if(isLotIdTaken(lotId)){ if(!confirm('Lot ID "' + lotId + '" is already used. Use anyway?')) return; }
+    const { allocations, shortfall } = allocatePickFifo(farm, strain, month, kg);
+    const pick = {
+      id: uid(), month, farm, strain, kg: Number(kg.toFixed(3)), lotId,
+      allocations, notes: String(fd.get('notes') || '').trim(),
+      createdBy: getCurrentUserName(), createdAt: new Date().toISOString()
+    };
+    if(!state.exportPicks) state.exportPicks = [];
+    state.exportPicks.push(pick);
+    modalDirty = false;
+    onDataChanged();
+    close();
+    renderDashboard();
+    showDocToast('Picked ' + fmtNum(kg,3) + ' kg · Lot ' + lotId + ' ✓' + (shortfall > 0 ? ' (⚠ ' + fmtNum(shortfall,3) + ' kg short of QC stock)' : ''));
+  };
+}
+function openEditPickLotIdModal(id){
+  if(!requireAdmin('edit lot id', ()=> openEditPickLotIdModal(id))) return;
+  const p = (state.exportPicks || []).find(x=> x.id === id);
+  if(!p) return;
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:380px">
+      <h2>Edit Lot ID</h2>
+      <p class="sub">${esc(p.strain)} · ${esc(p.farm)} · ${fmtNum(p.kg,3)} kg</p>
+      <form id="editLotForm">
+        <div class="field full"><label>Lot ID (4 characters)</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" name="lotId" value="${esc(p.lotId)}" maxlength="4" style="text-transform:uppercase;flex:1;" autofocus>
+            <button type="button" class="ghost small" id="btnRegenLot2">🔄 New</button>
+          </div>
+        </div>
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelEditLot">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#btnCancelEditLot').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  root.querySelector('#btnRegenLot2').onclick = ()=>{ root.querySelector('[name=lotId]').value = nextExportLotId(); };
+  root.querySelector('#editLotForm').onsubmit = (e)=>{
+    e.preventDefault();
+    const lotId = String(new FormData(e.target).get('lotId') || '').trim().toUpperCase();
+    if(!isValidLotId(lotId)){ alert('Lot ID must be exactly 4 characters.'); return; }
+    if(isLotIdTaken(lotId, p.id)){ if(!confirm('Lot ID "' + lotId + '" already used. Use anyway?')) return; }
+    p.lotId = lotId;
+    modalDirty = false;
+    onDataChanged();
+    closeModal();
+    renderDashboard();
+    showDocToast('Lot ID updated ✓');
+  };
+}
+function deleteExportPick(id){
+  const p = (state.exportPicks || []).find(x=> x.id === id);
+  if(!p) return;
+  if(!requireAdmin('delete export pick', ()=> deleteExportPick(id))) return;
+  if(!confirm('Delete pick "' + p.lotId + '" (' + fmtNum(p.kg,3) + ' kg ' + p.strain + ')?\nThis frees the kg back to available.')) return;
+  state.exportPicks = (state.exportPicks || []).filter(x=> x.id !== id);
+  onDataChanged();
+  renderDashboard();
+  showDocToast('Pick deleted ✓');
+}
+function exportPickToLabelShape(p){
+  return { batchId: p.lotId, strain: (p.strain || '') + ' ' + fmtNum(p.kg,1) + 'kg', room: p.farm, lotId: '' };
+}
+function openPrintExportLotLabels(pickIds){
+  const ids = Array.isArray(pickIds) ? pickIds : [pickIds];
+  const picks = ids.map(id=> (state.exportPicks || []).find(p=> p.id === id)).filter(Boolean);
+  if(!picks.length){ alert('Pick not found'); return; }
+  const shaped = picks.map(exportPickToLabelShape);
+  modalDirty = true;
+  const root = document.getElementById('modalRoot');
+  const labelsHtml = buildLabelsPreviewHtml(shaped);
+  const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
+  const savedDpi = getZebraDpi();
+  const labelSize = getLabelSizeIn();
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal modal-wide plant-print-modal">
+      <h2>🖨 Print export lot label${picks.length>1?'s':''}</h2>
+      <div class="plant-print-help">
+        <p>Download or copy ZPL, then send to the printer in Terminal:<br>
+        <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Printer IP</label>
+          <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
+        <div class="field"><label>Printer DPI</label>
+          <select id="zebraDpiInput">
+            <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
+            <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
+          </select></div>
+        <div class="field"><label>Label width (in)</label>
+          <input id="labelWIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.w}"></div>
+        <div class="field"><label>Label height (in)</label>
+          <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL</button>
+        <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
+        <button type="button" class="ghost" id="btnClosePrint">Close</button>
+      </div>
+      <p class="sub" id="printStatusLine"></p>
+      <div class="zebra-label-sheet" id="zebraLabelSheet">${labelsHtml}</div>
+    </div>
+  </div>`;
+  const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
+  const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
+  root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
+  root.querySelector('#btnCopyZpl').onclick = async ()=>{
+    saveLabelPrintSettings();
+    if(await copyZplToClipboard(shaped)) setStatus('Copied — run: pbpaste | nc ' + getIp() + ' 9100');
+    else setStatus('Copy failed — try Download ZPL');
+  };
+  root.querySelector('#btnDownloadZpl').onclick = ()=>{
+    saveLabelPrintSettings();
+    const fn = downloadZplFile(shaped);
+    setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
+  };
+}
+function renderFarmStrainTotalsPanel(month){
+  const rows = computeFarmStrainRows(month);
+  const picks = getExportPicksFor(month);
+  const body = rows.length ? rows.map(r=>{
+    return `<tr>
+      <td><b>${esc(r.farm)}</b></td>
+      <td>${esc(r.strain)}</td>
+      <td>${fmtNum(r.totalKg,3)}</td>
+      <td>${fmtNum(r.pickedKg,3)}</td>
+      <td><b>${fmtNum(r.remainingKg,3)}</b></td>
+      <td><button type="button" class="small primary" data-pick-farm="${esc(r.farm)}" data-pick-strain="${esc(r.strain)}" data-pick-remaining="${r.remainingKg}" ${r.remainingKg<=0 ? 'disabled' : ''}>+ Pick kg</button></td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="6" class="muted" style="text-align:center;padding:16px;">No QC'd batches with delivery date in ${esc(month)} yet.</td></tr>`;
+  const picksHtml = picks.length ? picks.map(p=>`
+    <div class="export-pick-row">
+      <code class="batch-id">${esc(p.lotId)}</code>
+      <span><b>${esc(p.strain)}</b> · ${esc(p.farm)}</span>
+      <span>${fmtNum(p.kg,3)} kg</span>
+      <span class="muted">${(p.allocations||[]).map(a=> a.batchId + ' (' + fmtNum(a.kg,2) + ')').join(', ') || '—'}</span>
+      <div class="action-group">
+        <button type="button" class="small" data-edit-pick-lot="${esc(p.id)}">Lot ID</button>
+        <button type="button" class="small purple" data-print-pick="${esc(p.id)}">🏷 Barcode</button>
+        <button type="button" class="small danger admin-only" data-delete-pick="${esc(p.id)}">Del</button>
+      </div>
+    </div>`).join('') : `<p class="sub" style="margin:8px 0 0;">No kg picked yet for ${esc(month)}.</p>`;
+  return `
+  <div class="panel export-farm-strain-panel">
+    <h3 style="margin:0 0 4px;font-size:15px;">📊 Farm × Strain totals — ${esc(month)}</h3>
+    <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">QC'd flower grouped by farm + strain · pick kg to export and assign a 4-char Lot ID (traceable to source batches, FIFO)</p>
+    <div class="table-wrap"><table class="compact-table">
+      <thead><tr><th>Farm</th><th>Strain</th><th>Total QC kg</th><th>Picked</th><th>Remaining</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+    <h4 style="margin:16px 0 6px;font-size:13px;">Export picks / Lot IDs — ${esc(month)}</h4>
+    <div class="export-picks-list">${picksHtml}</div>
+  </div>`;
+}
+function bindFarmStrainTotalsEvents(main, month){
+  main.querySelectorAll('[data-pick-farm]').forEach(btn=>{
+    btn.onclick = ()=> openExportPickModal(btn.dataset.pickFarm, btn.dataset.pickStrain, month, Number(btn.dataset.pickRemaining) || 0);
+  });
+  main.querySelectorAll('[data-edit-pick-lot]').forEach(btn=> btn.onclick = ()=> openEditPickLotIdModal(btn.dataset.editPickLot));
+  main.querySelectorAll('[data-print-pick]').forEach(btn=> btn.onclick = ()=> openPrintExportLotLabels([btn.dataset.printPick]));
+  main.querySelectorAll('[data-delete-pick]').forEach(btn=> btn.onclick = ()=> deleteExportPick(btn.dataset.deletePick));
+}
 function renderExportBuilderPanel(month){
   const selected = getSelectedExportItems(month);
   const summary = computeExportSummary(month);
@@ -3066,6 +3353,7 @@ function renderExportBuilderPanel(month){
         <button type="button" class="small purple admin-only" id="btnManageExportCompanies">+ Manage export companies</button>
       </div>
     </div>
+    ${renderFarmStrainTotalsPanel(month)}
     ${renderExportBatchPicker(month)}
     ${renderExportTotalsBar(month)}
     <div class="panel" style="margin-bottom:16px;">
@@ -3133,6 +3421,7 @@ function bindExportBuilderEvents(main, month){
   const btnFull = main.querySelector('#btnExportMonthCard');
   if(btnFull) btnFull.onclick = ()=> exportMonthExcel(month);
   main.querySelectorAll('[data-export-company]').forEach(btn=> btn.onclick = ()=> exportCompanyExcel(btn.dataset.exportCompany, month));
+  bindFarmStrainTotalsEvents(main, month);
   updateAdminUI();
 }
 
@@ -3189,6 +3478,7 @@ function render(){
   else if(currentView==='curing') renderCuringView();
   else if(currentView==='plants') renderPlantsView();
   else if(currentView==='canaStock') renderCanaStockView();
+  else if(currentView==='companyOrders') renderCompanyOrdersView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
@@ -3228,6 +3518,7 @@ function renderTabs(){
   nav.appendChild(navBtn('🌱 Plants', currentView === 'plants', ()=>{ currentView = 'plants'; plantSelectedIds.clear(); render(); }));
   if(isManager()){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
+    nav.appendChild(navBtn('🧾 Company Orders', currentView === 'companyOrders', ()=>{ currentView = 'companyOrders'; render(); }));
   }
 
   const divider = document.createElement('span');
@@ -4764,6 +5055,150 @@ function deleteCanaStockLine(id){
   onDataChanged();
   if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
   updateCanaStockResults();
+}
+
+/* ============ COMPANY ORDERS (standalone monthly order tracker) ============ */
+function getCompanyOrderMonths(){
+  const months = new Set((state.companyOrders||[]).map(o=> o.month).filter(Boolean));
+  months.add(currentMonthLabel());
+  return Array.from(months).sort((a,b)=> new Date('1 '+a) - new Date('1 '+b));
+}
+function getFilteredCompanyOrders(){
+  const q = companyOrdersSearchText.trim().toLowerCase();
+  return (state.companyOrders||[]).filter(o=>{
+    if(companyOrdersMonth && o.month !== companyOrdersMonth) return false;
+    if(!q) return true;
+    const hay = [o.company, o.strain, o.notes, o.status].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice().sort((a,b)=> (a.company||'').localeCompare(b.company||'') || (a.strain||'').localeCompare(b.strain||''));
+}
+function renderCompanyOrdersView(){
+  if(!requireLogin()) return;
+  if(!isManager()){ currentView = 'dashboard'; render(); return; }
+  if(!companyOrdersMonth) companyOrdersMonth = currentMonthLabel();
+  const months = getCompanyOrderMonths();
+  const rows = getFilteredCompanyOrders();
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="cana-header">
+      <div>
+        <h2>🧾 Company Orders — monthly order tracker</h2>
+        <p class="sub">What each company ordered this month, by strain — standalone for now, not yet linked to export picks<br><span class="bi">คำสั่งซื้อของแต่ละบริษัทต่อเดือน แยกตามสายพันธุ์</span></p>
+      </div>
+    </div>
+    <div class="row-actions cana-toolbar">
+      <button class="primary" id="btnNewCompanyOrder">+ Add order <span class="bi">/ เพิ่ม</span></button>
+      <select id="companyOrderMonthFilter">
+        <option value="">All months / ทุกเดือน</option>
+        ${months.map(m=>`<option value="${esc(m)}" ${companyOrdersMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
+      </select>
+      <input class="search-box" id="companyOrderSearchBox" placeholder="Search company, strain…" value="${esc(companyOrdersSearchText)}">
+    </div>
+    <div class="mob-section-label mobile-only">Orders</div>
+    <div id="companyOrderResultsWrap">${renderCompanyOrdersTable(rows)}</div>
+  `;
+  document.getElementById('btnNewCompanyOrder').onclick = ()=> openCompanyOrderModal(null);
+  document.getElementById('companyOrderMonthFilter').onchange = (e)=>{ companyOrdersMonth = e.target.value; updateCompanyOrdersResults(); };
+  document.getElementById('companyOrderSearchBox').oninput = (e)=>{ companyOrdersSearchText = e.target.value; updateCompanyOrdersResults(); };
+  bindCompanyOrdersActions(main);
+}
+function updateCompanyOrdersResults(){
+  const main = document.getElementById('mainArea');
+  if(!main || currentView !== 'companyOrders') return;
+  const wrap = document.getElementById('companyOrderResultsWrap');
+  if(wrap) wrap.innerHTML = renderCompanyOrdersTable(getFilteredCompanyOrders());
+  bindCompanyOrdersActions(main);
+}
+function renderCompanyOrdersTable(rows){
+  if(!rows.length){
+    return `<div class="panel empty-state"><b>No company orders logged yet.</b><br>Add each company's monthly order by strain here.<br><span class="bi">ยังไม่มีคำสั่งซื้อ — เพิ่มคำสั่งซื้อของบริษัทแยกตามสายพันธุ์</span></div>`;
+  }
+  let totalKg = 0;
+  const body = rows.map(o=>{
+    const kg = num(o.orderedKg) || 0;
+    totalKg += kg;
+    return `<tr>
+      <td><b>${esc(o.company||'—')}</b></td>
+      <td>${esc(o.month||'—')}</td>
+      <td>${esc(o.strain||'—')}</td>
+      <td>${fmtNum(kg,3)}</td>
+      <td>${esc((o.status||'—').split(' / ')[0])}</td>
+      <td>${esc(o.notes||'—')}</td>
+      <td><div class="action-group">
+        <button class="small" data-edit-order="${o.id}">Edit</button>
+        <button class="small danger admin-only" data-delete-order="${o.id}">Del</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  return `<div class="cana-stock-summary"><span class="doc-badge">${rows.length} order${rows.length===1?'':'s'}</span><span class="doc-badge"><b>${fmtNum(totalKg,3)} kg</b> ordered</span></div>
+  <div class="table-wrap desktop-table"><table class="compact-table cana-table">
+    <thead><tr><th>Company</th><th>Month</th><th>Strain</th><th>Ordered (kg)</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
+    <tbody>${body}</tbody>
+  </table></div>`;
+}
+function bindCompanyOrdersActions(root){
+  root.querySelectorAll('[data-edit-order]').forEach(el=> el.onclick = ()=> openCompanyOrderModal(el.dataset.editOrder));
+  root.querySelectorAll('[data-delete-order]').forEach(el=> el.onclick = ()=> deleteCompanyOrder(el.dataset.deleteOrder));
+  updateAdminUI();
+}
+function openCompanyOrderModal(id){
+  if(!requireLogin()) return;
+  const rec = id ? {...(state.companyOrders||[]).find(o=> o.id === id)} : {
+    id: uid(), company:'', month: companyOrdersMonth || currentMonthLabel(), strain:'', orderedKg:'',
+    status: COMPANY_ORDER_COLS.find(c=>c.key==='status').options[0], notes:''
+  };
+  if(!rec) return;
+  const isNew = !id;
+  modalDirty = !isNew;
+  const root = document.getElementById('modalRoot');
+  const companies = getExportCompanies();
+  root.innerHTML = `
+  <div class="overlay" id="overlay">
+    <div class="modal" style="max-width:600px">
+      <h2>${isNew ? '+ Add company order' : 'Edit company order'}</h2>
+      ${companies.length ? `<p class="sub">Known export companies: ${companies.map(c=> esc(c.name)).join(', ')}</p>` : ''}
+      <form id="companyOrderForm" class="form-grid">
+        ${COMPANY_ORDER_COLS.map(c=> fieldHtml(c, rec[c.key] ?? '')).join('')}
+        <div class="modal-actions full">
+          <button type="button" class="ghost" id="btnCancelOrder">Cancel</button>
+          <button type="submit" class="primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  const close = ()=>{ if(modalDirty && !confirm('Discard unsaved changes?')) return; modalDirty=false; closeModal(); };
+  root.querySelector('#btnCancelOrder').onclick = close;
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
+  const form = root.querySelector('#companyOrderForm');
+  form.addEventListener('input', ()=>{ modalDirty = true; });
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const updated = {...rec};
+    COMPANY_ORDER_KEYS.forEach(k=>{ updated[k] = String(new FormData(form).get(k) ?? '').trim(); });
+    if(!updated.company){ alert('Company name is required.'); return; }
+    if(!state.companyOrders) state.companyOrders = [];
+    if(isNew) state.companyOrders.push(updated);
+    else {
+      const i = state.companyOrders.findIndex(o=> o.id === rec.id);
+      if(i >= 0) state.companyOrders[i] = updated;
+    }
+    modalDirty = false;
+    onDataChanged();
+    if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+    closeModal();
+    renderCompanyOrdersView();
+    showDocToast('Order saved ✓');
+  };
+}
+function deleteCompanyOrder(id){
+  if(!requireAdmin('delete company order', ()=> deleteCompanyOrder(id))) return;
+  const o = (state.companyOrders||[]).find(x=> x.id === id);
+  if(!o) return;
+  if(!confirm('Delete order "' + (o.company||'') + ' · ' + (o.strain||'') + '"?')) return;
+  state.companyOrders = (state.companyOrders||[]).filter(x=> x.id !== id);
+  onDataChanged();
+  if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
+  updateCompanyOrdersResults();
 }
 
 /* ============ RENDER: FARM DOCUMENTS ============ */
