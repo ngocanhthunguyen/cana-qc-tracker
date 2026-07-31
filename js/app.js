@@ -1083,8 +1083,6 @@ function farmSubtabsHtml(){
 function enforceStaffViewAccess(){
   if(!isStaff()) return;
   if(currentView === 'canaStock') currentView = 'dashboard';
-  if(currentView === 'companyOrders') currentView = 'dashboard';
-  if(currentView === 'shipments') currentView = 'dashboard';
   if(currentView === 'export') currentView = 'dashboard';
   if(currentFarmTab === 'documents') currentFarmTab = 'qc';
 }
@@ -3353,7 +3351,7 @@ function bindFarmStrainTotalsEvents(main, month){
   main.querySelectorAll('[data-print-pick]').forEach(btn=> btn.onclick = ()=> openPrintExportLotLabels([btn.dataset.printPick]));
   main.querySelectorAll('[data-delete-pick]').forEach(btn=> btn.onclick = ()=> deleteExportPick(btn.dataset.deletePick));
 }
-function renderExportBuilderPanel(month){
+function renderExportDownloadSection(month){
   const selected = getSelectedExportItems(month);
   const summary = computeExportSummary(month);
   const companies = getExportCompanies();
@@ -3362,17 +3360,17 @@ function renderExportBuilderPanel(month){
     <div class="panel export-builder-intro">
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div>
-          <p style="margin:0 0 6px;font-size:13px;"><b>Step 1 — Month:</b> ${esc(month)} · Manager picks strains + export kg (not auto dump from QC)</p>
+          <h3 style="margin:0 0 4px;font-size:15px;">⬇ Download — ${esc(month)}</h3>
+          <p style="margin:0 0 6px;font-size:12px;color:var(--muted);">Manager picks strains + export kg for the file (not auto dump from QC)</p>
           <p style="margin:0;font-size:12px;color:var(--muted);">${selected.length} strain${selected.length===1?'':'s'} selected · <b>${fmtNum(summary.total.exportKg, 3)} kg</b> total export</p>
         </div>
         <button type="button" class="small purple admin-only" id="btnManageExportCompanies">+ Manage export companies</button>
       </div>
     </div>
-    ${renderFarmStrainTotalsPanel(month)}
     ${renderExportBatchPicker(month)}
     ${renderExportTotalsBar(month)}
     <div class="panel" style="margin-bottom:16px;">
-      <h3 style="margin:0 0 12px;font-size:15px;">Step 3 — Download <span class="bi">/ ส่งออก</span></h3>
+      <h3 style="margin:0 0 12px;font-size:15px;">Download files <span class="bi">/ ส่งออก</span></h3>
       <div class="export-grid">
         <div class="export-card">
           <h3>📊 Total export</h3>
@@ -3492,6 +3490,8 @@ function computeDashboard(month){
 /* ============ RENDER: SHELL ============ */
 function render(){
   if(!isLoggedIn()) return;
+  // Shipments + Company Orders used to be their own tabs — now merged into the single Export tab.
+  if(currentView === 'shipments' || currentView === 'companyOrders') currentView = 'export';
   enforceStaffViewAccess();
   renderTabs();
   if(currentView==='dashboard') renderDashboard();
@@ -3500,8 +3500,6 @@ function render(){
   else if(currentView==='curing') renderCuringView();
   else if(currentView==='plants') renderPlantsView();
   else if(currentView==='canaStock') renderCanaStockView();
-  else if(currentView==='companyOrders') renderCompanyOrdersView();
-  else if(currentView==='shipments') renderShipmentsView();
   else if(currentView==='export') renderExportView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
@@ -3542,8 +3540,6 @@ function renderTabs(){
   nav.appendChild(navBtn('🌱 Plants', currentView === 'plants', ()=>{ currentView = 'plants'; plantSelectedIds.clear(); render(); }));
   if(isManager()){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
-    nav.appendChild(navBtn('📥 Shipments', currentView === 'shipments', ()=>{ currentView = 'shipments'; render(); }));
-    nav.appendChild(navBtn('🧾 Company Orders', currentView === 'companyOrders', ()=>{ currentView = 'companyOrders'; render(); }));
     nav.appendChild(navBtn('🚢 Export', currentView === 'export', ()=>{ currentView = 'export'; render(); }));
   }
 
@@ -5098,39 +5094,38 @@ function getFilteredCompanyOrders(){
     return hay.includes(q);
   }).slice().sort((a,b)=> (a.company||'').localeCompare(b.company||'') || (a.strain||'').localeCompare(b.strain||''));
 }
-function renderCompanyOrdersView(){
-  if(!requireLogin()) return;
-  if(!isManager()){ currentView = 'dashboard'; render(); return; }
+function renderCompanyOrdersSection(){
   if(!companyOrdersMonth) companyOrdersMonth = currentMonthLabel();
   const months = getCompanyOrderMonths();
   const rows = getFilteredCompanyOrders();
-  const main = document.getElementById('mainArea');
-  main.innerHTML = `
-    <div class="cana-header">
-      <div>
-        <h2>🧾 Company Orders — monthly order tracker</h2>
-        <p class="sub">What each company ordered this month, by strain — standalone for now, not yet linked to export picks<br><span class="bi">คำสั่งซื้อของแต่ละบริษัทต่อเดือน แยกตามสายพันธุ์</span></p>
+  return `
+    <div class="panel">
+      <h3 style="margin:0 0 4px;font-size:15px;">🧾 Company Orders</h3>
+      <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">What each company ordered this month, by strain — a reference list, kept separate from what you actually pick above<br><span class="bi">คำสั่งซื้อของแต่ละบริษัทต่อเดือน แยกตามสายพันธุ์</span></p>
+      <div class="row-actions cana-toolbar" style="margin-bottom:12px;">
+        <button class="primary" id="btnNewCompanyOrder">+ Add order <span class="bi">/ เพิ่ม</span></button>
+        <select id="companyOrderMonthFilter">
+          <option value="">All months / ทุกเดือน</option>
+          ${months.map(m=>`<option value="${esc(m)}" ${companyOrdersMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+        <input class="search-box" id="companyOrderSearchBox" placeholder="Search company, strain…" value="${esc(companyOrdersSearchText)}">
       </div>
-    </div>
-    <div class="row-actions cana-toolbar">
-      <button class="primary" id="btnNewCompanyOrder">+ Add order <span class="bi">/ เพิ่ม</span></button>
-      <select id="companyOrderMonthFilter">
-        <option value="">All months / ทุกเดือน</option>
-        ${months.map(m=>`<option value="${esc(m)}" ${companyOrdersMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
-      </select>
-      <input class="search-box" id="companyOrderSearchBox" placeholder="Search company, strain…" value="${esc(companyOrdersSearchText)}">
-    </div>
-    <div class="mob-section-label mobile-only">Orders</div>
-    <div id="companyOrderResultsWrap">${renderCompanyOrdersTable(rows)}</div>
-  `;
-  document.getElementById('btnNewCompanyOrder').onclick = ()=> openCompanyOrderModal(null);
-  document.getElementById('companyOrderMonthFilter').onchange = (e)=>{ companyOrdersMonth = e.target.value; updateCompanyOrdersResults(); };
-  document.getElementById('companyOrderSearchBox').oninput = (e)=>{ companyOrdersSearchText = e.target.value; updateCompanyOrdersResults(); };
+      <div class="mob-section-label mobile-only">Orders</div>
+      <div id="companyOrderResultsWrap">${renderCompanyOrdersTable(rows)}</div>
+    </div>`;
+}
+function bindCompanyOrdersSection(main){
+  const btnNew = main.querySelector('#btnNewCompanyOrder');
+  if(btnNew) btnNew.onclick = ()=> openCompanyOrderModal(null);
+  const monthFilter = main.querySelector('#companyOrderMonthFilter');
+  if(monthFilter) monthFilter.onchange = (e)=>{ companyOrdersMonth = e.target.value; updateCompanyOrdersResults(); };
+  const searchBox = main.querySelector('#companyOrderSearchBox');
+  if(searchBox) searchBox.oninput = (e)=>{ companyOrdersSearchText = e.target.value; updateCompanyOrdersResults(); };
   bindCompanyOrdersActions(main);
 }
 function updateCompanyOrdersResults(){
   const main = document.getElementById('mainArea');
-  if(!main || currentView !== 'companyOrders') return;
+  if(!main || currentView !== 'export') return;
   const wrap = document.getElementById('companyOrderResultsWrap');
   if(wrap) wrap.innerHTML = renderCompanyOrdersTable(getFilteredCompanyOrders());
   bindCompanyOrdersActions(main);
@@ -5212,7 +5207,7 @@ function openCompanyOrderModal(id){
     onDataChanged();
     if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
     closeModal();
-    renderCompanyOrdersView();
+    updateCompanyOrdersResults();
     showDocToast('Order saved ✓');
   };
 }
@@ -5542,47 +5537,66 @@ function openBulkShipmentModal(){
     modalDirty = false;
     onDataChanged();
     closeModal();
-    currentView = 'shipments';
+    currentView = 'export';
     render();
     showDocToast(validRows.length + ' shipment line(s) saved ✓' + (stockShortfalls.length ? ' — ⚠ ' + stockShortfalls.join(', ') : ''));
   }
   renderAll();
 }
-function renderShipmentsView(){
-  if(!requireLogin()) return;
-  if(!isManager()){ currentView = 'dashboard'; render(); return; }
+function getShipmentsAwaitingQc(){
+  return (state.shipments || []).filter(s=> s.source === 'farm' && s.linkedBatchId && (()=>{
+    const rec = (state.farms[s.farm] || []).find(r=> r.id === s.linkedBatchId);
+    return rec && isPending(rec);
+  })());
+}
+function renderShipmentsQcBanner(){
+  const pending = getShipmentsAwaitingQc();
+  if(!pending.length) return '';
+  return `<div class="panel" style="border-left:4px solid var(--cond);background:var(--cond-bg);">
+    <b>⚠ ${pending.length} shipment${pending.length===1?'':'s'} still awaiting QC</b> — these won't show up as pickable stock in "Farm × Strain totals" below until QC is entered for them.
+    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;">
+      ${pending.map(s=> `<button type="button" class="small" data-goto-qc-batch="${esc(s.id)}">${esc(s.strain||'—')} @ ${esc(s.farm||'—')} → enter QC</button>`).join('')}
+    </div>
+  </div>`;
+}
+function renderShipmentsSection(){
   if(!shipmentsMonth) shipmentsMonth = nextMonthLabel();
   const months = getShipmentMonths();
   const rows = getFilteredShipments();
-  const main = document.getElementById('mainArea');
-  main.innerHTML = `
-    <div class="cana-header">
-      <div>
-        <h2>📥 Incoming Shipments — plan next month's delivery</h2>
-        <p class="sub">Bulk-enter expected shipment by strain + farm — automatically creates a pending QC batch per line<br><span class="bi">กรอกแผนรับสินค้าล่วงหน้า แยกตามสายพันธุ์และฟาร์ม — สร้างรายการรอ QC ให้อัตโนมัติ</span></p>
+  return `
+    <div class="panel">
+      <h3 style="margin:0 0 4px;font-size:15px;">📥 Incoming Shipments</h3>
+      <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">Bulk-enter expected shipment by strain + farm — creates a pending QC batch per line (or deducts from stock / picks from a farm's finished QC flower)<br><span class="bi">กรอกแผนรับสินค้าล่วงหน้า แยกตามสายพันธุ์และฟาร์ม — สร้างรายการรอ QC ให้อัตโนมัติ</span></p>
+      <div class="row-actions cana-toolbar" style="margin-bottom:12px;">
+        <button class="primary" id="btnNewShipment">+ New shipment plan <span class="bi">/ เพิ่มแผน</span></button>
+        <select id="shipmentMonthFilter">
+          <option value="">All months / ทุกเดือน</option>
+          ${months.map(m=>`<option value="${esc(m)}" ${shipmentsMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+        <input class="search-box" id="shipmentSearchBox" placeholder="Search strain, farm, GACP…" value="${esc(shipmentsSearchText)}">
       </div>
-    </div>
-    <div class="row-actions cana-toolbar">
-      <button class="primary" id="btnNewShipment">+ New shipment plan <span class="bi">/ เพิ่มแผน</span></button>
-      <select id="shipmentMonthFilter">
-        <option value="">All months / ทุกเดือน</option>
-        ${months.map(m=>`<option value="${esc(m)}" ${shipmentsMonth===m?'selected':''}>${esc(m)}</option>`).join('')}
-      </select>
-      <input class="search-box" id="shipmentSearchBox" placeholder="Search strain, farm, GACP…" value="${esc(shipmentsSearchText)}">
-    </div>
-    <div class="mob-section-label mobile-only">Shipment lines</div>
-    <div id="shipmentResultsWrap">${renderShipmentsTable(rows)}</div>
-  `;
-  document.getElementById('btnNewShipment').onclick = ()=> openBulkShipmentModal();
-  document.getElementById('shipmentMonthFilter').onchange = (e)=>{ shipmentsMonth = e.target.value; updateShipmentsResults(); };
-  document.getElementById('shipmentSearchBox').oninput = (e)=>{ shipmentsSearchText = e.target.value; updateShipmentsResults(); };
+      <div class="mob-section-label mobile-only">Shipment lines</div>
+      <div id="shipmentResultsWrap">${renderShipmentsTable(rows)}</div>
+    </div>`;
+}
+function bindShipmentsSection(main){
+  const btnNew = main.querySelector('#btnNewShipment');
+  if(btnNew) btnNew.onclick = ()=> openBulkShipmentModal();
+  const monthFilter = main.querySelector('#shipmentMonthFilter');
+  if(monthFilter) monthFilter.onchange = (e)=>{ shipmentsMonth = e.target.value; updateShipmentsResults(); };
+  const searchBox = main.querySelector('#shipmentSearchBox');
+  if(searchBox) searchBox.oninput = (e)=>{ shipmentsSearchText = e.target.value; updateShipmentsResults(); };
+  main.querySelectorAll('[data-goto-qc-batch]').forEach(btn=> btn.onclick = ()=> goToShipmentBatch(btn.dataset.gotoQcBatch));
   bindShipmentsActions(main);
 }
 function updateShipmentsResults(){
   const main = document.getElementById('mainArea');
-  if(!main || currentView !== 'shipments') return;
+  if(!main || currentView !== 'export') return;
   const wrap = document.getElementById('shipmentResultsWrap');
   if(wrap) wrap.innerHTML = renderShipmentsTable(getFilteredShipments());
+  const bannerWrap = document.getElementById('shipmentsQcBannerWrap');
+  if(bannerWrap) bannerWrap.innerHTML = renderShipmentsQcBanner();
+  main.querySelectorAll('[data-goto-qc-batch]').forEach(btn=> btn.onclick = ()=> goToShipmentBatch(btn.dataset.gotoQcBatch));
   bindShipmentsActions(main);
 }
 function renderShipmentsTable(rows){
@@ -6422,16 +6436,25 @@ function renderExportView(){
   const main = document.getElementById('mainArea');
   main.innerHTML = `
     <div class="panel">
+      <h2 style="margin:0 0 4px;font-size:17px;">🚢 Export</h2>
+      <p class="sub" style="margin:0 0 10px;">Plan incoming shipments → see what's ready to pick → track company orders → download reports, all in one place.<br><span class="bi">วางแผนรับสินค้า → ดูสต็อกที่พร้อมส่งออก → ติดตามคำสั่งซื้อ → ดาวน์โหลดรายงาน</span></p>
       <div class="dash-filter">
-        <label style="font-size:13px;font-weight:600;">Export month <span class="bi">/ เดือนส่งออก</span>:</label>
+        <label style="font-size:13px;font-weight:600;">Download / batch-picker month <span class="bi">/ เดือน</span>:</label>
         <select id="exportMonthInput" class="dash-select">
           ${months.map(m=>`<option value="${esc(m)}" ${m===dashMonth?'selected':''}>${esc(m)}</option>`).join('')}
         </select>
+        <span class="muted" style="font-size:12px;">Applies to the batch picker + downloads below. Shipments and Company Orders below have their own month filters.</span>
       </div>
     </div>
-    ${renderExportBuilderPanel(dashMonth)}
+    <div id="shipmentsQcBannerWrap">${renderShipmentsQcBanner()}</div>
+    ${renderShipmentsSection()}
+    ${renderFarmStrainTotalsPanel(dashMonth)}
+    ${renderCompanyOrdersSection()}
+    ${renderExportDownloadSection(dashMonth)}
   `;
   document.getElementById('exportMonthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderExportView(); };
+  bindShipmentsSection(main);
+  bindCompanyOrdersSection(main);
   bindExportBuilderEvents(main, dashMonth);
 }
 
