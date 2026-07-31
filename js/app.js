@@ -2920,7 +2920,7 @@ function renderExportBatchPicker(month){
   const summary = computeExportSummary(month);
   const farmsWithData = getFarmList().filter(f=> monthItems.some(({farm})=> farm === f));
   const groups = farmsWithData.map(farm=>{
-    const items = monthItems.filter(({farm})=> farm === f);
+    const items = monthItems.filter(item=> item.farm === farm);
     const farmSummary = summary.perFarm.find(r=> r.farm === farm);
     const rows = items.map(item=>{
       const {rec, farm: f} = item;
