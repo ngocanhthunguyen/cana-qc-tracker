@@ -3102,6 +3102,38 @@ function computeFarmStrainRows(){
     };
   }).sort((a,b)=> a.farm.localeCompare(b.farm) || a.strain.localeCompare(b.strain));
 }
+function renderFarmStrainSummaryPanel(farm){
+  const rows = computeFarmStrainRows().filter(r=> r.farm === farm).sort((a,b)=> b.totalKg - a.totalKg);
+  if(!rows.length){
+    return `<div class="panel empty-state">No finished QC batches yet for <b>${esc(farm)}</b> — strain totals will show up here once QC results are entered.<br><span class="bi">ยังไม่มีผล QC ที่เสร็จสมบูรณ์สำหรับฟาร์มนี้</span></div>`;
+  }
+  const max = Math.max(...rows.map(r=> r.totalKg), 0.01);
+  const chart = '<div class="bar-chart">' + rows.map(r=>{
+    const pct = Math.round(r.totalKg / max * 100);
+    return `<div class="bar-row"><span class="lbl" title="${esc(r.strain)}">${esc(r.strain)}</span><div class="track"><div class="fill" style="width:${pct}%"></div></div><span class="val">${fmtNum(r.totalKg,3)} kg</span></div>`;
+  }).join('') + '</div>';
+  const tableRows = rows.map(r=> `<tr>
+    <td><b>${esc(r.strain)}</b></td>
+    <td>${fmtNum(r.totalBigsKg,3)}</td>
+    <td>${fmtNum(r.totalPopsKg,3)}</td>
+    <td><b>${fmtNum(r.totalKg,3)}</b></td>
+    <td>${r.batches.length}</td>
+  </tr>`).join('');
+  const grandBigs = rows.reduce((s,r)=> s + r.totalBigsKg, 0);
+  const grandPops = rows.reduce((s,r)=> s + r.totalPopsKg, 0);
+  const grandTotal = rows.reduce((s,r)=> s + r.totalKg, 0);
+  const grandBatches = rows.reduce((s,r)=> s + r.batches.length, 0);
+  return `<div class="panel">
+    <h3 style="margin:0 0 4px;font-size:15px;">📊 ${esc(farm)} — total kg per strain after QC</h3>
+    <p class="sub" style="margin:0 0 10px;font-size:12px;color:var(--muted);">All finished QC batches combined across every delivery date — bigs/smalls/popcorn of the same strain are grouped together<br><span class="bi">รวมทุกล็อตที่ QC เสร็จแล้วของฟาร์มนี้ ทุกวันที่ส่งมอบ แยกตามสายพันธุ์</span></p>
+    ${chart}
+    <div class="table-wrap" style="margin-top:14px;"><table class="compact-table">
+      <thead><tr><th>Strain</th><th>Bigs kg</th><th>Pops kg</th><th>Total kg</th><th>Batches</th></tr></thead>
+      <tbody>${tableRows}</tbody>
+      <tfoot><tr><td><b>TOTAL</b></td><td><b>${fmtNum(grandBigs,3)}</b></td><td><b>${fmtNum(grandPops,3)}</b></td><td><b>${fmtNum(grandTotal,3)}</b></td><td><b>${grandBatches}</b></td></tr></tfoot>
+    </table></div>
+  </div>`;
+}
 function getExportPicksFor(month){
   return (state.exportPicks || []).filter(p=> p.month === month);
 }
@@ -3719,6 +3751,8 @@ function renderFarmView(){
     <div class="card-list" id="farmCardList">
       ${parts.cards}
     </div>
+
+    <div id="farmStrainSummaryWrap">${renderFarmStrainSummaryPanel(currentFarm)}</div>
   `;
 
   bindFarmSubtabs(main);
