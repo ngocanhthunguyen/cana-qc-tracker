@@ -5,8 +5,7 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders' | 'shipments'
-let dashSubTab = 'overview'; // 'overview' | 'exports'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders' | 'shipments' | 'export'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
 let trimMonth = '';
@@ -1086,6 +1085,7 @@ function enforceStaffViewAccess(){
   if(currentView === 'canaStock') currentView = 'dashboard';
   if(currentView === 'companyOrders') currentView = 'dashboard';
   if(currentView === 'shipments') currentView = 'dashboard';
+  if(currentView === 'export') currentView = 'dashboard';
   if(currentFarmTab === 'documents') currentFarmTab = 'qc';
 }
 function bindFarmSubtabs(root){
@@ -2798,7 +2798,7 @@ function appendExportLog(entry){
   state.exportLog.unshift(entry);
   if(state.exportLog.length > 200) state.exportLog.length = 200;
   onDataChanged();
-  if(currentView === 'dashboard' && dashSubTab === 'exports') renderDashboard();
+  if(currentView === 'export') renderExportView();
 }
 function buildExportLogEntry({ month, exportType, company, items, fileName, exportKgTotal }){
   const batchIds = items.map(({rec,farm})=> getBatchId(rec, farm)).sort();
@@ -3009,7 +3009,7 @@ function openManageExportCompaniesModal(){
       </form>
     </div>
   </div>`;
-  const close = ()=>{ modalDirty = false; closeModal(); renderDashboard(); };
+  const close = ()=>{ modalDirty = false; closeModal(); refreshExportView(); };
   root.querySelector('#btnCloseExportCompanies').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   root.querySelectorAll('[data-remove-company]').forEach(btn=>{
@@ -3121,6 +3121,10 @@ function allocatePickFifo(farm, strain, kgToPick){
   }
   return { allocations, shortfall: Math.max(0, Number((remainingG/1000).toFixed(3))) };
 }
+function refreshExportView(){
+  if(currentView === 'export') renderExportView();
+  else if(currentView === 'dashboard') renderDashboard();
+}
 function isValidLotId(code){ return /^[A-Za-z0-9]{4}$/.test(String(code || '').trim()); }
 function isLotIdTaken(code, excludeId){
   const c = String(code || '').trim().toUpperCase();
@@ -3186,7 +3190,7 @@ function openExportPickModal(farm, strain, month, remainingKg){
     modalDirty = false;
     onDataChanged();
     close();
-    renderDashboard();
+    refreshExportView();
     showDocToast('Picked ' + fmtNum(kg,3) + ' kg · Lot ' + lotId + ' ✓' + (shortfall > 0 ? ' (⚠ ' + fmtNum(shortfall,3) + ' kg short of QC stock)' : ''));
   };
 }
@@ -3228,7 +3232,7 @@ function openEditPickLotIdModal(id){
     modalDirty = false;
     onDataChanged();
     closeModal();
-    renderDashboard();
+    refreshExportView();
     showDocToast('Lot ID updated ✓');
   };
 }
@@ -3239,7 +3243,7 @@ function deleteExportPick(id){
   if(!confirm('Delete pick "' + p.lotId + '" (' + fmtNum(p.kg,3) + ' kg ' + p.strain + ')?\nThis frees the kg back to available.')) return;
   state.exportPicks = (state.exportPicks || []).filter(x=> x.id !== id);
   onDataChanged();
-  renderDashboard();
+  refreshExportView();
   showDocToast('Pick deleted ✓');
 }
 function exportPickToLabelShape(p){
@@ -3423,8 +3427,8 @@ function bindExportBuilderEvents(main, month){
   });
   const selAll = main.querySelector('#btnExportSelectAll');
   const clrAll = main.querySelector('#btnExportClearAll');
-  if(selAll) selAll.onclick = ()=>{ setAllExportSelection(month, true); renderDashboard(); };
-  if(clrAll) clrAll.onclick = ()=>{ setAllExportSelection(month, false); renderDashboard(); };
+  if(selAll) selAll.onclick = ()=>{ setAllExportSelection(month, true); refreshExportView(); };
+  if(clrAll) clrAll.onclick = ()=>{ setAllExportSelection(month, false); refreshExportView(); };
   const btnManage = main.querySelector('#btnManageExportCompanies');
   if(btnManage) btnManage.onclick = ()=> openManageExportCompaniesModal();
   const btnTotal = main.querySelector('#btnExportTotal');
@@ -3498,6 +3502,7 @@ function render(){
   else if(currentView==='canaStock') renderCanaStockView();
   else if(currentView==='companyOrders') renderCompanyOrdersView();
   else if(currentView==='shipments') renderShipmentsView();
+  else if(currentView==='export') renderExportView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
   else renderFarmView();
   updateAdminUI();
@@ -3539,6 +3544,7 @@ function renderTabs(){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
     nav.appendChild(navBtn('📥 Shipments', currentView === 'shipments', ()=>{ currentView = 'shipments'; render(); }));
     nav.appendChild(navBtn('🧾 Company Orders', currentView === 'companyOrders', ()=>{ currentView = 'companyOrders'; render(); }));
+    nav.appendChild(navBtn('🚢 Export', currentView === 'export', ()=>{ currentView = 'export'; render(); }));
   }
 
   const divider = document.createElement('span');
@@ -6345,7 +6351,6 @@ function renderCompanyPreviewTable(company, month, items){
 }
 
 function renderDashboard(){
-  if(!isManager() && dashSubTab === 'exports') dashSubTab = 'overview';
   if(!dashMonth) dashMonth = currentMonthLabel();
   const months = allMonths();
   if(!months.includes(dashMonth)) months.push(dashMonth);
@@ -6361,14 +6366,10 @@ function renderDashboard(){
         </select>
         <button class="primary admin-only" id="btnExportMonth">⬇ Quick full export</button>
         <button id="btnViewAllFarms">🌐 View all batches</button>
-      </div>
-      <div class="dash-tabs">
-        <button class="${dashSubTab==='overview'?'active':''}" id="dashTabOverview">Overview / ภาพรวม</button>
-        <button class="${dashSubTab==='exports'?'active':''} admin-only" id="dashTabExports">Export Builder / ส่งออกรายเดือน</button>
+        ${isManager() ? '<button class="ghost" id="btnDashGoExport">🚢 Export Builder</button>' : ''}
       </div>
     </div>
 
-    ${dashSubTab === 'overview' || !isManager() ? `
     ${isStaff() ? '<p class="staff-hint dash-readonly-hint">📊 <b>Dashboard is view-only</b> for staff — charts and totals only. Use farm tabs to enter QC and trimming.<br><span class="bi">ดูภาพรวมได้อย่างเดียว · บันทึกข้อมูลที่แท็บฟาร์ม / Trimming</span></p>' : ''}
     <div class="kpi-row">
       <div class="kpi"><div class="v">${summary.total.batches}</div><div class="l">Total Batches</div></div>
@@ -6393,25 +6394,45 @@ function renderDashboard(){
         <tbody>${summary.perFarm.map(r=>`<tr class="${isStaff() ? '' : 'clickable'}" data-farm="${esc(r.farm)}"><td><b>${esc(r.farm)}</b></td><td>${r.batches}</td><td>${fmtNum(r.totalStart)}</td><td>${fmtNum(r.totalFlower)}</td><td>${fmtPct(r.avgYield)}</td><td style="color:var(--pass)">${r.pass}</td><td style="color:var(--fail)">${r.fail}</td><td style="color:var(--cond)">${r.cond}</td></tr>`).join('')}</tbody>
         <tfoot><tr><td>TOTAL</td><td>${summary.total.batches}</td><td>${fmtNum(summary.total.totalStart)}</td><td>${fmtNum(summary.total.totalFlower)}</td><td>${fmtPct(summary.total.avgYield)}</td><td>${summary.total.pass}</td><td>${summary.total.fail}</td><td>${summary.total.cond}</td></tr></tfoot>
       </table></div>
-    </div>` : renderExportBuilderPanel(dashMonth)}
+    </div>
   `;
   document.getElementById('monthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderDashboard(); };
-  document.getElementById('dashTabOverview').onclick = ()=>{ dashSubTab='overview'; renderDashboard(); };
-  const dashExportsTab = document.getElementById('dashTabExports');
-  if(dashExportsTab) dashExportsTab.onclick = ()=>{
-    if(!requireAdmin('monthly exports', ()=>{ dashSubTab='exports'; renderDashboard(); })) return;
-    dashSubTab='exports';
-    renderDashboard();
-  };
   const btnExportMonth = document.getElementById('btnExportMonth');
   if(btnExportMonth) btnExportMonth.onclick = ()=> exportMonthExcel(dashMonth);
   document.getElementById('btnViewAllFarms').onclick = ()=>{ currentView='allFarms'; farmMonthFilter=dashMonth; render(); };
+  const btnDashGoExport = document.getElementById('btnDashGoExport');
+  if(btnDashGoExport) btnDashGoExport.onclick = ()=>{
+    if(!requireAdmin('monthly exports', ()=>{ currentView = 'export'; render(); })) return;
+    currentView = 'export';
+    render();
+  };
   const btnDashGoStock = document.getElementById('btnDashGoStock');
   if(btnDashGoStock) btnDashGoStock.onclick = ()=>{ currentView = 'canaStock'; render(); };
-  if(dashSubTab === 'exports' && isManager()) bindExportBuilderEvents(main, dashMonth);
   if(!isStaff()){
     main.querySelectorAll('tr.clickable[data-farm]').forEach(row=>{ row.onclick = ()=> goToFarmMonth(row.dataset.farm, dashMonth); });
   }
+}
+function renderExportView(){
+  if(!requireLogin()) return;
+  if(!isManager()){ currentView = 'dashboard'; render(); return; }
+  if(!dashMonth) dashMonth = currentMonthLabel();
+  const months = allMonths();
+  if(!months.includes(dashMonth)) months.push(dashMonth);
+  months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
+  const main = document.getElementById('mainArea');
+  main.innerHTML = `
+    <div class="panel">
+      <div class="dash-filter">
+        <label style="font-size:13px;font-weight:600;">Export month <span class="bi">/ เดือนส่งออก</span>:</label>
+        <select id="exportMonthInput" class="dash-select">
+          ${months.map(m=>`<option value="${esc(m)}" ${m===dashMonth?'selected':''}>${esc(m)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    ${renderExportBuilderPanel(dashMonth)}
+  `;
+  document.getElementById('exportMonthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderExportView(); };
+  bindExportBuilderEvents(main, dashMonth);
 }
 
 async function loadRemoteConfig(){
