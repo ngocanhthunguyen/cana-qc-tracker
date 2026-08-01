@@ -3470,9 +3470,9 @@ function savePackingLabelPrintSettings(tier){
   }
 }
 function getPackingLabelRotate(tier){
-  // Box/pallet always print landscape (via ^FWR) on 4×6 stock — fills the sticker
-  // like the paper sample. Bags stay upright.
-  return tier === 'box' || tier === 'pallet';
+  // Always upright. Landscape/^FWR kept overlapping fields on this Zebra — do not re-enable
+  // until we can test on the printer. Fill the 4×6 instead with large stacked layout.
+  return false;
 }
 function wrapLabelWords(text, maxChars){
   const words = String(text || '').split(/\s+/).filter(Boolean);
@@ -3573,16 +3573,17 @@ function packingLabelBodyHtml(shape){
       <div><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
       <div><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
     </div>` : '';
+  const isShip = shape.kind === 'box' || shape.kind === 'pallet';
   return `
     <div class="pkg-label-header">${esc(shape.header)}</div>
     ${shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : ''}
     <div class="pkg-label-rule"></div>
     ${addrBlock}
     <div class="pkg-label-fields">${shape.fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
-    ${shape.handleCareful ? `<div class="pkg-label-handle">⚠ HANDLE PACKAGE CAREFULLY</div>` : ''}
-    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: shape.kind==='bag' ? 40 : 56, width: shape.kind==='bag' ? 1.6 : 2.2, margin: 1 })}</div>
-    <div class="zebra-label-id">${esc(shape.code)}</div>
+    ${shape.handleCareful ? `<div class="pkg-label-handle">HANDLE PACKAGE CAREFULLY</div>` : ''}
     ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
+    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: isShip ? 70 : 40, width: isShip ? 2.4 : 1.6, margin: 1 })}</div>
+    <div class="zebra-label-id">${esc(shape.code)}</div>
     ${shape.footNote ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
   `;
 }
@@ -3653,106 +3654,122 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Box/pallet ZPL — landscape on 4×6 stock using ^FWR.
- *  Physical media: PW=width(4"), LL=height(6"). With ^FWR, FO x runs along the
- *  6" edge (reading left→right) and FO y along the 4" edge (reading top→bottom),
- *  so the sticker reads landscape and fills the label like the paper sample. */
+/** Box/pallet ZPL — upright 4×6, large stacked layout, no rotation, no ^FB.
+ *  Previous ^FWR attempts overlapped From/To and HANDLE on this printer.
+ *  This version fills top→bottom with clear spacing so nothing piles up. */
 function buildZplShipLabel(shape, sizeIn, dpi){
-  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 52);
-  const pw = inchesToDots(sizeIn.w, dpi); // physical across = 4"
-  const ll = inchesToDots(sizeIn.h, dpi); // physical feed  = 6"
-  // Reading canvas (landscape):
-  const DW = ll; // 6" left→right when reading
-  const DH = pw; // 4" top→bottom when reading
-  const m = Math.max(18, Math.round(Math.min(DW, DH) * 0.03));
-  const innerW = DW - m * 2;
-  const colGap = 16;
-  const halfW = Math.floor((innerW - colGap) / 2);
-  const rightX = m + halfW + colGap;
-
-  let zpl = '^XA^MMT^MNY^FWR^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
+  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
+  const pw = inchesToDots(sizeIn.w, dpi);
+  const ll = inchesToDots(sizeIn.h, dpi);
+  const m = Math.max(24, Math.round(pw * 0.045));
+  const innerW = pw - m * 2;
   let y = m;
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
 
-  // Helpers use FO(x along 6", y along 4") under ^FWR + ^A0N
-  const t = (x, yy, fs, str, width)=>{
-    const fw = Math.round(fs * 0.92);
-    if(width){
-      return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + fw + '^FB' + width + ',1,0,C^FD' + str + '^FS\n';
-    }
+  // Outer border
+  zpl += '^FO' + Math.round(m/2) + ',' + Math.round(m/2) + '^GB' + (pw - m) + ',' + (ll - m) + ',2^FS\n';
+
+  const left = (yy, fs, str)=>{
+    const fw = Math.round(fs * 0.9);
+    return '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + fw + '^FD' + str + '^FS\n';
+  };
+  const center = (yy, fs, str)=>{
+    const fw = Math.round(fs * 0.9);
+    // Manual center without ^FB (more reliable on this printer)
+    const approxChar = fs * 0.55;
+    const tw = Math.min(innerW, Math.round(String(str).length * approxChar));
+    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
     return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + fw + '^FD' + str + '^FS\n';
   };
-  const hline = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',3,3^FS\n';
+  const rule = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',2,2^FS\n';
 
-  // Header — large, centered across 6"
-  const headerFs = Math.max(36, Math.round(DH * 0.10));
-  zpl += t(m, y, headerFs, safe(shape.header, 44), innerW);
-  y += headerFs + 6;
-  if(shape.subheader){
-    const subFs = Math.max(22, Math.round(DH * 0.055));
-    zpl += t(m, y, subFs, safe(shape.subheader, 40), innerW);
-    y += subFs + 6;
-  }
-  zpl += hline(y); y += 10;
-
-  // From / To side by side (matches paper sample)
-  const nameFs = Math.max(26, Math.round(DH * 0.07));
-  const addrFs = Math.max(20, Math.round(DH * 0.05));
-  const maxChars = Math.max(18, Math.floor(halfW / (addrFs * 0.50)));
+  // Build content lines first so we can scale fonts to fill height
+  const lines = [];
+  lines.push({ text: safe(shape.header, 40), role: 'header' });
+  if(shape.subheader) lines.push({ text: safe(shape.subheader, 36), role: 'sub' });
+  lines.push({ text: '—', role: 'rule' });
   if(shape.fromTo){
-    zpl += t(m, y, nameFs, safe('From: ' + shape.fromTo.from, 40));
-    zpl += t(rightX, y, nameFs, safe('To: ' + shape.fromTo.to, 40));
-    y += nameFs + 4;
-    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
-    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
-    const rows = Math.max(fromLines.length, toLines.length, 1);
-    for(let i=0;i<rows;i++){
-      if(fromLines[i]) zpl += t(m, y, addrFs, safe(fromLines[i], 44));
-      if(toLines[i]) zpl += t(rightX, y, addrFs, safe(toLines[i], 44));
-      y += addrFs + 3;
-    }
-    y += 6;
+    lines.push({ text: safe('From: ' + shape.fromTo.from, 42), role: 'name' });
+    wrapLabelWords(shape.fromTo.fromAddress || '', 34).slice(0, 2).forEach(ln=>{
+      lines.push({ text: safe(ln, 42), role: 'addr' });
+    });
+    lines.push({ text: safe('To: ' + shape.fromTo.to, 42), role: 'name' });
+    wrapLabelWords(shape.fromTo.toAddress || '', 34).slice(0, 2).forEach(ln=>{
+      lines.push({ text: safe(ln, 42), role: 'addr' });
+    });
+    lines.push({ text: '—', role: 'rule' });
   }
-  zpl += hline(y); y += 10;
-
-  // Product fields — large, full width
-  const fieldFs = Math.max(30, Math.round(DH * 0.075));
   (shape.fields || []).forEach(f=>{
-    zpl += t(m, y, fieldFs, safe(f.label + ' : ' + f.value, 50));
-    y += fieldFs + 6;
+    lines.push({ text: safe(f.label + ' : ' + f.value, 44), role: 'field' });
   });
-  y += 4;
-  zpl += hline(y); y += 10;
+  lines.push({ text: '—', role: 'rule' });
+  lines.push({ text: 'HANDLE PACKAGE CAREFULLY', role: 'handle' });
+  lines.push({ text: safe(shape.counterText || '', 16), role: 'counter' });
+  lines.push({ text: '__BARCODE__', role: 'barcode' });
+  lines.push({ text: safe(shape.code, 20), role: 'code' });
+  if(shape.footNote) lines.push({ text: safe(shape.footNote, 24), role: 'foot' });
 
-  // Footer band: HANDLE left + counter/barcode right — use remaining height
-  const footTop = y;
-  const footH = Math.max(80, DH - footTop - m);
-  const leftW = Math.round(innerW * 0.52);
-  const rightW = innerW - leftW - colGap;
-  const rx = m + leftW + colGap;
+  const baseFs = {
+    header: Math.round(ll * 0.055),
+    sub: Math.round(ll * 0.032),
+    name: Math.round(ll * 0.042),
+    addr: Math.round(ll * 0.032),
+    field: Math.round(ll * 0.048),
+    handle: Math.round(ll * 0.040),
+    counter: Math.round(ll * 0.055),
+    code: Math.round(ll * 0.036),
+    foot: Math.round(ll * 0.032),
+    barcode: Math.round(ll * 0.14)
+  };
+  // Clamp
+  Object.keys(baseFs).forEach(k=>{
+    if(k === 'barcode') baseFs[k] = Math.max(70, Math.min(140, baseFs[k]));
+    else baseFs[k] = Math.max(18, Math.min(k==='header'||k==='field'||k==='counter' ? 56 : 42, baseFs[k]));
+  });
 
-  zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + footH + ',3^FS\n';
-  const hcFs = Math.max(28, Math.round(DH * 0.07));
-  zpl += t(m, footTop + Math.round(footH / 2 - hcFs / 2), hcFs, safe('HANDLE PACKAGE CAREFULLY', 28), leftW);
+  let contentH = 0;
+  lines.forEach(ln=>{
+    if(ln.role === 'rule') contentH += 14;
+    else if(ln.role === 'barcode') contentH += baseFs.barcode + 12;
+    else contentH += baseFs[ln.role] + 8;
+  });
+  const usable = ll - m * 2;
+  const scale = contentH > 0 ? Math.min(1.35, Math.max(0.9, usable / contentH)) : 1;
+  Object.keys(baseFs).forEach(k=>{ baseFs[k] = Math.round(baseFs[k] * scale); });
 
-  const cFs = Math.max(40, Math.round(DH * 0.11));
-  zpl += t(rx, footTop + 4, cFs, safe(shape.counterText || '', 16), rightW);
-  let by = footTop + cFs + 8;
-  const id = safe(shape.code, 20);
-  let moduleW = dpi >= 300 ? 3 : 2;
-  let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 8){ moduleW = Math.max(1, moduleW - 1); barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(55, Math.min(Math.round(footH * 0.42), DH - by - m - 55));
-  const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
-  // ^BCN under ^FWR rotates with the label
-  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  by += bh + 6;
-  const codeFs = Math.max(22, Math.round(DH * 0.055));
-  zpl += t(rx, by, codeFs, id, rightW);
-  by += codeFs + 4;
-  if(shape.footNote){
-    const fnFs = Math.max(20, Math.round(DH * 0.05));
-    zpl += t(rx, by, fnFs, safe(shape.footNote, 24), rightW);
-  }
+  lines.forEach(ln=>{
+    if(ln.role === 'rule'){
+      zpl += rule(y);
+      y += Math.round(14 * scale);
+      return;
+    }
+    if(ln.role === 'barcode'){
+      const id = safe(shape.code, 20);
+      let moduleW = dpi >= 300 ? 3 : 2;
+      let barW = estimateCode128Dots(id.length, moduleW);
+      if(barW > innerW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+      if(barW > innerW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+      const bh = baseFs.barcode;
+      const bx = m + Math.max(0, Math.round((innerW - barW) / 2));
+      zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+      y += bh + Math.round(12 * scale);
+      return;
+    }
+    const fs = baseFs[ln.role] || 24;
+    if(ln.role === 'handle'){
+      const boxH = fs + 20;
+      zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
+      zpl += center(y + 8, fs, ln.text);
+      y += boxH + Math.round(10 * scale);
+      return;
+    }
+    if(ln.role === 'header' || ln.role === 'counter' || ln.role === 'code' || ln.role === 'foot'){
+      zpl += center(y, fs, ln.text);
+    } else {
+      zpl += left(y, fs, ln.text);
+    }
+    y += fs + Math.round(8 * scale);
+  });
 
   zpl += '^PQ1^XZ\n';
   return zpl;
@@ -3808,7 +3825,7 @@ function openPrintPackingLabelsModal(planId){
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
-        <p class="sub" style="margin:4px 0 0;">Box/pallet print landscape on your 4×6 stock (rotated with ^FWR) so text fills the sticker like the paper sample. Bags stay smaller and upright.</p>
+        <p class="sub" style="margin:4px 0 0;">Box/pallet = full 4×6 upright label (large stacked From/To + fields + barcode). Landscape rotation was disabled — it overlapped text on this printer.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Deliver to — name</label>
