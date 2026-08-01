@@ -3470,10 +3470,9 @@ function savePackingLabelPrintSettings(tier){
   }
 }
 function getPackingLabelRotate(tier){
-  if(tier !== 'box' && tier !== 'pallet') return false;
-  const v = localStorage.getItem('cana_pkglabel_rotate_' + tier);
-  if(v === null || v === undefined || v === '') return true;
-  return v === '1';
+  // Keep API for preview/settings, but always upright for now — the 90° mapping
+  // scrambled the last box print (cut-off letters + wrong layout).
+  return false;
 }
 function wrapLabelWords(text, maxChars){
   const words = String(text || '').split(/\s+/).filter(Boolean);
@@ -3654,127 +3653,101 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Shipping-style box/pallet ZPL. sizeIn is physical stock (usually 4×6).
- *  When rotate=true, content is composed as landscape (6×4) then placed with ^A0R/^BCR. */
+/** Shipping-style box/pallet ZPL — upright on 4×6 stock, large clear ^A0 font.
+ *  Layout matches the paper sample: From/To + address, product fields, HANDLE banner,
+ *  counter + barcode. (90° rotate is disabled by default — it scrambled the last print.) */
 function buildZplShipLabel(shape, sizeIn, dpi){
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
-  const rotate = !!shape.rotate;
-  const physW = inchesToDots(sizeIn.w, dpi);
-  const physH = inchesToDots(sizeIn.h, dpi);
-  const DW = rotate ? physH : physW;
-  const DH = rotate ? physW : physH;
-  const margin = Math.max(16, Math.round(Math.min(DW, DH) * 0.03));
-  const innerW = DW - margin * 2;
-  const colGap = 14;
-  const leftW = Math.round(innerW * 0.58);
-  const rightW = innerW - leftW - colGap;
-  const rightX = margin + leftW + colGap;
+  const pw = inchesToDots(sizeIn.w, dpi); // usually 4"
+  const ll = inchesToDots(sizeIn.h, dpi); // usually 6"
+  const m = Math.max(20, Math.round(pw * 0.04));
+  const innerW = pw - m * 2;
+  let y = m;
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
 
-  const map = (dx, dy, alongX)=>{
-    if(!rotate) return { x: dx, y: dy };
-    const fl = alongX || 0;
-    return { x: dy, y: Math.max(0, DW - dx - fl) };
-  };
-  const text = (dx, dy, fs, str, opts)=>{
-    opts = opts || {};
-    const maxW = opts.maxW || innerW;
-    const align = opts.align || 'L';
-    if(rotate){
-      const p = map(dx, dy, fs);
-      return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + fs + '^FD' + str + '^FS\n';
-    }
-    if(align === 'C'){
-      return '^FO' + dx + ',' + dy + '^A0N,' + fs + ',' + fs + '^FB' + maxW + ',1,0,C^FD' + str + '^FS\n';
-    }
-    return '^FO' + dx + ',' + dy + '^A0N,' + fs + ',' + fs + '^FD' + str + '^FS\n';
-  };
-  const hline = (dx, dy, w, thick)=>{
-    if(rotate){
-      const p = map(dx, dy, w);
-      return '^FO' + p.x + ',' + p.y + '^GB' + thick + ',' + w + ',' + thick + '^FS\n';
-    }
-    return '^FO' + dx + ',' + dy + '^GB' + w + ',' + thick + ',' + thick + '^FS\n';
-  };
-  const rect = (dx, dy, w, h, thick)=>{
-    if(rotate){
-      const p = map(dx, dy, w);
-      return '^FO' + p.x + ',' + p.y + '^GB' + h + ',' + w + ',' + thick + '^FS\n';
-    }
-    return '^FO' + dx + ',' + dy + '^GB' + w + ',' + h + ',' + thick + '^FS\n';
-  };
+  const line = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',3,3^FS\n';
+  const center = (yy, fs, str)=>
+    '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.9) + '^FB' + innerW + ',1,0,C^FD' + str + '^FS\n';
+  const left = (yy, fs, str)=>
+    '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.9) + '^FD' + str + '^FS\n';
 
-  let zpl = '^XA^MMT^MNY^PW' + physW + '^LL' + physH + '^LH0,0^LT0\n';
-  let y = margin;
-
-  const headerFs = Math.max(32, Math.round(DH * 0.08));
-  zpl += text(margin, y, headerFs, safe(shape.header, 40), { maxW: innerW, align: 'C' });
-  y += headerFs + 8;
+  // --- Header ---
+  const headerFs = Math.max(28, Math.round(ll * 0.055));
+  zpl += center(y, headerFs, safe(shape.header, 42));
+  y += headerFs + 6;
   if(shape.subheader){
-    const subFs = Math.max(20, Math.round(DH * 0.05));
-    zpl += text(margin, y, subFs, safe(shape.subheader, 36), { maxW: innerW, align: 'C' });
+    const subFs = Math.max(18, Math.round(ll * 0.035));
+    zpl += center(y, subFs, safe(shape.subheader, 36));
     y += subFs + 8;
   }
-  zpl += hline(margin, y, innerW, 3);
-  y += 14;
+  zpl += line(y); y += 14;
 
-  const titleFs = Math.max(24, Math.round(DH * 0.055));
-  const addrFs = Math.max(18, Math.round(DH * 0.042));
-  const maxAddrChars = Math.max(20, Math.floor(leftW / (addrFs * 0.52)));
+  // --- From / To (stacked — readable on 4" width) ---
+  const nameFs = Math.max(24, Math.round(ll * 0.042));
+  const addrFs = Math.max(18, Math.round(ll * 0.032));
+  const maxChars = Math.max(22, Math.floor(innerW / (addrFs * 0.52)));
   if(shape.fromTo){
-    zpl += text(margin, y, titleFs, safe('From: ' + shape.fromTo.from, 42));
-    zpl += text(rightX, y, titleFs, safe('To: ' + shape.fromTo.to, 42));
-    y += titleFs + 6;
-    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxAddrChars).slice(0, 3);
-    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxAddrChars).slice(0, 3);
-    const rows = Math.max(fromLines.length, toLines.length, 1);
-    for(let i=0;i<rows;i++){
-      if(fromLines[i]) zpl += text(margin, y, addrFs, safe(fromLines[i], 44));
-      if(toLines[i]) zpl += text(rightX, y, addrFs, safe(toLines[i], 44));
-      y += addrFs + 4;
-    }
+    zpl += left(y, nameFs, safe('From: ' + shape.fromTo.from, 44));
+    y += nameFs + 4;
+    wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 3).forEach(ln=>{
+      zpl += left(y, addrFs, safe(ln, 48));
+      y += addrFs + 3;
+    });
     y += 8;
+    zpl += left(y, nameFs, safe('To: ' + shape.fromTo.to, 44));
+    y += nameFs + 4;
+    wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 3).forEach(ln=>{
+      zpl += left(y, addrFs, safe(ln, 48));
+      y += addrFs + 3;
+    });
+    y += 10;
   }
-  zpl += hline(margin, y, innerW, 3);
-  y += 14;
+  zpl += line(y); y += 14;
 
-  const fieldFs = Math.max(28, Math.round(DH * 0.06));
+  // --- Product fields ---
+  const fieldFs = Math.max(26, Math.round(ll * 0.045));
   (shape.fields || []).forEach(f=>{
-    zpl += text(margin, y, fieldFs, safe(f.label + ' : ' + f.value, 48));
-    y += fieldFs + 10;
+    zpl += left(y, fieldFs, safe(f.label + ' : ' + f.value, 48));
+    y += fieldFs + 8;
   });
-  y += 8;
-  zpl += hline(margin, y, innerW, 3);
-  y += 14;
+  y += 6;
+  zpl += line(y); y += 14;
 
+  // --- Footer: HANDLE (left) + counter/barcode (right) ---
+  const colGap = 12;
+  const leftW = Math.round(innerW * 0.55);
+  const rightW = innerW - leftW - colGap;
+  const rightX = m + leftW + colGap;
   const footTop = y;
-  const hcFs = Math.max(24, Math.round(DH * 0.055));
-  const hcBoxH = hcFs + 24;
-  zpl += rect(margin, footTop, leftW, hcBoxH, 3);
-  zpl += text(margin + 10, footTop + 12, hcFs, safe('HANDLE PACKAGE CAREFULLY', 32));
+  const remain = ll - footTop - m;
 
-  const cFs = Math.max(32, Math.round(DH * 0.07));
-  zpl += text(rightX, footTop, cFs, safe(shape.counterText || '', 16), { maxW: rightW, align: 'C' });
+  const hcFs = Math.max(20, Math.round(ll * 0.038));
+  const hcH = Math.max(hcFs * 3 + 24, Math.round(remain * 0.35));
+  zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + hcH + ',3^FS\n';
+  const hcLines = ['HANDLE', 'PACKAGE', 'CAREFULLY'];
+  let hy = footTop + Math.round((hcH - hcLines.length * (hcFs + 4)) / 2);
+  hcLines.forEach(ln=>{
+    zpl += '^FO' + m + ',' + hy + '^A0N,' + hcFs + ',' + Math.round(hcFs * 0.9) + '^FB' + leftW + ',1,0,C^FD' + ln + '^FS\n';
+    hy += hcFs + 4;
+  });
+
+  const cFs = Math.max(36, Math.round(ll * 0.06));
+  zpl += '^FO' + rightX + ',' + footTop + '^A0N,' + cFs + ',' + Math.round(cFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + safe(shape.counterText || '', 16) + '^FS\n';
   let by = footTop + cFs + 10;
   const id = safe(shape.code, 20);
-  let moduleW = 3;
+  let moduleW = 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > rightW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(60, Math.round(DH * 0.14));
-  if(rotate){
-    const p = map(rightX + Math.max(0, Math.round((rightW - barW) / 2)), by, bh);
-    zpl += '^FO' + p.x + ',' + p.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  } else {
-    const bx = rightX + Math.max(0, Math.round((rightW - barW) / 2));
-    zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  }
+  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const bh = Math.max(50, Math.min(Math.round(remain * 0.28), ll - by - m - 70));
+  const bx = rightX + Math.max(0, Math.round((rightW - barW) / 2));
+  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   by += bh + 8;
-  const codeFs = Math.max(22, Math.round(DH * 0.05));
-  zpl += text(rightX, by, codeFs, id, { maxW: rightW, align: 'C' });
+  const codeFs = Math.max(20, Math.round(ll * 0.035));
+  zpl += '^FO' + rightX + ',' + by + '^A0N,' + codeFs + ',' + Math.round(codeFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + id + '^FS\n';
   by += codeFs + 6;
   if(shape.footNote){
-    const fnFs = Math.max(20, Math.round(DH * 0.045));
-    zpl += text(rightX, by, fnFs, safe(shape.footNote, 24), { maxW: rightW, align: 'C' });
+    const fnFs = Math.max(18, Math.round(ll * 0.032));
+    zpl += '^FO' + rightX + ',' + by + '^A0N,' + fnFs + ',' + Math.round(fnFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + safe(shape.footNote, 24) + '^FS\n';
   }
 
   zpl += '^PQ1^XZ\n';
@@ -3831,7 +3804,7 @@ function openPrintPackingLabelsModal(planId){
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
-        <p class="sub" style="margin:4px 0 0;">Box/pallet default is 4×6 stock, large fonts, rotated landscape (like your paper sample). Bags stay smaller and upright.</p>
+        <p class="sub" style="margin:4px 0 0;">Box/pallet = upright 4×6 shipping label with large clear font (like your paper sample). Bags stay smaller.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Deliver to — name</label>
@@ -3853,7 +3826,6 @@ function openPrintPackingLabelsModal(planId){
           <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}"></div>
         <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">pallet</span></label>
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}"></div>
-        <div class="field full"><label class="chk"><input type="checkbox" id="packingRotateChk" ${getPackingLabelRotate(tier)?'checked':''}> Rotate box/pallet label 90° (landscape on 4×6 stock)</label></div>
       </div>
       <div class="row-actions">
         <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.pallets.length}</span>)</button>
@@ -3897,15 +3869,6 @@ function openPrintPackingLabelsModal(planId){
     });
   };
   bindTestPrintButtons();
-  const rotChk = root.querySelector('#packingRotateChk');
-  if(rotChk){
-    rotChk.disabled = tier === 'bag';
-    rotChk.onchange = ()=>{
-      if(tier === 'bag') return;
-      localStorage.setItem('cana_pkglabel_rotate_' + tier, rotChk.checked ? '1' : '0');
-      refreshSheet();
-    };
-  }
   ['printShipToName','printShipToAddress','printShipFromAddress','printGrade'].forEach(id=>{
     const el = root.querySelector('#' + id);
     if(el) el.onchange = ()=>{ applyShipFieldsToPlan(); refreshSheet(); };
@@ -3920,10 +3883,6 @@ function openPrintPackingLabelsModal(planId){
       document.getElementById('labelHIn').value = labelSize.h;
       document.getElementById('packingSizeTierLabel').textContent = tier;
       document.getElementById('packingSizeTierLabel2').textContent = tier;
-      if(rotChk){
-        rotChk.disabled = tier === 'bag';
-        rotChk.checked = tier === 'bag' ? false : getPackingLabelRotate(tier);
-      }
       document.getElementById('packingTierCount').textContent = currentUnits().length;
       setStatus('');
       refreshSheet();
