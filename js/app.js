@@ -3709,40 +3709,61 @@ function buildZplShipLabel(shape, sizeIn, dpi, opts){
   if(landscape) return buildZplShipLabelLandscape(shape, sizeIn, dpi, opts);
   return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
 }
-/** Landscape reading on the same roll: ^PW=4" ^LL=6" + ^FWR. FO x→ along 6", y↓ along 4". */
+/** Landscape on the same 4×6 roll without ^FWR (many printers ignore it).
+ *  Layout is designed as 6"×4" reading space, then each field is mapped 90° CW
+ *  into physical FO (x across 4", y down 6") using ^A0R / ^BCR / swapped ^GB. */
 function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   opts = opts || {};
   const layout = opts.layout || getPackingLabelLayout();
-  const logoSize = opts.logoSize || (layout === 'minimal' ? 'small' : 'med');
-  const logoRecall = !!opts.logoRecall;
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
-  const pw = inchesToDots(sizeIn.w, dpi); // physical 4" across head
-  const ll = inchesToDots(sizeIn.h, dpi); // physical 6" feed
-  const DW = ll; // reading width 6"
-  const DH = pw; // reading height 4"
+  const pw = inchesToDots(sizeIn.w, dpi); // physical 4"
+  const ll = inchesToDots(sizeIn.h, dpi); // physical 6"
+  const DW = ll; // reading width when held landscape
+  const DH = pw; // reading height when held landscape
   const m = Math.max(18, Math.round(Math.min(DW, DH) * 0.035));
   const innerW = DW - m * 2;
   const halfW = Math.floor((innerW - 10) / 2);
   const rightX = m + halfW + 10;
-  let y = m;
-  let zpl = '^XA^MMT^MNY^FWR^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-  zpl += '^FO' + Math.round(m * 0.4) + ',' + Math.round(m * 0.4) + '^GB' + (DW - Math.round(m * 0.8)) + ',' + (DH - Math.round(m * 0.8)) + ',3^FS\n';
 
-  const t = (x, yy, fs, str)=> '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) + '^FD' + str + '^FS\n';
-  const tc = (yy, fs, str)=>{
-    const tw = Math.min(innerW, Math.round(String(str).length * fs * 0.52));
-    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
-    return t(x, yy, fs, str);
+  // reading (rx,ry,rw,rh) → physical FO + box size after 90° CW
+  const map = (rx, ry, rw, rh)=>({
+    x: Math.max(0, pw - ry - rh),
+    y: Math.max(0, rx),
+    w: rh,
+    h: rw
+  });
+
+  let zpl = '^XA^MMT^MNY^FWN^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
+
+  // Outer border
+  const border = map(Math.round(m * 0.4), Math.round(m * 0.4), DW - Math.round(m * 0.8), DH - Math.round(m * 0.8));
+  zpl += '^FO' + border.x + ',' + border.y + '^GB' + border.w + ',' + border.h + ',3^FS\n';
+
+  // Text: ^A0R so glyphs read along feed (physical +y) = reading left→right
+  const t = (rx, ry, fs, str)=>{
+    const p = map(rx, ry, Math.round(String(str).length * fs * 0.55), fs);
+    return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + Math.round(fs * 0.85) + '^FD' + str + '^FS\n';
+  };
+  const box = (rx, ry, rw, rh, thick)=>{
+    const p = map(rx, ry, rw, rh);
+    return '^FO' + p.x + ',' + p.y + '^GB' + p.w + ',' + p.h + ',' + (thick || 2) + '^FS\n';
   };
 
-  // Graphics don't always rotate with ^FWR — use upright logo; landMed is pre-rotated backup.
-  const logoKey = logoSize;
-  const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.small) : null;
+  let y = m;
+
+  // Pre-rotated logo (landMed) placed at reading top-center — graphic stays axis-aligned in physical space
+  const logoKey = layout === 'minimal' ? 'landSmall' : 'landMed';
+  const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined')
+    ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.landMed || CANA_LOGO_ZPL.small)
+    : null;
   if(logoUse && typeof buildCanaLogoGfa === 'function'){
-    const lx = m + Math.max(0, Math.round((innerW - logoUse.widthDots) / 2));
-    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoKey);
-    else zpl += buildCanaLogoGfa(lx, y, logoKey);
-    y += Math.min(logoUse.heightDots, Math.round(DH * 0.22)) + 6;
+    const logoH = Math.min(logoUse.heightDots, Math.round(DH * 0.2));
+    const logoW = logoUse.widthDots;
+    const lx = m + Math.max(0, Math.round((innerW - logoW) / 2));
+    const p = map(lx, y, logoW, logoH);
+    // land* graphics are already rotated for landscape reading; place with normal GFA at mapped FO
+    zpl += buildCanaLogoGfa(p.x, p.y, logoKey);
+    y += logoH + 6;
   }
 
   const fields = layout === 'minimal'
@@ -3762,8 +3783,8 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
     const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
     const rows = Math.max(fromLines.length, toLines.length, 1);
     const boxH = 8 + nameFs + 4 + rows * (addrFs + 3) + 8;
-    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
-    zpl += '^FO' + (m + halfW + 4) + ',' + y + '^GB' + 2 + ',' + boxH + ',2^FS\n';
+    zpl += box(m, y, innerW, boxH, 2);
+    zpl += box(m + halfW + 4, y, 2, boxH, 2);
     let ty = y + 6;
     zpl += t(m + 6, ty, nameFs, safe('From: ' + shape.fromTo.from, 30));
     zpl += t(rightX, ty, nameFs, safe('To: ' + shape.fromTo.to, 30));
@@ -3796,7 +3817,7 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   const rx = m + leftW + 10;
 
   if(layout !== 'minimal' && shape.handleCareful){
-    zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + footH + ',2^FS\n';
+    zpl += box(m, footTop, leftW, footH, 2);
     const tw = Math.min(leftW - 8, Math.round(22 * handleFs * 0.52));
     const hx = m + Math.max(4, Math.round((leftW - tw) / 2));
     const hy = footTop + Math.max(6, Math.round(footH / 2 - handleFs / 2));
@@ -3819,7 +3840,9 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   const footReserve = codeFs + 8 + ((shape.footNote && layout !== 'minimal') ? 22 : 0);
   const bh = Math.max(50, Math.min(Math.round(DH * 0.28), DH - m - by - footReserve));
   const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
-  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  // ^BCR: barcode runs along feed so it reads L→R when label is held landscape
+  const bar = map(bx, by, barW, bh);
+  zpl += '^FO' + bar.x + ',' + bar.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
   by += bh + 5;
   const tw = Math.min(rightW, Math.round(id.length * codeFs * 0.52));
   const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
@@ -4021,7 +4044,7 @@ function openPrintPackingLabelsModal(planId){
         <div class="field"><label>Print orientation</label>
           <select id="packingOrientSelect">
             <option value="portrait" ${currentOrient==='portrait'?'selected':''}>Portrait — with the roll (working)</option>
-            <option value="landscape" ${currentOrient==='landscape'?'selected':''}>Landscape — rotate print (^FWR)</option>
+            <option value="landscape" ${currentOrient==='landscape'?'selected':''}>Landscape — rotate fields 90°</option>
           </select>
           <p class="sub" id="packingLayoutHint" style="margin:4px 0 0;font-size:11px;"></p>
         </div>
@@ -4094,7 +4117,7 @@ function openPrintPackingLabelsModal(planId){
     const l = PACKING_LABEL_LAYOUTS.find(x=> x.id === getPackingLabelLayout());
     const land = getPackingLabelOrient() === 'landscape';
     const orientHint = land
-      ? 'Same 4×6 roll; print rotated so sticker reads 6" wide × 4" tall'
+      ? 'Same 4×6 roll; fields rotated 90° (^A0R) so sticker reads 6" × 4"'
       : 'Prints upright with the roll: 4" wide × 6" long';
     if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + orientHint;
   };
