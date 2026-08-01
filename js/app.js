@@ -3454,8 +3454,13 @@ function buildPackingLabelsPreviewHtml(plan, type){
       <div class="zebra-label-id">${esc(shape.code)}</div>
       <div class="zebra-label-title">${esc(shape.title)}</div>
       <div class="zebra-label-manifest">${shape.lines.map(l=> `<div>${esc(l)}</div>`).join('')}</div>
+      <button type="button" class="small ghost test-print-one-btn" data-test-print-code="${esc(shape.code)}">🖨 Test print just this one</button>
     </div>`;
   }).join('');
+}
+function buildZplForOneUnit(type, unit){
+  const shape = packingUnitLabelShape(type, unit);
+  return buildZplLabelMulti(shape.code, shape.title, shape.lines);
 }
 function buildZplLabelMulti(code, title, lines){
   const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 34);
@@ -3576,6 +3581,24 @@ function openPrintPackingLabelsModal(planId){
   </div>`;
   const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
   const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
+  const bindTestPrintButtons = ()=>{
+    document.querySelectorAll('.test-print-one-btn').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const code = btn.dataset.testPrintCode;
+        const unit = currentUnits().find(u=> u.code === code);
+        if(!unit) return;
+        saveLabelPrintSettings();
+        const zpl = buildZplForOneUnit(tier, unit);
+        try{
+          await navigator.clipboard.writeText(zpl);
+          setStatus('Copied 1 label (' + code + ') — run: pbpaste | nc ' + getIp() + ' 9100');
+        }catch(err){
+          setStatus('Copy failed for ' + code + ' — try Download ZPL for the full batch instead.');
+        }
+      };
+    });
+  };
+  bindTestPrintButtons();
   root.querySelectorAll('#packingTierToggle button').forEach(btn=>{
     btn.onclick = ()=>{
       tier = btn.dataset.tier;
@@ -3583,6 +3606,7 @@ function openPrintPackingLabelsModal(planId){
       document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
       document.getElementById('packingTierCount').textContent = currentUnits().length;
       setStatus('');
+      bindTestPrintButtons();
     };
   });
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
