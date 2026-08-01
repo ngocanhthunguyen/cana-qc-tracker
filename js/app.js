@@ -3951,36 +3951,44 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
     zpl += block(y, fieldFs, safe(f.label + ' : ' + f.value, 52), 1);
     y += fieldFs + 8;
   });
+  y += 6;
 
+  // Bigger HANDLE band
   if(layout !== 'minimal' && shape.handleCareful){
-    const hcFs = Math.max(20, Math.round(ll * 0.03));
-    const boxH = hcFs + 22;
-    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
-    zpl += center(y + 10, hcFs, 'HANDLE PACKAGE CAREFULLY');
-    y += boxH + 12;
+    const hcFs = Math.max(28, Math.round(ll * 0.042));
+    const boxH = hcFs + 28;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',3^FS\n';
+    zpl += center(y + Math.round((boxH - hcFs) / 2), hcFs, 'HANDLE PACKAGE CAREFULLY');
+    y += boxH + 14;
   }
 
   if(shape.counterText){
-    const cFs = Math.max(34, Math.round(ll * 0.045));
+    const cFs = Math.max(38, Math.round(ll * 0.05));
     zpl += center(y, cFs, safe(shape.counterText, 16));
-    y += cFs + 12;
+    y += cFs + 10;
   }
 
+  // Barcode fills remaining height so the bottom isn't empty
   const id = safe(shape.code, 20);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
   if(barW > innerW - 8){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
   if(barW > innerW - 8){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const codeFs = Math.max(20, Math.round(ll * 0.028));
-  const footReserve = codeFs + 16 + ((shape.footNote && layout !== 'minimal') ? 28 : 0);
-  const bh = Math.max(90, Math.min(Math.round(ll * 0.18), ll - y - m - footReserve));
+  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= innerW - 8){
+    moduleW += 1;
+    barW = estimateCode128Dots(id.length, moduleW);
+  }
+  const codeFs = Math.max(22, Math.round(ll * 0.032));
+  const footNoteFs = Math.max(18, Math.round(ll * 0.026));
+  const footReserve = codeFs + 12 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 8 : 0) + m;
+  const bh = Math.max(120, ll - y - footReserve);
   const bx = m + Math.max(0, Math.round((innerW - barW) / 2));
   zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   y += bh + 10;
   zpl += center(y, codeFs, id);
   y += codeFs + 8;
   if(shape.footNote && layout !== 'minimal'){
-    zpl += center(y, Math.max(16, Math.round(ll * 0.024)), safe(shape.footNote, 28));
+    zpl += center(y, footNoteFs, safe(shape.footNote, 28));
   }
   zpl += '^PQ1^XZ\n';
   return zpl;
