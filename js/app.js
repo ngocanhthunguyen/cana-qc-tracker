@@ -3595,26 +3595,43 @@ function packingUnitLabelShape(type, unit, plan){
 function packingLabelBodyHtml(shape, layout){
   layout = layout || getPackingLabelLayout();
   const isShip = shape.kind === 'box' || shape.kind === 'pallet';
-  const logoHtml = isShip ? `<div class="pkg-label-logo"><img src="${typeof CANA_LOGO_IMG!=='undefined'?CANA_LOGO_IMG:'assets/cana-logo.png'}" alt="Cana"></div>` : '';
-  const landPreview = getPackingLabelOrient() === 'landscape' && (shape.kind === 'box' || shape.kind === 'pallet');
+  // No logo on box/pallet stickers — brand is already on the carton.
+  const landPreview = getPackingLabelOrient() === 'landscape' && isShip;
   const addrBlock = shape.fromTo ? (
     landPreview
       ? `<div class="pkg-label-fromto-grid shipping">
-          <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
-          <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><span class="pkg-fromto-kicker">From</span><div class="pkg-fromto-name">${esc(shape.fromTo.from)}</div>${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><span class="pkg-fromto-kicker">To</span><div class="pkg-fromto-name">${esc(shape.fromTo.to)}</div>${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
         </div>`
       : `<div class="pkg-label-fromto-grid pkg-label-fromto-stacked">
-          <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
-          <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><span class="pkg-fromto-kicker">From</span><div class="pkg-fromto-name">${esc(shape.fromTo.from)}</div>${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><span class="pkg-fromto-kicker">To</span><div class="pkg-fromto-name">${esc(shape.fromTo.to)}</div>${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
         </div>`
   ) : '';
   const fields = (layout === 'minimal'
     ? shape.fields.filter(f=> ['Strain','Lot ID','Net Weight'].includes(f.label) || /kg|Kg/i.test(f.value))
     : shape.fields);
+  if(isShip && landPreview){
+    return `
+      ${layout === 'minimal' ? '' : addrBlock}
+      <div class="pkg-label-body-land">
+        <div class="pkg-label-body-left">
+          <div class="pkg-label-fields">${fields.map(f=> `<div><b>${esc(f.label)}</b><span>${esc(f.value)}</span></div>`).join('')}</div>
+          ${shape.handleCareful && layout !== 'minimal' ? `<div class="pkg-label-handle">HANDLE PACKAGE CAREFULLY</div>` : ''}
+        </div>
+        <div class="pkg-label-body-right">
+          ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
+          <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 90, width: 2.6, margin: 1 })}</div>
+          <div class="zebra-label-id">${esc(shape.code)}</div>
+          ${shape.footNote && layout !== 'minimal' ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
+        </div>
+      </div>
+    `;
+  }
   return `
-    ${logoHtml}
+    ${!isShip && shape.header ? `<div class="pkg-label-header">${esc(shape.header)}</div>` : ''}
     ${layout === 'minimal' ? '' : (shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : '')}
-    ${layout === 'minimal' ? '' : '<div class="pkg-label-rule"></div>'}
+    ${layout === 'minimal' || isShip ? '' : '<div class="pkg-label-rule"></div>'}
     ${layout === 'minimal' ? '' : addrBlock}
     <div class="pkg-label-fields">${fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
     ${shape.handleCareful && layout !== 'minimal' ? `<div class="pkg-label-handle">HANDLE PACKAGE CAREFULLY</div>` : ''}
@@ -3648,9 +3665,7 @@ function buildZplForOneUnit(type, unit, plan){
   const land = getPackingLabelOrient() === 'landscape';
   return buildZplShipLabel(shape, getPackingLabelSizeIn(type), getZebraDpi(), {
     layout,
-    landscape: land,
-    logoSize: layout === 'minimal' ? 'small' : 'med',
-    logoRecall: false
+    landscape: land
   });
 }
 /** Bag: compact upright. Box/pallet: large shipping layout; when rotate=true, drawn as
@@ -3710,25 +3725,23 @@ function buildZplShipLabel(shape, sizeIn, dpi, opts){
   return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
 }
 /** Landscape on the same 4×6 roll without ^FWR (many printers ignore it).
- *  Layout is designed as 6"×4" reading space, then each field is mapped 90° CW
- *  into physical FO (x across 4", y down 6") using ^A0R / ^BCR / swapped ^GB. */
+ *  No logo (already on carton). Clean shipping form: From|To, fields+HANDLE | barcode.
+ *  Reading canvas 6"×4", mapped 90° CW into physical FO with ^A0R / ^BCR / swapped ^GB. */
 function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   opts = opts || {};
   const layout = opts.layout || getPackingLabelLayout();
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
   const pw = inchesToDots(sizeIn.w, dpi); // physical 4"
   const ll = inchesToDots(sizeIn.h, dpi); // physical 6"
-  const DW = ll; // reading width when held landscape
-  const DH = pw; // reading height when held landscape
-  // Balanced margins — keep a little left pad so text isn't on the die edge
-  const m = Math.max(22, Math.round(Math.min(DW, DH) * 0.04));
+  const DW = ll;
+  const DH = pw;
+  const m = Math.max(24, Math.round(Math.min(DW, DH) * 0.042));
   const innerW = DW - m * 2;
-  const gap = 12;
+  const gap = 14;
   const halfW = Math.floor((innerW - gap) / 2);
   const colL = m;
   const colR = m + halfW + gap;
 
-  // reading (rx,ry,rw,rh) → physical FO + box size after 90° CW
   const map = (rx, ry, rw, rh)=>({
     x: Math.max(0, pw - ry - rh),
     y: Math.max(0, rx),
@@ -3738,14 +3751,13 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
 
   let zpl = '^XA^MMT^MNY^FWN^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
 
-  const borderPad = Math.round(m * 0.35);
+  const borderPad = Math.round(m * 0.4);
   const border = map(borderPad, borderPad, DW - borderPad * 2, DH - borderPad * 2);
   zpl += '^FO' + border.x + ',' + border.y + '^GB' + border.w + ',' + border.h + ',3^FS\n';
 
-  // Text: ^A0R so glyphs read along feed (physical +y) = reading left→right
   const t = (rx, ry, fs, str)=>{
     const p = map(rx, ry, Math.round(String(str).length * fs * 0.52), fs);
-    return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + Math.round(fs * 0.88) + '^FD' + str + '^FS\n';
+    return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + Math.round(fs * 0.9) + '^FD' + str + '^FS\n';
   };
   const tc = (rx0, colW, ry, fs, str)=>{
     const tw = Math.min(colW, Math.round(String(str).length * fs * 0.52));
@@ -3757,122 +3769,100 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   };
 
   let y = m;
-
-  // Compact logo at reading top-center
-  const logoKey = 'landSmall';
-  const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined')
-    ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.landMed || CANA_LOGO_ZPL.small)
-    : null;
-  if(logoUse && typeof buildCanaLogoGfa === 'function'){
-    const logoH = Math.min(logoUse.heightDots, Math.round(DH * 0.14));
-    const logoW = logoUse.widthDots;
-    const lx = m + Math.max(0, Math.round((innerW - logoW) / 2));
-    const p = map(lx, y, logoW, logoH);
-    zpl += buildCanaLogoGfa(p.x, p.y, logoKey);
-    y += logoH + 4;
-  }
-
   const fields = layout === 'minimal'
     ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
     : (shape.fields || []);
 
-  const nameFs = Math.max(22, Math.round(DH * 0.058));
-  const addrFs = Math.max(16, Math.round(DH * 0.042));
-  const fieldFs = Math.max(24, Math.round(DH * (layout === 'minimal' ? 0.072 : 0.06)));
-  const handleFs = Math.max(20, Math.round(DH * 0.05));
-  const counterFs = Math.max(30, Math.round(DH * 0.075));
-  const codeFs = Math.max(18, Math.round(DH * 0.045));
-  const maxChars = Math.max(24, Math.floor(halfW / (addrFs * 0.5)));
+  // Slightly larger type — logo space reclaimed
+  const kickerFs = Math.max(16, Math.round(DH * 0.04));
+  const nameFs = Math.max(24, Math.round(DH * 0.065));
+  const addrFs = Math.max(17, Math.round(DH * 0.045));
+  const fieldLabelFs = Math.max(16, Math.round(DH * 0.04));
+  const fieldFs = Math.max(26, Math.round(DH * (layout === 'minimal' ? 0.078 : 0.068)));
+  const handleFs = Math.max(22, Math.round(DH * 0.055));
+  const counterFs = Math.max(34, Math.round(DH * 0.085));
+  const codeFs = Math.max(20, Math.round(DH * 0.048));
+  const maxChars = Math.max(26, Math.floor(halfW / (addrFs * 0.48)));
 
   if(layout !== 'minimal' && shape.fromTo){
     const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
     const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
     const rows = Math.max(fromLines.length, toLines.length, 1);
-    const boxH = 6 + nameFs + 3 + rows * (addrFs + 2) + 6;
+    const boxH = 8 + kickerFs + 2 + nameFs + 3 + rows * (addrFs + 2) + 8;
     zpl += box(m, y, innerW, boxH, 2);
     zpl += box(colR - Math.round(gap / 2), y, 2, boxH, 2);
-    let ty = y + 5;
-    zpl += t(colL + 5, ty, nameFs, safe('From: ' + shape.fromTo.from, 32));
-    zpl += t(colR + 5, ty, nameFs, safe('To: ' + shape.fromTo.to, 32));
+    let ty = y + 6;
+    zpl += t(colL + 6, ty, kickerFs, 'FROM');
+    zpl += t(colR + 6, ty, kickerFs, 'TO');
+    ty += kickerFs + 2;
+    zpl += t(colL + 6, ty, nameFs, safe(shape.fromTo.from, 34));
+    zpl += t(colR + 6, ty, nameFs, safe(shape.fromTo.to, 34));
     ty += nameFs + 3;
     for(let i = 0; i < rows; i++){
-      if(fromLines[i]) zpl += t(colL + 5, ty, addrFs, safe(fromLines[i], maxChars + 2));
-      if(toLines[i]) zpl += t(colR + 5, ty, addrFs, safe(toLines[i], maxChars + 2));
+      if(fromLines[i]) zpl += t(colL + 6, ty, addrFs, safe(fromLines[i], maxChars + 2));
+      if(toLines[i]) zpl += t(colR + 6, ty, addrFs, safe(toLines[i], maxChars + 2));
       ty += addrFs + 2;
     }
-    y += boxH + 6;
+    y += boxH + 8;
   }
 
-  // Body: left = product fields + HANDLE; right = counter + barcode (fills remaining height)
+  // Full-width rule under header
+  zpl += box(m, y, innerW, 2, 2);
+  y += 10;
+
   const bodyTop = y;
-  const bodyH = Math.max(80, DH - m - bodyTop);
+  const bodyH = Math.max(90, DH - m - bodyTop);
   const leftW = halfW;
   const rightW = halfW;
 
-  // Product fields — always two columns within the left half when 2+ fields
+  // Left: stacked product fields (clear hierarchy) + HANDLE band at bottom
   let fieldsBottom = bodyTop;
   if(fields.length){
-    const useSplit = fields.length >= 2 && layout !== 'minimal';
-    if(useSplit){
-      const mid = Math.ceil(fields.length / 2);
-      const fGap = 8;
-      const fColW = Math.floor((leftW - fGap) / 2);
-      const fL = colL;
-      const fR = colL + fColW + fGap;
-      let yL = bodyTop, yR = bodyTop;
-      fields.slice(0, mid).forEach(f=>{
-        zpl += t(fL, yL, fieldFs, safe(f.label + ' : ' + f.value, 28));
-        yL += fieldFs + 4;
-      });
-      fields.slice(mid).forEach(f=>{
-        zpl += t(fR, yR, fieldFs, safe(f.label + ' : ' + f.value, 28));
-        yR += fieldFs + 4;
-      });
-      fieldsBottom = Math.max(yL, yR) + 4;
-    } else {
-      let yF = bodyTop;
-      fields.forEach(f=>{
-        zpl += t(colL, yF, fieldFs, safe(f.label + ' : ' + f.value, 40));
-        yF += fieldFs + 4;
-      });
-      fieldsBottom = yF + 2;
-    }
+    let yF = bodyTop;
+    fields.forEach(f=>{
+      zpl += t(colL + 2, yF, fieldLabelFs, safe(f.label.toUpperCase(), 20));
+      yF += fieldLabelFs + 1;
+      zpl += t(colL + 2, yF, fieldFs, safe(f.value, 36));
+      yF += fieldFs + 8;
+    });
+    fieldsBottom = yF;
   }
 
   if(layout !== 'minimal' && shape.handleCareful){
-    const handleTop = fieldsBottom;
-    const handleH = Math.max(handleFs + 16, bodyTop + bodyH - handleTop);
+    const handleTop = Math.max(fieldsBottom + 4, bodyTop + Math.round(bodyH * 0.55));
+    const handleH = Math.max(handleFs + 20, bodyTop + bodyH - handleTop);
     zpl += box(colL, handleTop, leftW, handleH, 2);
-    const hy = handleTop + Math.max(6, Math.round((handleH - handleFs) / 2));
+    // Double line for emphasis
+    zpl += box(colL + 3, handleTop + 3, leftW - 6, handleH - 6, 2);
+    const hy = handleTop + Math.max(8, Math.round((handleH - handleFs) / 2));
     zpl += tc(colL, leftW, hy, handleFs, 'HANDLE PACKAGE CAREFULLY');
   }
 
-  // Right column: counter tight above a tall barcode that uses the free width
+  // Right: big counter + wide barcode
   let by = bodyTop;
   if(shape.counterText){
     zpl += tc(colR, rightW, by, counterFs, safe(shape.counterText, 16));
-    by += counterFs + 4;
+    by += counterFs + 6;
   }
 
   const id = safe(shape.code, 20);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 6){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > rightW - 6){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  // Prefer a wider barcode when there is room
-  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= rightW - 6){
+  if(barW > rightW - 4){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= rightW - 4){
     moduleW += 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
-  const footNoteFs = Math.max(15, Math.round(DH * 0.038));
-  const footReserve = codeFs + 6 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 4 : 0);
-  const bh = Math.max(70, Math.min(Math.round(DH * 0.36), bodyTop + bodyH - by - footReserve));
+  const footNoteFs = Math.max(16, Math.round(DH * 0.04));
+  const footReserve = codeFs + 8 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 4 : 0);
+  const bh = Math.max(90, Math.min(Math.round(DH * 0.42), bodyTop + bodyH - by - footReserve));
   const bx = colR + Math.max(0, Math.round((rightW - barW) / 2));
   const bar = map(bx, by, barW, bh);
   zpl += '^FO' + bar.x + ',' + bar.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  by += bh + 4;
+  by += bh + 5;
   zpl += tc(colR, rightW, by, codeFs, id);
-  by += codeFs + 3;
+  by += codeFs + 4;
   if(shape.footNote && layout !== 'minimal'){
     zpl += tc(colR, rightW, by, footNoteFs, safe(shape.footNote, 24));
   }
@@ -3883,8 +3873,6 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
 function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   opts = opts || {};
   const layout = opts.layout || getPackingLabelLayout();
-  const logoSize = opts.logoSize || (layout === 'minimal' ? 'small' : 'med');
-  const logoRecall = !!opts.logoRecall;
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
   const pw = inchesToDots(sizeIn.w, dpi); // 4" across print head
   const ll = inchesToDots(sizeIn.h, dpi); // 6" feed direction
@@ -3904,14 +3892,7 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
     return '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) +
       '^FB' + innerW + ',1,0,C^FD' + str + '^FS\n';
   };
-
-  const logoG = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoSize] || CANA_LOGO_ZPL.small) : null;
-  if(logoG && typeof buildCanaLogoGfa === 'function'){
-    const lx = m + Math.max(0, Math.round((innerW - logoG.widthDots) / 2));
-    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoSize);
-    else zpl += buildCanaLogoGfa(lx, y, logoSize);
-    y += Math.min(logoG.heightDots, Math.round(ll * 0.14)) + 10;
-  }
+  // No logo — brand already printed on the carton.
 
   const fields = layout === 'minimal'
     ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
@@ -3996,15 +3977,9 @@ function buildZplForPackingUnits(type, units, plan){
   }
   const layout = getPackingLabelLayout();
   const land = getPackingLabelOrient() === 'landscape';
-  const logoSize = layout === 'minimal' ? 'small' : 'med';
-  let zpl = '';
-  if(typeof buildCanaLogoDownloadCmd === 'function'){
-    zpl += buildCanaLogoDownloadCmd(logoSize);
-  }
-  zpl += (units || []).map(unit=> buildZplShipLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi, {
-    layout, landscape: land, logoSize, logoRecall: typeof buildCanaLogoRecall === 'function'
+  return (units || []).map(unit=> buildZplShipLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi, {
+    layout, landscape: land
   })).join('');
-  return zpl;
 }
 function downloadPackingZpl(plan, type, units){
   const zpl = buildZplForPackingUnits(type, units, plan);
@@ -4057,7 +4032,7 @@ function openPrintPackingLabelsModal(planId){
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
-        <p class="sub" style="margin:4px 0 0;">Pick a layout below before printing — Cana logo is included on box/pallet labels. Preview updates when you change layout.</p>
+        <p class="sub" style="margin:4px 0 0;">No logo on stickers (already on the carton). Preview updates when you change layout or orientation.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Label layout</label>

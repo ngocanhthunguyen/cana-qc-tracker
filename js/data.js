@@ -245,9 +245,9 @@ const PACKING_COMPANY_NAME = 'Cana Australasia Pty Co., Ltd';
 const PACKING_PRODUCT_TYPE = 'Cured Dried';
 const PACKING_FROM_ADDRESS_DEFAULT = '122/32 Moo 6 Bang Phriang, Bang Bo, Samut Prakan 10560 Thailand';
 const PACKING_LABEL_LAYOUTS = [
-  { id: 'stacked', label: 'Full stacked', hint: 'Logo + From/To + all fields + HANDLE + barcode' },
-  { id: 'shipping', label: 'Shipping form', hint: '4×6 upright: From, To, fields, HANDLE, barcode' },
-  { id: 'minimal', label: 'Minimal', hint: 'Logo + strain/lot/weight + N of Y + big barcode' }
+  { id: 'stacked', label: 'Full stacked', hint: 'From/To + all fields + HANDLE + barcode' },
+  { id: 'shipping', label: 'Shipping form', hint: 'Clean form: FROM|TO, fields, HANDLE, barcode' },
+  { id: 'minimal', label: 'Minimal', hint: 'Strain/lot/weight + N of Y + big barcode' }
 ];
 const PACKING_LABEL_LAYOUT_DEFAULT = 'shipping';
 
