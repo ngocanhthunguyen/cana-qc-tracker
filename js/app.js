@@ -3447,8 +3447,8 @@ function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
   let w = Number(localStorage.getItem('cana_pkglabel_w_' + tier));
   let h = Number(localStorage.getItem('cana_pkglabel_h_' + tier));
-  // Migrate old box default 4×3 → 4×6 shipping stock
-  if(tier === 'box' && w === 4 && h === 3){ w = 4; h = 6; }
+  // Migrate old/wrong box sizes → physical 4×6 stock (landscape is orientation, not swapped inches)
+  if((tier === 'box' || tier === 'pallet') && ((w === 4 && h === 3) || (w === 6 && h === 4))){ w = 4; h = 6; }
   return { w: (w > 0 ? w : d.w), h: (h > 0 ? h : d.h) };
 }
 function savePackingLabelSizeIn(tier, w, h){
@@ -3472,7 +3472,7 @@ function savePackingLabelPrintSettings(tier){
 function getPackingLabelRotate(tier){
   return getPackingLabelOrient() === 'landscape' && (tier === 'box' || tier === 'pallet');
 }
-/** box/pallet default landscape (ngang). Bags stay portrait. */
+/** box/pallet default landscape. Bags stay portrait. */
 function getPackingLabelOrient(){
   const v = localStorage.getItem('cana_pkglabel_orient');
   if(v === 'portrait' || v === 'landscape') return v;
@@ -3971,10 +3971,10 @@ function openPrintPackingLabelsModal(planId){
         <p class="sub" style="margin:4px 0 0;">Pick a layout below before printing — Cana logo is included on box/pallet labels. Preview updates when you change layout.</p>
       </div>
       <div class="form-grid">
-        <div class="field"><label>Orientation / Chiều</label>
+        <div class="field"><label>Orientation</label>
           <select id="packingOrientSelect">
-            <option value="landscape" ${getPackingLabelOrient()==='landscape'?'selected':''}>Ngang (landscape) — recommended</option>
-            <option value="portrait" ${getPackingLabelOrient()==='portrait'?'selected':''}>Dọc (portrait)</option>
+            <option value="landscape" ${getPackingLabelOrient()==='landscape'?'selected':''}>Landscape — recommended</option>
+            <option value="portrait" ${getPackingLabelOrient()==='portrait'?'selected':''}>Portrait</option>
           </select>
         </div>
         <div class="field"><label>Label layout</label>
@@ -3996,9 +3996,9 @@ function openPrintPackingLabelsModal(planId){
             <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
             <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
           </select></div>
-        <div class="field"><label>Label width (in) — <span id="packingSizeTierLabel">box</span></label>
+        <div class="field"><label>Stock width (in) — <span id="packingSizeTierLabel">box</span></label>
           <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}"></div>
-        <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">box</span></label>
+        <div class="field"><label>Stock height (in) — <span id="packingSizeTierLabel2">box</span></label>
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions">
@@ -4048,7 +4048,7 @@ function openPrintPackingLabelsModal(planId){
   const layoutHint = root.querySelector('#packingLayoutHint');
   const syncLayoutHint = ()=>{
     const l = PACKING_LABEL_LAYOUTS.find(x=> x.id === getPackingLabelLayout());
-    const orient = getPackingLabelOrient() === 'landscape' ? 'Ngang (6×4 reading on 4×6 stock)' : 'Dọc (4×6 upright)';
+    const orient = getPackingLabelOrient() === 'landscape' ? 'Landscape (reads 6×4 on 4×6 stock)' : 'Portrait (4×6 upright)';
     if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + orient;
   };
   syncLayoutHint();
@@ -4360,7 +4360,7 @@ function openPackingPreviewModal(pickIds){
         </div>
         <div class="field"><label>Grade (optional)</label>
           <input id="packingGradeInput" placeholder="e.g. A" maxlength="8"></div>
-        <div class="field full"><label>Deliver to — address <span class="bi">/ ที่อยู่ลูกค้า</span></label>
+        <div class="field full"><label>Deliver to — address</label>
           <textarea id="packingShipToAddress" rows="2" placeholder="e.g. 19-23 Bado Meadowbrook QLD 4131"></textarea></div>
         <div class="field full"><label>From address (printed on box/pallet)</label>
           <textarea id="packingShipFromAddress" rows="2">${esc(PACKING_FROM_ADDRESS_DEFAULT)}</textarea></div>
