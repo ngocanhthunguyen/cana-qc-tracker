@@ -3455,7 +3455,6 @@ function getPackingLabelSizeIn(tier){
       localStorage.setItem('cana_pkglabel_w_' + tier, String(w));
       localStorage.setItem('cana_pkglabel_h_' + tier, String(h));
     }
-    localStorage.setItem('cana_pkglabel_orient', 'portrait');
   }
   return { w: (w > 0 ? w : d.w), h: (h > 0 ? h : d.h) };
 }
@@ -3480,12 +3479,14 @@ function savePackingLabelPrintSettings(tier){
 function getPackingLabelRotate(tier){
   return getPackingLabelOrient() === 'landscape' && (tier === 'box' || tier === 'pallet');
 }
-/** Box/pallet print upright with the roll (4" across head). Landscape ^FWR disabled. */
+/** portrait = upright with the roll (default, proven). landscape = same 4×6 media + ^FWR rotate. */
 function getPackingLabelOrient(){
+  const v = localStorage.getItem('cana_pkglabel_orient');
+  if(v === 'landscape') return 'landscape';
   return 'portrait';
 }
 function setPackingLabelOrient(v){
-  const o = (v === 'portrait') ? 'portrait' : 'landscape';
+  const o = (v === 'landscape') ? 'landscape' : 'portrait';
   localStorage.setItem('cana_pkglabel_orient', o);
   return o;
 }
@@ -3595,11 +3596,17 @@ function packingLabelBodyHtml(shape, layout){
   layout = layout || getPackingLabelLayout();
   const isShip = shape.kind === 'box' || shape.kind === 'pallet';
   const logoHtml = isShip ? `<div class="pkg-label-logo"><img src="${typeof CANA_LOGO_IMG!=='undefined'?CANA_LOGO_IMG:'assets/cana-logo.png'}" alt="Cana"></div>` : '';
+  const landPreview = getPackingLabelOrient() === 'landscape' && (shape.kind === 'box' || shape.kind === 'pallet');
   const addrBlock = shape.fromTo ? (
-    `<div class="pkg-label-fromto-grid pkg-label-fromto-stacked">
-      <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
-      <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
-    </div>`
+    landPreview
+      ? `<div class="pkg-label-fromto-grid shipping">
+          <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+        </div>`
+      : `<div class="pkg-label-fromto-grid pkg-label-fromto-stacked">
+          <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+          <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+        </div>`
   ) : '';
   const fields = (layout === 'minimal'
     ? shape.fields.filter(f=> ['Strain','Lot ID','Net Weight'].includes(f.label) || /kg|Kg/i.test(f.value))
@@ -3621,10 +3628,14 @@ function buildPackingLabelsPreviewHtml(plan, type){
   const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
   const size = getPackingLabelSizeIn(type);
   const layout = getPackingLabelLayout();
+  const land = type !== 'bag' && getPackingLabelOrient() === 'landscape';
+  // Same roll (4×6); landscape preview shows reading orientation after ^FWR (6×4).
+  const previewW = land ? size.h : size.w;
+  const previewH = land ? size.w : size.h;
   return (list || []).map(unit=>{
     const shape = packingUnitLabelShape(type, unit, plan);
     return `
-    <div class="zebra-label packing-label packing-label-${type} packing-layout-${layout} ${unit.mixed?'mixed':''}" style="width:${size.w}in;min-height:${size.h}in;" data-code="${esc(shape.code)}">
+    <div class="zebra-label packing-label packing-label-${type} packing-layout-${layout} ${land?'packing-label-landscape':''} ${unit.mixed?'mixed':''}" style="width:${previewW}in;min-height:${previewH}in;" data-code="${esc(shape.code)}">
       ${packingLabelBodyHtml(shape, layout)}
       <button type="button" class="small ghost test-print-one-btn" data-test-print-code="${esc(shape.code)}">🖨 Test print just this one</button>
     </div>`;
@@ -3634,9 +3645,10 @@ function buildZplForOneUnit(type, unit, plan){
   const shape = packingUnitLabelShape(type, unit, plan);
   if(shape.kind === 'bag') return buildZplBagLabel(shape, getPackingLabelSizeIn(type), getZebraDpi());
   const layout = getPackingLabelLayout();
+  const land = getPackingLabelOrient() === 'landscape';
   return buildZplShipLabel(shape, getPackingLabelSizeIn(type), getZebraDpi(), {
     layout,
-    landscape: false,
+    landscape: land,
     logoSize: layout === 'minimal' ? 'small' : 'med',
     logoRecall: false
   });
@@ -3689,9 +3701,139 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Box/pallet ZPL — upright on Zebra roll: 4" print width × 6" label length. No ^FWR. */
+/** Box/pallet ZPL on the same 4×6 roll.
+ *  portrait: upright with feed. landscape: ^FWR so content reads as 6" wide × 4" tall. */
 function buildZplShipLabel(shape, sizeIn, dpi, opts){
+  opts = opts || {};
+  const landscape = opts.landscape !== undefined ? !!opts.landscape : (getPackingLabelOrient() === 'landscape');
+  if(landscape) return buildZplShipLabelLandscape(shape, sizeIn, dpi, opts);
   return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
+}
+/** Landscape reading on the same roll: ^PW=4" ^LL=6" + ^FWR. FO x→ along 6", y↓ along 4". */
+function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
+  opts = opts || {};
+  const layout = opts.layout || getPackingLabelLayout();
+  const logoSize = opts.logoSize || (layout === 'minimal' ? 'small' : 'med');
+  const logoRecall = !!opts.logoRecall;
+  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
+  const pw = inchesToDots(sizeIn.w, dpi); // physical 4" across head
+  const ll = inchesToDots(sizeIn.h, dpi); // physical 6" feed
+  const DW = ll; // reading width 6"
+  const DH = pw; // reading height 4"
+  const m = Math.max(18, Math.round(Math.min(DW, DH) * 0.035));
+  const innerW = DW - m * 2;
+  const halfW = Math.floor((innerW - 10) / 2);
+  const rightX = m + halfW + 10;
+  let y = m;
+  let zpl = '^XA^MMT^MNY^FWR^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
+  zpl += '^FO' + Math.round(m * 0.4) + ',' + Math.round(m * 0.4) + '^GB' + (DW - Math.round(m * 0.8)) + ',' + (DH - Math.round(m * 0.8)) + ',3^FS\n';
+
+  const t = (x, yy, fs, str)=> '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) + '^FD' + str + '^FS\n';
+  const tc = (yy, fs, str)=>{
+    const tw = Math.min(innerW, Math.round(String(str).length * fs * 0.52));
+    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
+    return t(x, yy, fs, str);
+  };
+
+  // Graphics don't always rotate with ^FWR — use upright logo; landMed is pre-rotated backup.
+  const logoKey = logoSize;
+  const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.small) : null;
+  if(logoUse && typeof buildCanaLogoGfa === 'function'){
+    const lx = m + Math.max(0, Math.round((innerW - logoUse.widthDots) / 2));
+    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoKey);
+    else zpl += buildCanaLogoGfa(lx, y, logoKey);
+    y += Math.min(logoUse.heightDots, Math.round(DH * 0.22)) + 6;
+  }
+
+  const fields = layout === 'minimal'
+    ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
+    : (shape.fields || []);
+
+  const nameFs = Math.max(20, Math.round(DH * 0.055));
+  const addrFs = Math.max(15, Math.round(DH * 0.04));
+  const fieldFs = Math.max(22, Math.round(DH * (layout === 'minimal' ? 0.07 : 0.055)));
+  const handleFs = Math.max(18, Math.round(DH * 0.048));
+  const counterFs = Math.max(26, Math.round(DH * 0.07));
+  const codeFs = Math.max(16, Math.round(DH * 0.042));
+  const maxChars = Math.max(22, Math.floor(halfW / (addrFs * 0.52)));
+
+  if(layout !== 'minimal' && shape.fromTo){
+    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
+    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
+    const rows = Math.max(fromLines.length, toLines.length, 1);
+    const boxH = 8 + nameFs + 4 + rows * (addrFs + 3) + 8;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
+    zpl += '^FO' + (m + halfW + 4) + ',' + y + '^GB' + 2 + ',' + boxH + ',2^FS\n';
+    let ty = y + 6;
+    zpl += t(m + 6, ty, nameFs, safe('From: ' + shape.fromTo.from, 30));
+    zpl += t(rightX, ty, nameFs, safe('To: ' + shape.fromTo.to, 30));
+    ty += nameFs + 4;
+    for(let i = 0; i < rows; i++){
+      if(fromLines[i]) zpl += t(m + 6, ty, addrFs, safe(fromLines[i], maxChars + 2));
+      if(toLines[i]) zpl += t(rightX, ty, addrFs, safe(toLines[i], maxChars + 2));
+      ty += addrFs + 3;
+    }
+    y += boxH + 6;
+  }
+
+  if(layout === 'shipping' && fields.length >= 2){
+    const mid = Math.ceil(fields.length / 2);
+    let yL = y, yR = y;
+    fields.slice(0, mid).forEach(f=>{ zpl += t(m, yL, fieldFs, safe(f.label + ' : ' + f.value, 34)); yL += fieldFs + 5; });
+    fields.slice(mid).forEach(f=>{ zpl += t(rightX, yR, fieldFs, safe(f.label + ' : ' + f.value, 34)); yR += fieldFs + 5; });
+    y = Math.max(yL, yR) + 4;
+  } else {
+    fields.forEach(f=>{
+      zpl += t(m, y, fieldFs, safe(f.label + ' : ' + f.value, 48));
+      y += fieldFs + 5;
+    });
+  }
+
+  const footTop = y;
+  const footH = Math.max(55, DH - m - footTop);
+  const leftW = Math.round(innerW * 0.42);
+  const rightW = innerW - leftW - 10;
+  const rx = m + leftW + 10;
+
+  if(layout !== 'minimal' && shape.handleCareful){
+    zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + footH + ',2^FS\n';
+    const tw = Math.min(leftW - 8, Math.round(22 * handleFs * 0.52));
+    const hx = m + Math.max(4, Math.round((leftW - tw) / 2));
+    const hy = footTop + Math.max(6, Math.round(footH / 2 - handleFs / 2));
+    zpl += t(hx, hy, handleFs, 'HANDLE PACKAGE CAREFULLY');
+  }
+
+  let by = footTop + 4;
+  if(shape.counterText){
+    const tw = Math.min(rightW, Math.round(String(shape.counterText).length * counterFs * 0.52));
+    const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
+    zpl += t(cx, by, counterFs, safe(shape.counterText, 16));
+    by += counterFs + 5;
+  }
+
+  const id = safe(shape.code, 20);
+  let moduleW = dpi >= 300 ? 3 : 2;
+  let barW = estimateCode128Dots(id.length, moduleW);
+  if(barW > rightW - 4){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const footReserve = codeFs + 8 + ((shape.footNote && layout !== 'minimal') ? 22 : 0);
+  const bh = Math.max(50, Math.min(Math.round(DH * 0.28), DH - m - by - footReserve));
+  const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
+  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  by += bh + 5;
+  const tw = Math.min(rightW, Math.round(id.length * codeFs * 0.52));
+  const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
+  zpl += t(cx, by, codeFs, id);
+  by += codeFs + 3;
+  if(shape.footNote && layout !== 'minimal'){
+    const fnFs = Math.max(14, Math.round(DH * 0.038));
+    const tw2 = Math.min(rightW, Math.round(String(shape.footNote).length * fnFs * 0.52));
+    const fx = rx + Math.max(0, Math.round((rightW - tw2) / 2));
+    zpl += t(fx, by, fnFs, safe(shape.footNote, 24));
+  }
+
+  zpl += '^PQ1^XZ\n';
+  return zpl;
 }
 function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   opts = opts || {};
@@ -3808,13 +3950,14 @@ function buildZplForPackingUnits(type, units, plan){
     return (units || []).map(unit=> buildZplBagLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi)).join('');
   }
   const layout = getPackingLabelLayout();
+  const land = getPackingLabelOrient() === 'landscape';
   const logoSize = layout === 'minimal' ? 'small' : 'med';
   let zpl = '';
   if(typeof buildCanaLogoDownloadCmd === 'function'){
     zpl += buildCanaLogoDownloadCmd(logoSize);
   }
   zpl += (units || []).map(unit=> buildZplShipLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi, {
-    layout, landscape: false, logoSize, logoRecall: typeof buildCanaLogoRecall === 'function'
+    layout, landscape: land, logoSize, logoRecall: typeof buildCanaLogoRecall === 'function'
   })).join('');
   return zpl;
 }
@@ -3851,6 +3994,7 @@ function openPrintPackingLabelsModal(planId){
   let tier = 'box';
   let labelSize = getPackingLabelSizeIn(tier);
   const currentLayout = getPackingLabelLayout();
+  const currentOrient = getPackingLabelOrient();
   const currentUnits = ()=> tier === 'bag' ? plan.bags : (tier === 'box' ? plan.boxes : plan.pallets);
   const layoutOptionsHtml = PACKING_LABEL_LAYOUTS.map(l=>
     `<option value="${esc(l.id)}" ${l.id===currentLayout?'selected':''}>${esc(l.label)} — ${esc(l.hint)}</option>`
@@ -3871,8 +4015,14 @@ function openPrintPackingLabelsModal(planId){
         <p class="sub" style="margin:4px 0 0;">Pick a layout below before printing — Cana logo is included on box/pallet labels. Preview updates when you change layout.</p>
       </div>
       <div class="form-grid">
-        <div class="field full"><label>Label layout</label>
+        <div class="field"><label>Label layout</label>
           <select id="packingLayoutSelect">${layoutOptionsHtml}</select>
+        </div>
+        <div class="field"><label>Print orientation</label>
+          <select id="packingOrientSelect">
+            <option value="portrait" ${currentOrient==='portrait'?'selected':''}>Portrait — with the roll (working)</option>
+            <option value="landscape" ${currentOrient==='landscape'?'selected':''}>Landscape — rotate print (^FWR)</option>
+          </select>
           <p class="sub" id="packingLayoutHint" style="margin:4px 0 0;font-size:11px;"></p>
         </div>
         <div class="field"><label>Deliver to — name</label>
@@ -3938,15 +4088,27 @@ function openPrintPackingLabelsModal(planId){
   };
   bindTestPrintButtons();
   const layoutSel = root.querySelector('#packingLayoutSelect');
+  const orientSel = root.querySelector('#packingOrientSelect');
   const layoutHint = root.querySelector('#packingLayoutHint');
   const syncLayoutHint = ()=>{
     const l = PACKING_LABEL_LAYOUTS.find(x=> x.id === getPackingLabelLayout());
-    if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + 'Prints upright with the roll: 4" wide × 6" long (no rotate)';
+    const land = getPackingLabelOrient() === 'landscape';
+    const orientHint = land
+      ? 'Same 4×6 roll; print rotated so sticker reads 6" wide × 4" tall'
+      : 'Prints upright with the roll: 4" wide × 6" long';
+    if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + orientHint;
   };
   syncLayoutHint();
   if(layoutSel){
     layoutSel.onchange = ()=>{
       setPackingLabelLayout(layoutSel.value);
+      syncLayoutHint();
+      refreshSheet();
+    };
+  }
+  if(orientSel){
+    orientSel.onchange = ()=>{
+      setPackingLabelOrient(orientSel.value);
       syncLayoutHint();
       refreshSheet();
     };
