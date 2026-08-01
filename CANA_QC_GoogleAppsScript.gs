@@ -2084,6 +2084,20 @@ function writeTrimming(ss, trimming) {
     return r;
   });
   var cana = all.filter(function(r) { return String(r.type || '').indexOf('Cana') >= 0; });
+  var existingDaily = existing.filter(function(r) {
+    var t = String(r.type || '');
+    return t.indexOf('Trimming record') >= 0 || t.indexOf('Rework') >= 0;
+  });
+  var existingCana = existing.filter(function(r) { return String(r.type || '').indexOf('Cana') >= 0; });
+  // Never clear a populated trim tab with an empty payload from a partial client
+  if (!daily.length && existingDaily.length) {
+    Logger.log('writeTrimming: kept Trim Record — client sent 0 daily rows, sheet has ' + existingDaily.length);
+    daily = existingDaily;
+  }
+  if (!cana.length && existingCana.length) {
+    Logger.log('writeTrimming: kept Trim Cana — client sent 0 cana rows, sheet has ' + existingCana.length);
+    cana = existingCana;
+  }
   writeTrimmingSheet(ss, TRIM_DAILY_SHEET, 'Trimming record — one line per day · list strains in Notes column', '#2563eb', daily, 'daily');
   writeTrimmingSheet(ss, TRIM_CANA_SHEET, 'Cana flower — log when trim is finished (room, strain, weights)', '#16a34a', cana, 'cana');
   var legacyRework = ss.getSheetByName(TRIM_LEGACY_DAILY_SHEET);

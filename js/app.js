@@ -1410,9 +1410,8 @@ function mergePackingPlansFromRemote(remotePlans){
   const local = state.packingPlans || [];
   if(!localDirty){
     if(!remotePlans.length && local.length){
-      // Don't wipe local plans on empty/glitchy sheet read — push them back up
-      localDirty = true;
-      debouncedPushToSheet();
+      // Keep local plans on empty/glitchy sheet read — never auto-push here
+      // (a phone with empty trim/other modules would overwrite the shared sheet)
       return;
     }
     state.packingPlans = remotePlans.slice().map(normalizePackingPlan);
@@ -1472,12 +1471,9 @@ function mergeTrimmingFromRemote(remoteTrimming){
   const remote = remoteTrimming.map(normalizeTrimRecord);
   const local = (state.trimming || []).map(normalizeTrimRecord);
   if(!localDirty){
-    // Don't wipe local trim rows when sheet read returns empty (deploy/read glitch)
-    if(!remote.length && local.length){
-      localDirty = true;
-      debouncedPushToSheet();
-      return;
-    }
+    // Don't wipe local trim rows when sheet read returns empty (deploy/read glitch).
+    // Do NOT auto-push — that can overwrite the sheet from a device with partial data.
+    if(!remote.length && local.length) return;
     state.trimming = remote;
     return;
   }
@@ -1501,8 +1497,7 @@ function mergeCureFromRemote(remoteSessions, remoteLog){
       const remote = remoteSessions.slice();
       const local = state.curingSessions || [];
       if(!remote.length && local.length){
-        localDirty = true;
-        debouncedPushToSheet();
+        // keep local — do not auto-push (partial clients can wipe the sheet)
       } else {
         state.curingSessions = remote;
       }
@@ -1511,8 +1506,7 @@ function mergeCureFromRemote(remoteSessions, remoteLog){
       const remote = remoteLog.slice().map(normalizeCureLogEntry);
       const local = (state.cureLog || []).map(normalizeCureLogEntry);
       if(!remote.length && local.length){
-        localDirty = true;
-        debouncedPushToSheet();
+        // keep local — do not auto-push
       } else {
         state.cureLog = remote;
       }
@@ -1540,11 +1534,7 @@ function mergeCanaStockFromRemote(remoteStock){
   const local = state.canaStock || [];
   if(!localDirty){
     // Sheet tab missing or not synced yet — don't wipe local rows on poll
-    if(!remote.length && local.length){
-      localDirty = true;
-      debouncedPushToSheet();
-      return;
-    }
+    if(!remote.length && local.length) return;
     state.canaStock = remote;
     return;
   }
@@ -3491,20 +3481,56 @@ function normalizePackingScanRaw(raw){
   return String(raw || '')
     .trim()
     .toUpperCase()
+    // AIM symbology ids from some scanners: ]C1, ]A0, ]E0…
+    .replace(/^\][A-Z][0-9]/, '')
     // scanners / OCR often turn "-" into en/em dashes
     .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
     .replace(/\s+/g, '')
     .replace(/[^A-Z0-9\-]/g, '');
 }
+/** Pull every plausible packing code from a raw scan (camera often adds junk / AIM prefix). */
+function packingScanCandidates(raw){
+  const normalized = normalizePackingScanRaw(raw);
+  const out = [];
+  const push = (s)=>{
+    const v = normalizePackingScanRaw(s);
+    if(v && !out.includes(v)) out.push(v);
+  };
+  if(normalized){
+    push(normalized);
+    push(normalized.split('').reverse().join(''));
+  }
+  const re = /([0-9]{4})-?(G|B|P)0*(\d{1,4})/g;
+  const pools = [normalized, normalized.split('').reverse().join(''), String(raw || '').toUpperCase()];
+  pools.forEach(pool=>{
+    if(!pool) return;
+    re.lastIndex = 0;
+    let m;
+    while((m = re.exec(pool))){
+      const letter = m[2];
+      const seq = parseInt(m[3], 10);
+      const pad = letter === 'G' ? 4 : (letter === 'B' ? 3 : 2);
+      push(m[1] + '-' + letter + String(seq).padStart(pad, '0'));
+      push(m[1] + letter + String(seq).padStart(pad, '0'));
+    }
+  });
+  return out;
+}
 function parsePackingScanCode(raw){
-  const s = normalizePackingScanRaw(raw);
-  // Plan codes are 4 digits (e.g. 2709-B001). Hyphen optional.
-  let m = s.match(/^([0-9]{4})-(G|B|P)0*(\d+)$/);
-  if(!m) m = s.match(/^([0-9]{4})(G|B|P)0*(\d+)$/);
-  if(!m) m = s.match(/(?:^|[^0-9])([0-9]{4})-(G|B|P)0*(\d+)/);
-  if(!m) m = s.match(/(?:^|[^0-9])([0-9]{4})(G|B|P)0*(\d+)/);
-  if(!m) return null;
-  return { planCode: m[1], type: m[2] === 'G' ? 'bag' : (m[2] === 'B' ? 'box' : 'pallet'), seq: parseInt(m[3], 10) };
+  const candidates = packingScanCandidates(raw);
+  for(let i=0;i<candidates.length;i++){
+    const s = candidates[i];
+    // Plan codes are 4 digits (e.g. 2709-B001). Hyphen optional.
+    let m = s.match(/^([0-9]{4})-(G|B|P)0*(\d+)$/);
+    if(!m) m = s.match(/^([0-9]{4})(G|B|P)0*(\d+)$/);
+    if(!m) m = s.match(/([0-9]{4})-?(G|B|P)0*(\d+)/);
+    if(!m) continue;
+    return { planCode: m[1], type: m[2] === 'G' ? 'bag' : (m[2] === 'B' ? 'box' : 'pallet'), seq: parseInt(m[3], 10) };
+  }
+  return null;
+}
+function looksLikePackingScan(raw){
+  return !!parsePackingScanCode(raw) || packingScanCandidates(raw).some(c=> /[0-9]{4}-?[GBP]\d+/i.test(c));
 }
 function findPackingPlanByCode(code){
   const want = String(code || '').toUpperCase();
@@ -3518,8 +3544,8 @@ function packingUnitTypeFromListKey(key){
 }
 /** Resolve a scanned/typed packing code to { plan, type, unit }. Tries exact unit.code first. */
 function lookupPackingUnit(rawCode){
-  const normalized = normalizePackingScanRaw(rawCode);
-  if(!normalized) return null;
+  const candidates = packingScanCandidates(rawCode);
+  if(!candidates.length) return null;
   const plans = state.packingPlans || [];
   const tryExact = (needle)=>{
     for(let i=0;i<plans.length;i++){
@@ -3533,27 +3559,18 @@ function lookupPackingUnit(rawCode){
     }
     return null;
   };
-  // 1) Exact unit code match (most reliable)
-  let found = tryExact(normalized);
-  if(found) return found;
-  // 2) Some 1D scanners reverse the payload when the barcode was printed rotated
-  const reversed = normalized.split('').reverse().join('');
-  if(reversed !== normalized){
-    found = tryExact(reversed);
+  // 1) Exact / reversed / embedded candidates
+  for(let i=0;i<candidates.length;i++){
+    const found = tryExact(candidates[i]);
     if(found) return found;
-    const revParsed = parsePackingScanCode(reversed);
-    if(revParsed){
-      found = lookupPackingUnitFromParsed(revParsed);
-      if(found) return found;
-    }
   }
-  // 3) Structured parse: 2709-B001
-  const parsed = parsePackingScanCode(normalized);
+  // 2) Structured parse: 2709-B001 (from any candidate)
+  const parsed = parsePackingScanCode(rawCode);
   if(parsed){
-    found = lookupPackingUnitFromParsed(parsed);
+    const found = lookupPackingUnitFromParsed(parsed);
     if(found) return found;
   }
-  // 4) Needle contained inside a longer scan string
+  // 3) Known unit.code appears inside a longer scan string
   for(let i=0;i<plans.length;i++){
     const plan = plans[i];
     const keys = ['bags', 'boxes', 'pallets'];
@@ -3561,7 +3578,8 @@ function lookupPackingUnit(rawCode){
       const listKey = keys[k];
       const unit = (plan[listKey] || []).find(u=>{
         const c = normalizePackingScanRaw(u.code);
-        return c && (normalized.includes(c) || reversed.includes(c));
+        if(!c) return false;
+        return candidates.some(n=> n.includes(c) || c.includes(n));
       });
       if(unit) return { plan, type: packingUnitTypeFromListKey(listKey), unit };
     }
@@ -3579,19 +3597,20 @@ function lookupPackingUnitFromParsed(parsed){
 }
 function describePackingLookupMiss(rawCode){
   const normalized = normalizePackingScanRaw(rawCode);
-  const parsed = parsePackingScanCode(normalized);
+  const parsed = parsePackingScanCode(rawCode);
   const plans = state.packingPlans || [];
   const planCount = plans.length;
   const planCodes = plans.map(p=> p.code).filter(Boolean).slice(0, 12).join(', ');
+  const rawHint = ' (camera read: "' + String(rawCode || '') + '"' + (normalized && normalized !== String(rawCode || '').toUpperCase() ? ' → ' + normalized : '') + ')';
   if(!normalized) return 'Empty code.';
-  if(!planCount) return 'No packing plans loaded on this device. Close this dialog → Export → Reload from Google Sheet (check Packing Plans tab has plan rows).';
-  if(!parsed) return 'Code "' + rawCode + '" is not a packing barcode (expected like 2709-B001). Loaded plans: ' + planCodes;
+  if(!planCount) return 'No packing plans loaded on this device. Close this dialog → Export → Reload from Google Sheet (check Packing Plans tab has plan rows).' + rawHint;
+  if(!parsed) return 'Scanned/typed "' + rawCode + '" is not a packing barcode (expected like 2709-B001). Loaded plans: ' + planCodes + rawHint;
   const plan = findPackingPlanByCode(parsed.planCode);
-  if(!plan) return 'Plan ' + parsed.planCode + ' not among ' + planCount + ' loaded plan(s): ' + planCodes + '. On desktop open Export — if the plan is missing, recreate it or Save so Packing Plans sheet updates, then Reload on phone.';
+  if(!plan) return 'Plan ' + parsed.planCode + ' not among ' + planCount + ' loaded plan(s): ' + planCodes + '.' + rawHint;
   const list = parsed.type === 'bag' ? plan.bags : (parsed.type === 'box' ? plan.boxes : plan.pallets);
-  if(!(list || []).length) return 'Plan ' + parsed.planCode + ' loaded but ' + parsed.type + ' list is empty (Boxes/Bags JSON on sheet may be blank). Open plan on desktop → Labels once, Save, then Reload.';
+  if(!(list || []).length) return 'Plan ' + parsed.planCode + ' loaded but ' + parsed.type + ' list is empty (Boxes/Bags JSON on sheet may be blank). Open plan on desktop → Labels once, Save, then Reload.' + rawHint;
   const codes = (list || []).map(u=> u.code).filter(Boolean).slice(0, 8).join(', ');
-  return parsed.type + ' #' + parsed.seq + ' not in plan ' + parsed.planCode + '. Loaded ' + parsed.type + ' codes: ' + (codes || '(none)');
+  return parsed.type + ' #' + parsed.seq + ' not in plan ' + parsed.planCode + '. Loaded ' + parsed.type + ' codes: ' + (codes || '(none)') + rawHint;
 }
 function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
@@ -4384,9 +4403,9 @@ function bindExportLookupPanel(main){
   const input = main.querySelector('#packingLookupInput');
   const resultEl = ()=> main.querySelector('#packingLookupResult') || document.getElementById('packingLookupResult');
   if(!input) return;
-  const go = ()=> runPackingLookup(input.value, resultEl());
+  const go = (code)=> runPackingLookup(typeof code === 'string' ? code : input.value, resultEl());
   const btnGo = main.querySelector('#btnPackingLookupGo');
-  if(btnGo) btnGo.onclick = go;
+  if(btnGo) btnGo.onclick = ()=> go();
   input.onkeydown = (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } };
   const btnCam = main.querySelector('#btnPackingCamera');
   if(btnCam) btnCam.onclick = ()=> openPackingCameraReader(main, input, go);
@@ -4420,10 +4439,16 @@ function renderPackingLookupResult(rawCode){
 async function runPackingLookup(rawCode, resultEl){
   if(!resultEl) return;
   let found = lookupPackingUnit(rawCode);
-  if(!found){
+  if(!found && looksLikePackingScan(rawCode)){
     resultEl.innerHTML = `<div class="pending-banner"><span>⏳ Refreshing packing plans from Google Sheet…</span></div>`;
     await refreshPackingPlansFromSheet();
     found = lookupPackingUnit(rawCode);
+  }
+  if(found){
+    const input = document.getElementById('packingLookupInput');
+    if(input) input.value = found.unit.code;
+    resultEl.innerHTML = renderPackingLookupResult(found.unit.code);
+    return;
   }
   resultEl.innerHTML = renderPackingLookupResult(rawCode);
 }
@@ -4460,8 +4485,8 @@ function openPackingLookupModal(){
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   const input = root.querySelector('#packingLookupInput');
   const resultEl = ()=> document.getElementById('packingLookupResult');
-  const go = ()=> runPackingLookup(input.value, resultEl());
-  root.querySelector('#btnPackingLookupGo').onclick = go;
+  const go = (code)=> runPackingLookup(typeof code === 'string' ? code : input.value, resultEl());
+  root.querySelector('#btnPackingLookupGo').onclick = ()=> go();
   input.onkeydown = (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } };
   root.querySelector('#btnPackingCamera').onclick = ()=> openPackingCameraReader(root, input, go);
   // Prefetch plans so scan/lookup works even if phone hadn't pulled Export data yet
@@ -4481,25 +4506,52 @@ async function openPackingCameraReader(root, input, go){
     return;
   }
   packingScanLock = false;
-  wrap.innerHTML = `<div id="packingCameraReader" class="plant-camera-reader" style="margin-top:10px;"></div><p class="sub" id="packingCameraStatus">Starting camera…</p>`;
+  wrap.innerHTML = `<div id="packingCameraReader" class="plant-camera-reader" style="margin-top:10px;"></div><p class="sub" id="packingCameraStatus">Point at the barcode — hold steady…</p>`;
   const statusEl = wrap.querySelector('#packingCameraStatus');
   const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
     ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39]
     : undefined;
-  const boxW = Math.min(320, Math.max(240, window.innerWidth - 56));
+  // Tall qrbox helps 1D codes; landscape labels are often scanned sideways
+  const boxW = Math.min(340, Math.max(260, window.innerWidth - 48));
   packingCameraScanner = new Html5Qrcode('packingCameraReader');
-  const config = { fps: 12, qrbox: { width: boxW, height: Math.round(boxW * 0.35) }, aspectRatio: 1.777 };
+  const config = {
+    fps: 15,
+    qrbox: { width: boxW, height: Math.round(boxW * 0.5) },
+    aspectRatio: 1.333,
+    disableFlip: false
+  };
   if(formats) config.formatsToSupport = formats;
+  const acceptScan = (decodedText)=>{
+    if(packingScanLock) return;
+    packingScanLock = true;
+    const matched = lookupPackingUnit(decodedText);
+    const code = matched ? matched.unit.code : decodedText;
+    stopPackingCameraScanner().finally(()=>{
+      wrap.innerHTML = '';
+      if(input) input.value = code;
+      if(typeof go === 'function') go(code);
+      else runPackingLookup(code, document.getElementById('packingLookupResult'));
+    });
+  };
   try{
     await packingCameraScanner.start({ facingMode: 'environment' }, config, (decodedText)=>{
       if(packingScanLock) return;
-      packingScanLock = true;
-      stopPackingCameraScanner().finally(()=>{
-        wrap.innerHTML = '';
-        input.value = decodedText;
-        go();
-      });
+      // Ignore early false reads (common while aiming) unless it looks like our code
+      const matched = lookupPackingUnit(decodedText);
+      if(matched){
+        acceptScan(decodedText);
+        return;
+      }
+      if(looksLikePackingScan(decodedText)){
+        acceptScan(decodedText);
+        return;
+      }
+      if(statusEl){
+        const shown = String(decodedText || '').slice(0, 24);
+        statusEl.textContent = 'Saw "' + shown + '" — not a packing code, keep scanning…';
+      }
     });
+    if(statusEl) statusEl.textContent = 'Point at the barcode — hold steady…';
   }catch(e){
     if(statusEl) statusEl.textContent = 'Camera unavailable: ' + (e.message || e);
   }
