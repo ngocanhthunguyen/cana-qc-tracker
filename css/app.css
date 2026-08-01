@@ -560,8 +560,13 @@
   .packing-layout-shipping .pkg-label-fields{font-size:15px;}
   .packing-layout-shipping .pkg-label-counter{font-size:22px;}
   .packing-layout-shipping .zebra-barcode svg{width:3.5in;max-width:3.5in;height:0.85in;}
-  .packing-label-landscape .pkg-label-logo img{max-width:1.3in;max-height:0.9in;}
-  .packing-label-landscape .zebra-barcode svg{width:2.6in;max-width:2.6in;height:0.65in;}
+  .packing-label-landscape{padding:0.1in 0.12in;gap:0.04in;}
+  .packing-label-landscape .pkg-label-logo{margin:0 0 2px;}
+  .packing-label-landscape .pkg-label-logo img{max-width:1.1in;max-height:0.75in;}
+  .packing-label-landscape .pkg-label-fields{font-size:15px;line-height:1.35;}
+  .packing-label-landscape .pkg-label-counter{font-size:20px;margin:2px 0;}
+  .packing-label-landscape .zebra-barcode svg{width:2.8in;max-width:2.8in;height:0.75in;}
+  .packing-label-landscape .pkg-label-handle{margin:2px 0;padding:6px 8px;font-size:12px;}
   .packing-label-box .pkg-label-logo img,.packing-label-pallet .pkg-label-logo img{max-width:1.6in;max-height:1.1in;}
   .plant-print-modal .zebra-label-sheet{max-height:min(520px,60vh);}
   .test-print-one-btn{margin-top:0.06in;font-size:9px!important;padding:3px 6px!important;}

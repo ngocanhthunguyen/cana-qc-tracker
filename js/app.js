@@ -3720,10 +3720,13 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   const ll = inchesToDots(sizeIn.h, dpi); // physical 6"
   const DW = ll; // reading width when held landscape
   const DH = pw; // reading height when held landscape
-  const m = Math.max(18, Math.round(Math.min(DW, DH) * 0.035));
+  // Balanced margins — keep a little left pad so text isn't on the die edge
+  const m = Math.max(22, Math.round(Math.min(DW, DH) * 0.04));
   const innerW = DW - m * 2;
-  const halfW = Math.floor((innerW - 10) / 2);
-  const rightX = m + halfW + 10;
+  const gap = 12;
+  const halfW = Math.floor((innerW - gap) / 2);
+  const colL = m;
+  const colR = m + halfW + gap;
 
   // reading (rx,ry,rw,rh) → physical FO + box size after 90° CW
   const map = (rx, ry, rw, rh)=>({
@@ -3735,14 +3738,18 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
 
   let zpl = '^XA^MMT^MNY^FWN^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
 
-  // Outer border
-  const border = map(Math.round(m * 0.4), Math.round(m * 0.4), DW - Math.round(m * 0.8), DH - Math.round(m * 0.8));
+  const borderPad = Math.round(m * 0.35);
+  const border = map(borderPad, borderPad, DW - borderPad * 2, DH - borderPad * 2);
   zpl += '^FO' + border.x + ',' + border.y + '^GB' + border.w + ',' + border.h + ',3^FS\n';
 
   // Text: ^A0R so glyphs read along feed (physical +y) = reading left→right
   const t = (rx, ry, fs, str)=>{
-    const p = map(rx, ry, Math.round(String(str).length * fs * 0.55), fs);
-    return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + Math.round(fs * 0.85) + '^FD' + str + '^FS\n';
+    const p = map(rx, ry, Math.round(String(str).length * fs * 0.52), fs);
+    return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + Math.round(fs * 0.88) + '^FD' + str + '^FS\n';
+  };
+  const tc = (rx0, colW, ry, fs, str)=>{
+    const tw = Math.min(colW, Math.round(String(str).length * fs * 0.52));
+    return t(rx0 + Math.max(0, Math.round((colW - tw) / 2)), ry, fs, str);
   };
   const box = (rx, ry, rw, rh, thick)=>{
     const p = map(rx, ry, rw, rh);
@@ -3751,108 +3758,123 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
 
   let y = m;
 
-  // Pre-rotated logo (landMed) placed at reading top-center — graphic stays axis-aligned in physical space
-  const logoKey = layout === 'minimal' ? 'landSmall' : 'landMed';
+  // Compact logo at reading top-center
+  const logoKey = 'landSmall';
   const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined')
     ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.landMed || CANA_LOGO_ZPL.small)
     : null;
   if(logoUse && typeof buildCanaLogoGfa === 'function'){
-    const logoH = Math.min(logoUse.heightDots, Math.round(DH * 0.2));
+    const logoH = Math.min(logoUse.heightDots, Math.round(DH * 0.14));
     const logoW = logoUse.widthDots;
     const lx = m + Math.max(0, Math.round((innerW - logoW) / 2));
     const p = map(lx, y, logoW, logoH);
-    // land* graphics are already rotated for landscape reading; place with normal GFA at mapped FO
     zpl += buildCanaLogoGfa(p.x, p.y, logoKey);
-    y += logoH + 6;
+    y += logoH + 4;
   }
 
   const fields = layout === 'minimal'
     ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
     : (shape.fields || []);
 
-  const nameFs = Math.max(20, Math.round(DH * 0.055));
-  const addrFs = Math.max(15, Math.round(DH * 0.04));
-  const fieldFs = Math.max(22, Math.round(DH * (layout === 'minimal' ? 0.07 : 0.055)));
-  const handleFs = Math.max(18, Math.round(DH * 0.048));
-  const counterFs = Math.max(26, Math.round(DH * 0.07));
-  const codeFs = Math.max(16, Math.round(DH * 0.042));
-  const maxChars = Math.max(22, Math.floor(halfW / (addrFs * 0.52)));
+  const nameFs = Math.max(22, Math.round(DH * 0.058));
+  const addrFs = Math.max(16, Math.round(DH * 0.042));
+  const fieldFs = Math.max(24, Math.round(DH * (layout === 'minimal' ? 0.072 : 0.06)));
+  const handleFs = Math.max(20, Math.round(DH * 0.05));
+  const counterFs = Math.max(30, Math.round(DH * 0.075));
+  const codeFs = Math.max(18, Math.round(DH * 0.045));
+  const maxChars = Math.max(24, Math.floor(halfW / (addrFs * 0.5)));
 
   if(layout !== 'minimal' && shape.fromTo){
     const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
     const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
     const rows = Math.max(fromLines.length, toLines.length, 1);
-    const boxH = 8 + nameFs + 4 + rows * (addrFs + 3) + 8;
+    const boxH = 6 + nameFs + 3 + rows * (addrFs + 2) + 6;
     zpl += box(m, y, innerW, boxH, 2);
-    zpl += box(m + halfW + 4, y, 2, boxH, 2);
-    let ty = y + 6;
-    zpl += t(m + 6, ty, nameFs, safe('From: ' + shape.fromTo.from, 30));
-    zpl += t(rightX, ty, nameFs, safe('To: ' + shape.fromTo.to, 30));
-    ty += nameFs + 4;
+    zpl += box(colR - Math.round(gap / 2), y, 2, boxH, 2);
+    let ty = y + 5;
+    zpl += t(colL + 5, ty, nameFs, safe('From: ' + shape.fromTo.from, 32));
+    zpl += t(colR + 5, ty, nameFs, safe('To: ' + shape.fromTo.to, 32));
+    ty += nameFs + 3;
     for(let i = 0; i < rows; i++){
-      if(fromLines[i]) zpl += t(m + 6, ty, addrFs, safe(fromLines[i], maxChars + 2));
-      if(toLines[i]) zpl += t(rightX, ty, addrFs, safe(toLines[i], maxChars + 2));
-      ty += addrFs + 3;
+      if(fromLines[i]) zpl += t(colL + 5, ty, addrFs, safe(fromLines[i], maxChars + 2));
+      if(toLines[i]) zpl += t(colR + 5, ty, addrFs, safe(toLines[i], maxChars + 2));
+      ty += addrFs + 2;
     }
     y += boxH + 6;
   }
 
-  if(layout === 'shipping' && fields.length >= 2){
-    const mid = Math.ceil(fields.length / 2);
-    let yL = y, yR = y;
-    fields.slice(0, mid).forEach(f=>{ zpl += t(m, yL, fieldFs, safe(f.label + ' : ' + f.value, 34)); yL += fieldFs + 5; });
-    fields.slice(mid).forEach(f=>{ zpl += t(rightX, yR, fieldFs, safe(f.label + ' : ' + f.value, 34)); yR += fieldFs + 5; });
-    y = Math.max(yL, yR) + 4;
-  } else {
-    fields.forEach(f=>{
-      zpl += t(m, y, fieldFs, safe(f.label + ' : ' + f.value, 48));
-      y += fieldFs + 5;
-    });
-  }
+  // Body: left = product fields + HANDLE; right = counter + barcode (fills remaining height)
+  const bodyTop = y;
+  const bodyH = Math.max(80, DH - m - bodyTop);
+  const leftW = halfW;
+  const rightW = halfW;
 
-  const footTop = y;
-  const footH = Math.max(55, DH - m - footTop);
-  const leftW = Math.round(innerW * 0.42);
-  const rightW = innerW - leftW - 10;
-  const rx = m + leftW + 10;
+  // Product fields — always two columns within the left half when 2+ fields
+  let fieldsBottom = bodyTop;
+  if(fields.length){
+    const useSplit = fields.length >= 2 && layout !== 'minimal';
+    if(useSplit){
+      const mid = Math.ceil(fields.length / 2);
+      const fGap = 8;
+      const fColW = Math.floor((leftW - fGap) / 2);
+      const fL = colL;
+      const fR = colL + fColW + fGap;
+      let yL = bodyTop, yR = bodyTop;
+      fields.slice(0, mid).forEach(f=>{
+        zpl += t(fL, yL, fieldFs, safe(f.label + ' : ' + f.value, 28));
+        yL += fieldFs + 4;
+      });
+      fields.slice(mid).forEach(f=>{
+        zpl += t(fR, yR, fieldFs, safe(f.label + ' : ' + f.value, 28));
+        yR += fieldFs + 4;
+      });
+      fieldsBottom = Math.max(yL, yR) + 4;
+    } else {
+      let yF = bodyTop;
+      fields.forEach(f=>{
+        zpl += t(colL, yF, fieldFs, safe(f.label + ' : ' + f.value, 40));
+        yF += fieldFs + 4;
+      });
+      fieldsBottom = yF + 2;
+    }
+  }
 
   if(layout !== 'minimal' && shape.handleCareful){
-    zpl += box(m, footTop, leftW, footH, 2);
-    const tw = Math.min(leftW - 8, Math.round(22 * handleFs * 0.52));
-    const hx = m + Math.max(4, Math.round((leftW - tw) / 2));
-    const hy = footTop + Math.max(6, Math.round(footH / 2 - handleFs / 2));
-    zpl += t(hx, hy, handleFs, 'HANDLE PACKAGE CAREFULLY');
+    const handleTop = fieldsBottom;
+    const handleH = Math.max(handleFs + 16, bodyTop + bodyH - handleTop);
+    zpl += box(colL, handleTop, leftW, handleH, 2);
+    const hy = handleTop + Math.max(6, Math.round((handleH - handleFs) / 2));
+    zpl += tc(colL, leftW, hy, handleFs, 'HANDLE PACKAGE CAREFULLY');
   }
 
-  let by = footTop + 4;
+  // Right column: counter tight above a tall barcode that uses the free width
+  let by = bodyTop;
   if(shape.counterText){
-    const tw = Math.min(rightW, Math.round(String(shape.counterText).length * counterFs * 0.52));
-    const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
-    zpl += t(cx, by, counterFs, safe(shape.counterText, 16));
-    by += counterFs + 5;
+    zpl += tc(colR, rightW, by, counterFs, safe(shape.counterText, 16));
+    by += counterFs + 4;
   }
 
   const id = safe(shape.code, 20);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 4){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const footReserve = codeFs + 8 + ((shape.footNote && layout !== 'minimal') ? 22 : 0);
-  const bh = Math.max(50, Math.min(Math.round(DH * 0.28), DH - m - by - footReserve));
-  const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
-  // ^BCR: barcode runs along feed so it reads L→R when label is held landscape
+  if(barW > rightW - 6){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > rightW - 6){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  // Prefer a wider barcode when there is room
+  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= rightW - 6){
+    moduleW += 1;
+    barW = estimateCode128Dots(id.length, moduleW);
+  }
+  const footNoteFs = Math.max(15, Math.round(DH * 0.038));
+  const footReserve = codeFs + 6 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 4 : 0);
+  const bh = Math.max(70, Math.min(Math.round(DH * 0.36), bodyTop + bodyH - by - footReserve));
+  const bx = colR + Math.max(0, Math.round((rightW - barW) / 2));
   const bar = map(bx, by, barW, bh);
   zpl += '^FO' + bar.x + ',' + bar.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  by += bh + 5;
-  const tw = Math.min(rightW, Math.round(id.length * codeFs * 0.52));
-  const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
-  zpl += t(cx, by, codeFs, id);
+  by += bh + 4;
+  zpl += tc(colR, rightW, by, codeFs, id);
   by += codeFs + 3;
   if(shape.footNote && layout !== 'minimal'){
-    const fnFs = Math.max(14, Math.round(DH * 0.038));
-    const tw2 = Math.min(rightW, Math.round(String(shape.footNote).length * fnFs * 0.52));
-    const fx = rx + Math.max(0, Math.round((rightW - tw2) / 2));
-    zpl += t(fx, by, fnFs, safe(shape.footNote, 24));
+    zpl += tc(colR, rightW, by, footNoteFs, safe(shape.footNote, 24));
   }
 
   zpl += '^PQ1^XZ\n';
