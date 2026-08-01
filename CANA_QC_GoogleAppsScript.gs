@@ -2741,7 +2741,7 @@ function upgradeExportPicksAndCompanyOrdersTabs() {
 /* ---------- Packing Plans — bag/box/pallet breakdown + barcode label data for a shipment ---------- */
 
 var PACKING_PLANS_SHEET = 'Packing Plans';
-var PACKING_PLANS_HEADERS = ['_id', 'Code', 'Company', 'Label', 'Pick IDs (JSON)', 'Bags (JSON)', 'Boxes (JSON)', 'Pallets (JSON)', 'Total Bags', 'Total Kg', 'Created By', 'Created At'];
+var PACKING_PLANS_HEADERS = ['_id', 'Code', 'Company', 'Label', 'Pick IDs (JSON)', 'Bags (JSON)', 'Boxes (JSON)', 'Pallets (JSON)', 'Total Bags', 'Total Kg', 'Created By', 'Created At', 'Grade', 'Ship To Name', 'Ship To Address', 'Ship From Address'];
 var PACKING_PLANS_NUM_COLS = PACKING_PLANS_HEADERS.length;
 
 function readPackingPlans(ss) {
@@ -2750,7 +2750,8 @@ function readPackingPlans(ss) {
   if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
   var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
   if (numRows < 1) return [];
-  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, PACKING_PLANS_NUM_COLS).getValues();
+  var lastCol = Math.max(PACKING_PLANS_NUM_COLS, sheet.getLastColumn());
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, lastCol).getValues();
   var list = [];
   values.forEach(function(row) {
     if (!row[1]) return;
@@ -2771,7 +2772,11 @@ function readPackingPlans(ss) {
       totalBags: Number(row[8] || 0),
       totalKg: Number(row[9] || 0),
       createdBy: String(row[10] || ''),
-      createdAt: String(row[11] || '')
+      createdAt: String(row[11] || ''),
+      grade: String(row[12] || ''),
+      shipToName: String(row[13] || row[2] || ''),
+      shipToAddress: String(row[14] || ''),
+      shipFromAddress: String(row[15] || '')
     });
   });
   return list;
@@ -2795,7 +2800,11 @@ function writePackingPlans(ss, plans) {
       p.totalBags || 0,
       p.totalKg === '' || p.totalKg === null || p.totalKg === undefined ? '' : p.totalKg,
       p.createdBy || '',
-      p.createdAt || ''
+      p.createdAt || '',
+      p.grade || '',
+      p.shipToName || p.company || '',
+      p.shipToAddress || '',
+      p.shipFromAddress || ''
     ];
   });
   if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {

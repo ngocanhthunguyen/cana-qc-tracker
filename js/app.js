@@ -3398,6 +3398,9 @@ function savePackingPlan(pickIds, meta){
     company: (meta && meta.company) || '',
     label: (meta && meta.label) || '',
     grade: (meta && meta.grade) || '',
+    shipToName: (meta && meta.shipToName) || (meta && meta.company) || '',
+    shipToAddress: (meta && meta.shipToAddress) || '',
+    shipFromAddress: (meta && meta.shipFromAddress) || PACKING_FROM_ADDRESS_DEFAULT,
     pickIds: preview.pickIds,
     bags, boxes, pallets,
     totalBags: preview.totalBags,
@@ -3442,8 +3445,10 @@ function lookupPackingUnit(rawCode){
 }
 function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
-  const w = Number(localStorage.getItem('cana_pkglabel_w_' + tier));
-  const h = Number(localStorage.getItem('cana_pkglabel_h_' + tier));
+  let w = Number(localStorage.getItem('cana_pkglabel_w_' + tier));
+  let h = Number(localStorage.getItem('cana_pkglabel_h_' + tier));
+  // Migrate old box default 4×3 → 4×6 shipping stock
+  if(tier === 'box' && w === 4 && h === 3){ w = 4; h = 6; }
   return { w: (w > 0 ? w : d.w), h: (h > 0 ? h : d.h) };
 }
 function savePackingLabelSizeIn(tier, w, h){
@@ -3459,18 +3464,45 @@ function savePackingLabelPrintSettings(tier){
   if(ip) localStorage.setItem('cana_zebra_ip', String(ip.value || '').trim());
   if(dpi) localStorage.setItem('cana_zebra_dpi', dpi.value === '300' ? '300' : '203');
   savePackingLabelSizeIn(tier, w ? w.value : undefined, h ? h.value : undefined);
+  const rot = document.getElementById('packingRotateChk');
+  if(rot && (tier === 'box' || tier === 'pallet')){
+    localStorage.setItem('cana_pkglabel_rotate_' + tier, rot.checked ? '1' : '0');
+  }
+}
+function getPackingLabelRotate(tier){
+  if(tier !== 'box' && tier !== 'pallet') return false;
+  const v = localStorage.getItem('cana_pkglabel_rotate_' + tier);
+  if(v === null || v === undefined || v === '') return true;
+  return v === '1';
+}
+function wrapLabelWords(text, maxChars){
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  const lines = [];
+  let cur = '';
+  words.forEach(w=>{
+    const next = cur ? cur + ' ' + w : w;
+    if(next.length <= maxChars) cur = next;
+    else {
+      if(cur) lines.push(cur);
+      cur = w.length > maxChars ? w.slice(0, maxChars) : w;
+    }
+  });
+  if(cur) lines.push(cur);
+  return lines.length ? lines : [''];
 }
 /** Shapes label content to mirror the real printed samples: company header on bags,
- *  From/To + Type/Grade/Net Weight + "HANDLE PACKAGE CAREFULLY" on boxes/pallets,
- *  and a "N of Y" counter scoped to the source Lot ID (matching how the Thai partner
- *  already numbers bags/boxes on paper), falling back to a plan-wide count for mixed units. */
+ *  From/To + addresses + Type/Grade/Net Weight + "HANDLE PACKAGE CAREFULLY" on boxes/pallets,
+ *  and a "N of Y" counter scoped to the source Lot ID. */
 function packingUnitLabelShape(type, unit, plan){
-  const company = (plan && plan.company) || '—';
+  const shipToName = (plan && (plan.shipToName || plan.company)) || '';
+  const shipToAddress = (plan && plan.shipToAddress) || '';
+  const shipFromAddress = (plan && plan.shipFromAddress) || PACKING_FROM_ADDRESS_DEFAULT;
   const grade = (plan && plan.grade) || '';
   if(type === 'bag'){
     return {
       code: unit.code,
       kind: 'bag',
+      rotate: false,
       header: PACKING_COMPANY_NAME,
       subheader: 'Dried & Cured Lab Tested Flowers',
       fromTo: null,
@@ -3495,13 +3527,19 @@ function packingUnitLabelShape(type, unit, plan){
     }
     fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
     if(grade) fields.push({ label: 'Grade', value: grade });
-    fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' kg' });
+    fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' Kg' });
     return {
       code: unit.code,
       kind: 'box',
+      rotate: getPackingLabelRotate('box'),
       header: PACKING_COMPANY_NAME,
       subheader: unit.mixed ? 'MIXED CONTENTS' : '',
-      fromTo: { from: PACKING_COMPANY_NAME, to: company },
+      fromTo: {
+        from: PACKING_COMPANY_NAME,
+        fromAddress: shipFromAddress,
+        to: shipToName || '—',
+        toAddress: shipToAddress
+      },
       fields,
       handleCareful: true,
       footNote: `Pallet ${unit.palletSeq}`,
@@ -3510,13 +3548,20 @@ function packingUnitLabelShape(type, unit, plan){
   }
   const fields = unit.contents.map(c=> ({ label: c.strain, value: fmtNum(c.kg,1) + ' kg' }));
   fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
-  fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' kg' });
+  if(grade) fields.push({ label: 'Grade', value: grade });
+  fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' Kg' });
   return {
     code: unit.code,
     kind: 'pallet',
+    rotate: getPackingLabelRotate('pallet'),
     header: PACKING_COMPANY_NAME,
     subheader: unit.mixed ? 'MIXED CONTENTS' : '',
-    fromTo: { from: PACKING_COMPANY_NAME, to: company },
+    fromTo: {
+      from: PACKING_COMPANY_NAME,
+      fromAddress: shipFromAddress,
+      to: shipToName || '—',
+      toAddress: shipToAddress
+    },
     fields,
     handleCareful: true,
     footNote: '',
@@ -3524,14 +3569,19 @@ function packingUnitLabelShape(type, unit, plan){
   };
 }
 function packingLabelBodyHtml(shape){
+  const addrBlock = shape.fromTo ? `
+    <div class="pkg-label-fromto-grid">
+      <div><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+      <div><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+    </div>` : '';
   return `
     <div class="pkg-label-header">${esc(shape.header)}</div>
     ${shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : ''}
     <div class="pkg-label-rule"></div>
-    ${shape.fromTo ? `<div class="pkg-label-fromto"><div>From: ${esc(shape.fromTo.from)}</div><div>To: ${esc(shape.fromTo.to)}</div></div>` : ''}
+    ${addrBlock}
     <div class="pkg-label-fields">${shape.fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
     ${shape.handleCareful ? `<div class="pkg-label-handle">⚠ HANDLE PACKAGE CAREFULLY</div>` : ''}
-    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 40, width: 1.6, margin: 1 })}</div>
+    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: shape.kind==='bag' ? 40 : 56, width: shape.kind==='bag' ? 1.6 : 2.2, margin: 1 })}</div>
     <div class="zebra-label-id">${esc(shape.code)}</div>
     ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
     ${shape.footNote ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
@@ -3540,10 +3590,13 @@ function packingLabelBodyHtml(shape){
 function buildPackingLabelsPreviewHtml(plan, type){
   const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
   const size = getPackingLabelSizeIn(type);
+  const rotate = getPackingLabelRotate(type);
+  const previewW = (rotate && type !== 'bag') ? size.h : size.w;
+  const previewH = (rotate && type !== 'bag') ? size.w : size.h;
   return (list || []).map(unit=>{
     const shape = packingUnitLabelShape(type, unit, plan);
     return `
-    <div class="zebra-label packing-label packing-label-${type} ${unit.mixed?'mixed':''}" style="width:${size.w}in;min-height:${size.h}in;" data-code="${esc(shape.code)}">
+    <div class="zebra-label packing-label packing-label-${type} ${unit.mixed?'mixed':''} ${rotate && type!=='bag'?'packing-label-rotated':''}" style="width:${previewW}in;min-height:${previewH}in;" data-code="${esc(shape.code)}">
       ${packingLabelBodyHtml(shape)}
       <button type="button" class="small ghost test-print-one-btn" data-test-print-code="${esc(shape.code)}">🖨 Test print just this one</button>
     </div>`;
@@ -3553,75 +3606,177 @@ function buildZplForOneUnit(type, unit, plan){
   const shape = packingUnitLabelShape(type, unit, plan);
   return buildZplPackingLabel(shape, getPackingLabelSizeIn(type), getZebraDpi());
 }
-/** Left-aligned "form" style ZPL layout (header / from-to / fields / handle-careful banner /
- *  barcode + code + "N of Y" counter) — mirrors the real printed bag/box sample layouts,
- *  and scales with each tier's own label width/height. */
+/** Bag: compact upright. Box/pallet: large shipping layout; when rotate=true, drawn as
+ *  landscape on 4×6 stock (90° CW) so it matches the paper sample stickers. */
 function buildZplPackingLabel(shape, sizeIn, dpi){
-  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 44);
+  if(shape.kind === 'bag') return buildZplBagLabel(shape, sizeIn, dpi);
+  return buildZplShipLabel(shape, sizeIn, dpi);
+}
+function buildZplBagLabel(shape, sizeIn, dpi){
+  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 40);
   const pw = inchesToDots(sizeIn.w, dpi);
   const ll = inchesToDots(sizeIn.h, dpi);
-  const margin = Math.max(10, Math.round(pw * 0.025));
+  const margin = Math.max(12, Math.round(pw * 0.04));
   const innerW = pw - margin * 2;
   let y = margin;
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-
-  const headerFs = Math.max(16, Math.round(ll * 0.075));
+  const headerFs = Math.max(22, Math.round(ll * 0.11));
   zpl += '^FO' + margin + ',' + y + '^A0N,' + headerFs + ',' + headerFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.header) + '^FS\n';
-  y += headerFs + 3;
-
+  y += headerFs + 4;
   if(shape.subheader){
-    const subFs = Math.max(11, Math.round(ll * 0.045));
+    const subFs = Math.max(14, Math.round(ll * 0.07));
     zpl += '^FO' + margin + ',' + y + '^A0N,' + subFs + ',' + subFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.subheader) + '^FS\n';
-    y += subFs + 4;
+    y += subFs + 6;
   }
-  y += 2;
-  zpl += '^FO' + margin + ',' + y + '^GB' + innerW + ',1,1^FS\n';
-  y += 8;
-
-  if(shape.fromTo){
-    const ftFs = Math.max(11, Math.round(ll * 0.042));
-    zpl += '^FO' + margin + ',' + y + '^A0N,' + ftFs + ',' + ftFs + '^FD' + safe('From: ' + shape.fromTo.from) + '^FS\n';
-    y += ftFs + 4;
-    zpl += '^FO' + margin + ',' + y + '^A0N,' + ftFs + ',' + ftFs + '^FD' + safe('To: ' + shape.fromTo.to) + '^FS\n';
-    y += ftFs + 6;
-  }
-
-  const fieldFs = Math.max(13, Math.round(ll * 0.05));
+  zpl += '^FO' + margin + ',' + y + '^GB' + innerW + ',2,2^FS\n';
+  y += 10;
+  const fieldFs = Math.max(18, Math.round(ll * 0.09));
   (shape.fields || []).forEach(f=>{
     zpl += '^FO' + margin + ',' + y + '^A0N,' + fieldFs + ',' + fieldFs + '^FD' + safe(f.label + ': ' + f.value) + '^FS\n';
-    y += fieldFs + 5;
+    y += fieldFs + 6;
   });
-
-  if(shape.handleCareful){
-    y += 3;
-    const hcFs = Math.max(13, Math.round(ll * 0.052));
-    zpl += '^FO' + margin + ',' + y + '^GB' + innerW + ',' + (hcFs + 10) + ',1^FS\n';
-    zpl += '^FO' + margin + ',' + (y + 5) + '^A0N,' + hcFs + ',' + hcFs + '^FB' + innerW + ',1,0,C^FD' + safe('HANDLE PACKAGE CAREFULLY') + '^FS\n';
-    y += hcFs + 18;
-  }
-
   const id = safe(shape.code);
-  let moduleW = sizeIn.w >= 2.5 ? 2 : 1;
+  let moduleW = 2;
   let barW = estimateCode128Dots(id.length, moduleW);
   if(barW > innerW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const remaining = Math.max(30, ll - y - margin);
-  const bh = Math.max(30, Math.min(Math.round(ll * 0.14), remaining - 46));
+  const bh = Math.max(40, Math.round(ll * 0.18));
   const bx = margin + Math.max(0, Math.round((innerW - barW) / 2));
   y += 4;
   zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  y += bh + 5;
-  const codeFs = Math.max(14, Math.round(ll * 0.055));
+  y += bh + 6;
+  const codeFs = Math.max(18, Math.round(ll * 0.08));
   zpl += '^FO' + margin + ',' + y + '^A0N,' + codeFs + ',' + codeFs + '^FB' + innerW + ',1,0,C^FD' + id + '^FS\n';
   y += codeFs + 4;
   if(shape.counterText){
-    const cFs = Math.max(12, Math.round(ll * 0.045));
+    const cFs = Math.max(16, Math.round(ll * 0.07));
     zpl += '^FO' + margin + ',' + y + '^A0N,' + cFs + ',' + cFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.counterText) + '^FS\n';
-    y += cFs + 3;
   }
+  zpl += '^PQ1^XZ\n';
+  return zpl;
+}
+/** Shipping-style box/pallet ZPL. sizeIn is physical stock (usually 4×6).
+ *  When rotate=true, content is composed as landscape (6×4) then placed with ^A0R/^BCR. */
+function buildZplShipLabel(shape, sizeIn, dpi){
+  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
+  const rotate = !!shape.rotate;
+  const physW = inchesToDots(sizeIn.w, dpi);
+  const physH = inchesToDots(sizeIn.h, dpi);
+  const DW = rotate ? physH : physW;
+  const DH = rotate ? physW : physH;
+  const margin = Math.max(16, Math.round(Math.min(DW, DH) * 0.03));
+  const innerW = DW - margin * 2;
+  const colGap = 14;
+  const leftW = Math.round(innerW * 0.58);
+  const rightW = innerW - leftW - colGap;
+  const rightX = margin + leftW + colGap;
+
+  const map = (dx, dy, alongX)=>{
+    if(!rotate) return { x: dx, y: dy };
+    const fl = alongX || 0;
+    return { x: dy, y: Math.max(0, DW - dx - fl) };
+  };
+  const text = (dx, dy, fs, str, opts)=>{
+    opts = opts || {};
+    const maxW = opts.maxW || innerW;
+    const align = opts.align || 'L';
+    if(rotate){
+      const p = map(dx, dy, fs);
+      return '^FO' + p.x + ',' + p.y + '^A0R,' + fs + ',' + fs + '^FD' + str + '^FS\n';
+    }
+    if(align === 'C'){
+      return '^FO' + dx + ',' + dy + '^A0N,' + fs + ',' + fs + '^FB' + maxW + ',1,0,C^FD' + str + '^FS\n';
+    }
+    return '^FO' + dx + ',' + dy + '^A0N,' + fs + ',' + fs + '^FD' + str + '^FS\n';
+  };
+  const hline = (dx, dy, w, thick)=>{
+    if(rotate){
+      const p = map(dx, dy, w);
+      return '^FO' + p.x + ',' + p.y + '^GB' + thick + ',' + w + ',' + thick + '^FS\n';
+    }
+    return '^FO' + dx + ',' + dy + '^GB' + w + ',' + thick + ',' + thick + '^FS\n';
+  };
+  const rect = (dx, dy, w, h, thick)=>{
+    if(rotate){
+      const p = map(dx, dy, w);
+      return '^FO' + p.x + ',' + p.y + '^GB' + h + ',' + w + ',' + thick + '^FS\n';
+    }
+    return '^FO' + dx + ',' + dy + '^GB' + w + ',' + h + ',' + thick + '^FS\n';
+  };
+
+  let zpl = '^XA^MMT^MNY^PW' + physW + '^LL' + physH + '^LH0,0^LT0\n';
+  let y = margin;
+
+  const headerFs = Math.max(32, Math.round(DH * 0.08));
+  zpl += text(margin, y, headerFs, safe(shape.header, 40), { maxW: innerW, align: 'C' });
+  y += headerFs + 8;
+  if(shape.subheader){
+    const subFs = Math.max(20, Math.round(DH * 0.05));
+    zpl += text(margin, y, subFs, safe(shape.subheader, 36), { maxW: innerW, align: 'C' });
+    y += subFs + 8;
+  }
+  zpl += hline(margin, y, innerW, 3);
+  y += 14;
+
+  const titleFs = Math.max(24, Math.round(DH * 0.055));
+  const addrFs = Math.max(18, Math.round(DH * 0.042));
+  const maxAddrChars = Math.max(20, Math.floor(leftW / (addrFs * 0.52)));
+  if(shape.fromTo){
+    zpl += text(margin, y, titleFs, safe('From: ' + shape.fromTo.from, 42));
+    zpl += text(rightX, y, titleFs, safe('To: ' + shape.fromTo.to, 42));
+    y += titleFs + 6;
+    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxAddrChars).slice(0, 3);
+    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxAddrChars).slice(0, 3);
+    const rows = Math.max(fromLines.length, toLines.length, 1);
+    for(let i=0;i<rows;i++){
+      if(fromLines[i]) zpl += text(margin, y, addrFs, safe(fromLines[i], 44));
+      if(toLines[i]) zpl += text(rightX, y, addrFs, safe(toLines[i], 44));
+      y += addrFs + 4;
+    }
+    y += 8;
+  }
+  zpl += hline(margin, y, innerW, 3);
+  y += 14;
+
+  const fieldFs = Math.max(28, Math.round(DH * 0.06));
+  (shape.fields || []).forEach(f=>{
+    zpl += text(margin, y, fieldFs, safe(f.label + ' : ' + f.value, 48));
+    y += fieldFs + 10;
+  });
+  y += 8;
+  zpl += hline(margin, y, innerW, 3);
+  y += 14;
+
+  const footTop = y;
+  const hcFs = Math.max(24, Math.round(DH * 0.055));
+  const hcBoxH = hcFs + 24;
+  zpl += rect(margin, footTop, leftW, hcBoxH, 3);
+  zpl += text(margin + 10, footTop + 12, hcFs, safe('HANDLE PACKAGE CAREFULLY', 32));
+
+  const cFs = Math.max(32, Math.round(DH * 0.07));
+  zpl += text(rightX, footTop, cFs, safe(shape.counterText || '', 16), { maxW: rightW, align: 'C' });
+  let by = footTop + cFs + 10;
+  const id = safe(shape.code, 20);
+  let moduleW = 3;
+  let barW = estimateCode128Dots(id.length, moduleW);
+  if(barW > rightW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > rightW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const bh = Math.max(60, Math.round(DH * 0.14));
+  if(rotate){
+    const p = map(rightX + Math.max(0, Math.round((rightW - barW) / 2)), by, bh);
+    zpl += '^FO' + p.x + ',' + p.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  } else {
+    const bx = rightX + Math.max(0, Math.round((rightW - barW) / 2));
+    zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  }
+  by += bh + 8;
+  const codeFs = Math.max(22, Math.round(DH * 0.05));
+  zpl += text(rightX, by, codeFs, id, { maxW: rightW, align: 'C' });
+  by += codeFs + 6;
   if(shape.footNote){
-    const fnFs = Math.max(11, Math.round(ll * 0.04));
-    zpl += '^FO' + margin + ',' + y + '^A0N,' + fnFs + ',' + fnFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.footNote) + '^FS\n';
+    const fnFs = Math.max(20, Math.round(DH * 0.045));
+    zpl += text(rightX, by, fnFs, safe(shape.footNote, 24), { maxW: rightW, align: 'C' });
   }
+
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
@@ -3676,9 +3831,17 @@ function openPrintPackingLabelsModal(planId){
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
-        <p class="sub" style="margin:4px 0 0;">Pallets/boxes print bigger than bags by default (matches your paper samples) — each tier remembers its own size.</p>
+        <p class="sub" style="margin:4px 0 0;">Box/pallet default is 4×6 stock, large fonts, rotated landscape (like your paper sample). Bags stay smaller and upright.</p>
       </div>
       <div class="form-grid">
+        <div class="field"><label>Deliver to — name</label>
+          <input id="printShipToName" value="${esc(plan.shipToName || plan.company || '')}" placeholder="Customer / company"></div>
+        <div class="field"><label>Grade</label>
+          <input id="printGrade" value="${esc(plan.grade || '')}" placeholder="e.g. A" maxlength="8"></div>
+        <div class="field full"><label>Deliver to — address</label>
+          <textarea id="printShipToAddress" rows="2" placeholder="Customer delivery address">${esc(plan.shipToAddress || '')}</textarea></div>
+        <div class="field full"><label>From address</label>
+          <textarea id="printShipFromAddress" rows="2">${esc(plan.shipFromAddress || PACKING_FROM_ADDRESS_DEFAULT)}</textarea></div>
         <div class="field"><label>Printer IP</label>
           <input id="zebraIpInput" value="${esc(savedIp)}" placeholder="192.168.1.151"></div>
         <div class="field"><label>Printer DPI</label>
@@ -3690,6 +3853,7 @@ function openPrintPackingLabelsModal(planId){
           <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}"></div>
         <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">pallet</span></label>
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}"></div>
+        <div class="field full"><label class="chk"><input type="checkbox" id="packingRotateChk" ${getPackingLabelRotate(tier)?'checked':''}> Rotate box/pallet label 90° (landscape on 4×6 stock)</label></div>
       </div>
       <div class="row-actions">
         <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.pallets.length}</span>)</button>
@@ -3702,12 +3866,25 @@ function openPrintPackingLabelsModal(planId){
   </div>`;
   const setStatus = (msg)=>{ const el = document.getElementById('printStatusLine'); if(el) el.textContent = msg; };
   const getIp = ()=> (document.getElementById('zebraIpInput')||{}).value || savedIp;
+  const applyShipFieldsToPlan = ()=>{
+    plan.shipToName = (document.getElementById('printShipToName')||{}).value.trim();
+    plan.shipToAddress = (document.getElementById('printShipToAddress')||{}).value.trim();
+    plan.shipFromAddress = (document.getElementById('printShipFromAddress')||{}).value.trim() || PACKING_FROM_ADDRESS_DEFAULT;
+    plan.grade = (document.getElementById('printGrade')||{}).value.trim();
+    if(plan.shipToName) plan.company = plan.shipToName;
+    onDataChanged();
+  };
+  const refreshSheet = ()=>{
+    document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
+    bindTestPrintButtons();
+  };
   const bindTestPrintButtons = ()=>{
     document.querySelectorAll('.test-print-one-btn').forEach(btn=>{
       btn.onclick = async ()=>{
         const code = btn.dataset.testPrintCode;
         const unit = currentUnits().find(u=> u.code === code);
         if(!unit) return;
+        applyShipFieldsToPlan();
         savePackingLabelPrintSettings(tier);
         const zpl = buildZplForOneUnit(tier, unit, plan);
         try{
@@ -3720,6 +3897,19 @@ function openPrintPackingLabelsModal(planId){
     });
   };
   bindTestPrintButtons();
+  const rotChk = root.querySelector('#packingRotateChk');
+  if(rotChk){
+    rotChk.disabled = tier === 'bag';
+    rotChk.onchange = ()=>{
+      if(tier === 'bag') return;
+      localStorage.setItem('cana_pkglabel_rotate_' + tier, rotChk.checked ? '1' : '0');
+      refreshSheet();
+    };
+  }
+  ['printShipToName','printShipToAddress','printShipFromAddress','printGrade'].forEach(id=>{
+    const el = root.querySelector('#' + id);
+    if(el) el.onchange = ()=>{ applyShipFieldsToPlan(); refreshSheet(); };
+  });
   root.querySelectorAll('#packingTierToggle button').forEach(btn=>{
     btn.onclick = ()=>{
       savePackingLabelPrintSettings(tier);
@@ -3730,20 +3920,25 @@ function openPrintPackingLabelsModal(planId){
       document.getElementById('labelHIn').value = labelSize.h;
       document.getElementById('packingSizeTierLabel').textContent = tier;
       document.getElementById('packingSizeTierLabel2').textContent = tier;
-      document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
+      if(rotChk){
+        rotChk.disabled = tier === 'bag';
+        rotChk.checked = tier === 'bag' ? false : getPackingLabelRotate(tier);
+      }
       document.getElementById('packingTierCount').textContent = currentUnits().length;
       setStatus('');
-      bindTestPrintButtons();
+      refreshSheet();
     };
   });
-  root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
-  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
+  root.querySelector('#btnClosePrint').onclick = ()=>{ applyShipFieldsToPlan(); modalDirty = false; closeModal(); };
+  root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ applyShipFieldsToPlan(); modalDirty = false; closeModal(); } };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
+    applyShipFieldsToPlan();
     savePackingLabelPrintSettings(tier);
     if(await copyPackingZplToClipboard(tier, currentUnits(), plan)) setStatus('Copied — run: pbpaste | nc ' + getIp() + ' 9100');
     else setStatus('Copy failed — try Download ZPL');
   };
   root.querySelector('#btnDownloadZpl').onclick = ()=>{
+    applyShipFieldsToPlan();
     savePackingLabelPrintSettings(tier);
     const fn = downloadPackingZpl(plan, tier, currentUnits());
     setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
@@ -3791,7 +3986,7 @@ function renderPackingLookupResult(rawCode){
   const typeLabel = type === 'bag' ? 'Bag' : (type === 'box' ? 'Box' : 'Pallet');
   return `<div class="panel" style="margin:0;background:var(--grey-bg);">
     <h3 style="margin:0 0 6px;font-size:15px;">${typeLabel} <code class="batch-id">${esc(shape.code)}</code></h3>
-    ${shape.fromTo ? `<p class="sub" style="margin:0 0 4px;">From: ${esc(shape.fromTo.from)} · To: ${esc(shape.fromTo.to)}</p>` : ''}
+    ${shape.fromTo ? `<p class="sub" style="margin:0 0 4px;"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? ' — ' + esc(shape.fromTo.fromAddress) : ''}<br><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? ' — ' + esc(shape.fromTo.toAddress) : ''}</p>` : ''}
     <div style="font-size:13px;line-height:1.7;">${shape.fields.map(f=> `<b>${esc(f.label)}:</b> ${esc(f.value)}`).join('<br>')}</div>
     ${shape.handleCareful ? `<p style="margin:6px 0 0;font-weight:700;color:#92400e;">⚠ HANDLE PACKAGE CAREFULLY</p>` : ''}
     <p class="sub" style="margin:10px 0 0;">${esc(shape.counterText || '')}${shape.footNote ? ' · ' + esc(shape.footNote) : ''}</p>
@@ -4003,14 +4198,18 @@ function openPackingPreviewModal(pickIds){
       <span class="bi">1 bag = ${PACKING_BAG_KG}kg · 1 box = ${PACKING_BOX_BAGS} bags (${PACKING_BOX_BAGS*PACKING_BAG_KG}kg) · 1 pallet = ${PACKING_PALLET_BOXES} boxes (${PACKING_PALLET_BOXES*PACKING_BOX_BAGS*PACKING_BAG_KG}kg)</span></p>
       ${preview.roundingNotes.length ? `<div class="pending-banner"><span>⚠ ${preview.roundingNotes.join('<br>⚠ ')}</span></div>` : ''}
       <div class="form-grid">
-        <div class="field"><label>Company (optional)</label>
-          <input list="packingCompanyList" id="packingCompanyInput" placeholder="e.g. BLS">
+        <div class="field"><label>Deliver to — company / customer name</label>
+          <input list="packingCompanyList" id="packingCompanyInput" placeholder="e.g. BLS Wholesalers Pty Ltd" required>
           <datalist id="packingCompanyList">${companies.map(c=> `<option value="${esc(c.name)}">`).join('')}</datalist>
         </div>
-        <div class="field"><label>Label / reference (optional)</label>
-          <input id="packingLabelInput" placeholder="e.g. Aug shipment #1"></div>
-        <div class="field"><label>Grade (optional, printed on box/pallet labels)</label>
+        <div class="field"><label>Grade (optional)</label>
           <input id="packingGradeInput" placeholder="e.g. A" maxlength="8"></div>
+        <div class="field full"><label>Deliver to — address <span class="bi">/ ที่อยู่ลูกค้า</span></label>
+          <textarea id="packingShipToAddress" rows="2" placeholder="e.g. 19-23 Bado Meadowbrook QLD 4131"></textarea></div>
+        <div class="field full"><label>From address (printed on box/pallet)</label>
+          <textarea id="packingShipFromAddress" rows="2">${esc(PACKING_FROM_ADDRESS_DEFAULT)}</textarea></div>
+        <div class="field full"><label>Label / reference (optional)</label>
+          <input id="packingLabelInput" placeholder="e.g. Aug shipment #1"></div>
       </div>
       <h3 style="margin:16px 0 8px;font-size:14px;">Pallets</h3>
       <div class="table-wrap"><table class="compact-table">
@@ -4045,7 +4244,16 @@ function openPackingPreviewModal(pickIds){
     const company = root.querySelector('#packingCompanyInput').value.trim();
     const label = root.querySelector('#packingLabelInput').value.trim();
     const grade = root.querySelector('#packingGradeInput').value.trim();
-    const plan = savePackingPlan(pickIds, { company, label, grade });
+    const shipToAddress = root.querySelector('#packingShipToAddress').value.trim();
+    const shipFromAddress = root.querySelector('#packingShipFromAddress').value.trim() || PACKING_FROM_ADDRESS_DEFAULT;
+    if(!company){ alert('Enter the customer / company name for the To: line on box labels.'); return; }
+    if(!shipToAddress){ alert('Enter the delivery address for the customer (To: address on box labels).'); return; }
+    const plan = savePackingPlan(pickIds, {
+      company, label, grade,
+      shipToName: company,
+      shipToAddress,
+      shipFromAddress
+    });
     if(!plan){ alert('Could not create packing plan.'); return; }
     packingSelectedPickIds.clear();
     modalDirty = false;
