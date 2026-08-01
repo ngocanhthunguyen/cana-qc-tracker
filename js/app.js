@@ -1402,7 +1402,70 @@ function mergeSharedModulesFromRemote(data){
   if(!localDirty && Array.isArray(data.exportPicks)) state.exportPicks = data.exportPicks.slice();
   if(!localDirty && Array.isArray(data.companyOrders)) state.companyOrders = data.companyOrders.slice();
   if(!localDirty && Array.isArray(data.shipments)) state.shipments = data.shipments.slice();
-  if(!localDirty && Array.isArray(data.packingPlans)) state.packingPlans = data.packingPlans.slice();
+  mergePackingPlansFromRemote(data.packingPlans);
+}
+/** Packing plans must sync even when localDirty (other edits) — otherwise phone lookup can't find printed barcodes. */
+function mergePackingPlansFromRemote(remotePlans){
+  if(!Array.isArray(remotePlans)) return;
+  const local = state.packingPlans || [];
+  if(!localDirty){
+    if(!remotePlans.length && local.length){
+      // Don't wipe local plans on empty/glitchy sheet read — push them back up
+      localDirty = true;
+      debouncedPushToSheet();
+      return;
+    }
+    state.packingPlans = remotePlans.slice().map(normalizePackingPlan);
+    return;
+  }
+  const localById = {};
+  local.forEach(p=>{ if(p && p.id) localById[p.id] = normalizePackingPlan(p); });
+  const remoteById = {};
+  const merged = remotePlans.map(rp=>{
+    const r = normalizePackingPlan(rp);
+    remoteById[r.id] = r;
+    const l = localById[r.id];
+    if(!l) return r;
+    // Prefer remote, but keep local unit lists if sheet JSON came back empty (cell truncate / glitch)
+    return {
+      ...r,
+      bags: (r.bags && r.bags.length) ? r.bags : (l.bags || []),
+      boxes: (r.boxes && r.boxes.length) ? r.boxes : (l.boxes || []),
+      pallets: (r.pallets && r.pallets.length) ? r.pallets : (l.pallets || []),
+      pickIds: (r.pickIds && r.pickIds.length) ? r.pickIds : (l.pickIds || [])
+    };
+  });
+  const localOnly = local.filter(p=> p && p.id && !remoteById[p.id]).map(normalizePackingPlan);
+  state.packingPlans = merged.concat(localOnly);
+}
+function normalizePackingPlan(p){
+  if(!p) return p;
+  return {
+    ...p,
+    code: String(p.code || '').trim(),
+    bags: Array.isArray(p.bags) ? p.bags : [],
+    boxes: Array.isArray(p.boxes) ? p.boxes : [],
+    pallets: Array.isArray(p.pallets) ? p.pallets : [],
+    pickIds: Array.isArray(p.pickIds) ? p.pickIds : []
+  };
+}
+async function refreshPackingPlansFromSheet(){
+  if(!appsScriptUrl) return false;
+  try{
+    const url = appsScriptUrl + (appsScriptUrl.includes('?') ? '&' : '?') + 'action=read&_=' + Date.now();
+    const res = await fetch(url, { mode: 'cors', redirect: 'follow' });
+    const text = await res.text();
+    if(!res.ok) return false;
+    const data = JSON.parse(text);
+    if(!data || !data.ok) return false;
+    mergePackingPlansFromRemote(data.packingPlans || []);
+    ensureStateShape();
+    saveLocal();
+    return true;
+  }catch(e){
+    console.warn('packing plans refresh failed', e);
+    return false;
+  }
 }
 function mergeTrimmingFromRemote(remoteTrimming){
   if(!Array.isArray(remoteTrimming)) return;
@@ -3517,15 +3580,18 @@ function lookupPackingUnitFromParsed(parsed){
 function describePackingLookupMiss(rawCode){
   const normalized = normalizePackingScanRaw(rawCode);
   const parsed = parsePackingScanCode(normalized);
-  const planCount = (state.packingPlans || []).length;
+  const plans = state.packingPlans || [];
+  const planCount = plans.length;
+  const planCodes = plans.map(p=> p.code).filter(Boolean).slice(0, 12).join(', ');
   if(!normalized) return 'Empty code.';
-  if(!planCount) return 'No packing plans loaded — open Export, confirm plans are listed, then Save / Reload from Google Sheet.';
-  if(!parsed) return 'Code "' + rawCode + '" is not a packing barcode (expected like 2709-B001).';
+  if(!planCount) return 'No packing plans loaded on this device. Close this dialog → Export → Reload from Google Sheet (check Packing Plans tab has plan rows).';
+  if(!parsed) return 'Code "' + rawCode + '" is not a packing barcode (expected like 2709-B001). Loaded plans: ' + planCodes;
   const plan = findPackingPlanByCode(parsed.planCode);
-  if(!plan) return 'Plan ' + parsed.planCode + ' not found among ' + planCount + ' loaded plan(s). Check Packing Plans on the sheet, then Reload.';
+  if(!plan) return 'Plan ' + parsed.planCode + ' not among ' + planCount + ' loaded plan(s): ' + planCodes + '. On desktop open Export — if the plan is missing, recreate it or Save so Packing Plans sheet updates, then Reload on phone.';
   const list = parsed.type === 'bag' ? plan.bags : (parsed.type === 'box' ? plan.boxes : plan.pallets);
-  if(!(list || []).length) return 'Plan ' + parsed.planCode + ' is loaded but has no ' + parsed.type + 's (sheet JSON may be empty) — Save the plan again or check Packing Plans columns.';
-  return parsed.type + ' #' + parsed.seq + ' not in plan ' + parsed.planCode + ' (' + (list || []).length + ' ' + parsed.type + '(s) loaded).';
+  if(!(list || []).length) return 'Plan ' + parsed.planCode + ' loaded but ' + parsed.type + ' list is empty (Boxes/Bags JSON on sheet may be blank). Open plan on desktop → Labels once, Save, then Reload.';
+  const codes = (list || []).map(u=> u.code).filter(Boolean).slice(0, 8).join(', ');
+  return parsed.type + ' #' + parsed.seq + ' not in plan ' + parsed.planCode + '. Loaded ' + parsed.type + ' codes: ' + (codes || '(none)');
 }
 function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
@@ -4291,21 +4357,48 @@ function renderPackingPlansSection(){
   }).join('') : `<p class="sub" style="margin:8px 0 0;">No packing plans yet — select some Lot ID picks above and click "Pack selected".</p>`;
   return `
   <div class="panel">
-    <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;">
-      <div>
-        <h3 style="margin:0 0 4px;font-size:15px;">📦 Packing plans — bags · boxes · pallets</h3>
-        <p class="sub" style="margin:0;font-size:12px;color:var(--muted);">1 bag = ${PACKING_BAG_KG}kg · 1 box = ${PACKING_BOX_BAGS} bags · 1 pallet = ${PACKING_PALLET_BOXES} boxes. Scan a box/bag/pallet barcode to see exactly what's inside.<br><span class="bi">สแกนบาร์โค้ดกล่อง/ถุง/พาเลทเพื่อดูรายละเอียดข้างใน</span></p>
-      </div>
-      <button type="button" class="small" id="btnPackingLookup">🔍 Look up a code</button>
-    </div>
+    <h3 style="margin:0 0 4px;font-size:15px;">📦 Packing plans — bags · boxes · pallets</h3>
+    <p class="sub" style="margin:0;font-size:12px;color:var(--muted);">1 bag = ${PACKING_BAG_KG}kg · 1 box = ${PACKING_BOX_BAGS} bags · 1 pallet = ${PACKING_PALLET_BOXES} boxes.<br><span class="bi">1 ถุง = ${PACKING_BAG_KG} กก. · 1 กล่อง = ${PACKING_BOX_BAGS} ถุง · 1 พาเลท = ${PACKING_PALLET_BOXES} กล่อง</span></p>
     <div class="export-picks-list" style="margin-top:10px;">${body}</div>
   </div>`;
 }
 function bindPackingPlansSection(main){
   main.querySelectorAll('[data-print-plan]').forEach(btn=> btn.onclick = ()=> openPrintPackingLabelsModal(btn.dataset.printPlan));
   main.querySelectorAll('[data-delete-plan]').forEach(btn=> btn.onclick = ()=> deletePackingPlan(btn.dataset.deletePlan));
-  const btnLookup = main.querySelector('#btnPackingLookup');
-  if(btnLookup) btnLookup.onclick = ()=> openPackingLookupModal();
+}
+function renderExportLookupPanel(){
+  return `
+  <div class="panel" id="exportLookupPanel">
+    <h2 style="margin:0 0 4px;font-size:17px;">🔍 Look up bag / box / pallet</h2>
+    <p class="sub" style="margin:0 0 10px;">Type or scan the code under the barcode (e.g. <code>2709-B003</code>)<br><span class="bi">พิมพ์หรือสแกนรหัสใต้บาร์โค้ด</span></p>
+    <div class="row-actions">
+      <input id="packingLookupInput" placeholder="e.g. 2709-B003" style="flex:1;" autocomplete="off" enterkeyhint="search">
+      <button type="button" class="primary" id="btnPackingLookupGo">Look up</button>
+      <button type="button" class="ghost" id="btnPackingCamera">📷 Scan</button>
+    </div>
+    <div id="packingCameraWrap"></div>
+    <div id="packingLookupResult" style="margin-top:12px;"></div>
+  </div>`;
+}
+function bindExportLookupPanel(main){
+  const input = main.querySelector('#packingLookupInput');
+  const resultEl = ()=> main.querySelector('#packingLookupResult') || document.getElementById('packingLookupResult');
+  if(!input) return;
+  const go = ()=> runPackingLookup(input.value, resultEl());
+  const btnGo = main.querySelector('#btnPackingLookupGo');
+  if(btnGo) btnGo.onclick = go;
+  input.onkeydown = (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } };
+  const btnCam = main.querySelector('#btnPackingCamera');
+  if(btnCam) btnCam.onclick = ()=> openPackingCameraReader(main, input, go);
+  if(!(state.packingPlans || []).length && appsScriptUrl){
+    refreshPackingPlansFromSheet().then(()=>{
+      const n = (state.packingPlans || []).length;
+      const el = resultEl();
+      if(n && el && !el.innerHTML.trim()){
+        el.innerHTML = `<p class="sub" style="margin:0;">Loaded ${n} packing plan(s). Enter a code like <code>2709-B003</code>.</p>`;
+      }
+    });
+  }
 }
 function renderPackingLookupResult(rawCode){
   const found = lookupPackingUnit(rawCode);
@@ -4323,6 +4416,16 @@ function renderPackingLookupResult(rawCode){
     <p class="sub" style="margin:10px 0 0;">${esc(shape.counterText || '')}${shape.footNote ? ' · ' + esc(shape.footNote) : ''}</p>
     <p class="sub" style="margin:4px 0 0;">Part of packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
   </div>`;
+}
+async function runPackingLookup(rawCode, resultEl){
+  if(!resultEl) return;
+  let found = lookupPackingUnit(rawCode);
+  if(!found){
+    resultEl.innerHTML = `<div class="pending-banner"><span>⏳ Refreshing packing plans from Google Sheet…</span></div>`;
+    await refreshPackingPlansFromSheet();
+    found = lookupPackingUnit(rawCode);
+  }
+  resultEl.innerHTML = renderPackingLookupResult(rawCode);
 }
 let packingCameraScanner = null;
 let packingScanLock = false;
@@ -4356,10 +4459,20 @@ function openPackingLookupModal(){
   root.querySelector('#btnClosePackingLookup').onclick = close;
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay') close(); };
   const input = root.querySelector('#packingLookupInput');
-  const go = ()=>{ document.getElementById('packingLookupResult').innerHTML = renderPackingLookupResult(input.value); };
+  const resultEl = ()=> document.getElementById('packingLookupResult');
+  const go = ()=> runPackingLookup(input.value, resultEl());
   root.querySelector('#btnPackingLookupGo').onclick = go;
   input.onkeydown = (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); go(); } };
   root.querySelector('#btnPackingCamera').onclick = ()=> openPackingCameraReader(root, input, go);
+  // Prefetch plans so scan/lookup works even if phone hadn't pulled Export data yet
+  if(!(state.packingPlans || []).length && appsScriptUrl){
+    refreshPackingPlansFromSheet().then(()=>{
+      const n = (state.packingPlans || []).length;
+      if(n && resultEl() && !resultEl().innerHTML.trim()){
+        resultEl().innerHTML = `<p class="sub" style="margin:0;">Loaded ${n} packing plan(s) from sheet. Enter a code like <code>2709-B003</code>.</p>`;
+      }
+    });
+  }
 }
 async function openPackingCameraReader(root, input, go){
   const wrap = root.querySelector('#packingCameraWrap');
@@ -4447,7 +4560,7 @@ function openPrintExportLotLabels(pickIds){
     setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
   };
 }
-function renderFarmStrainTotalsPanel(month){
+function renderFarmStrainTotalsPanel(month, months){
   const rows = computeFarmStrainRows();
   const picks = getExportPicksFor(month);
   const body = rows.length ? rows.map(r=>{
@@ -4476,6 +4589,7 @@ function renderFarmStrainTotalsPanel(month){
       </div>
     </div>`).join('') : `<p class="sub" style="margin:8px 0 0;">No kg picked yet for ${esc(month)}.</p>`;
   const selectedCount = picks.filter(p=> packingSelectedPickIds.has(p.id)).length;
+  const monthOpts = (months || [month]).map(m=>`<option value="${esc(m)}" ${m===month?'selected':''}>${esc(m)}</option>`).join('');
   return `
   <div class="panel export-farm-strain-panel">
     <h3 style="margin:0 0 4px;font-size:15px;">📊 Farm × Strain totals — all-time available stock</h3>
@@ -4485,7 +4599,12 @@ function renderFarmStrainTotalsPanel(month){
       <thead><tr><th>Farm</th><th>Strain</th><th>Bigs kg</th><th>Pops kg</th><th>Total QC kg</th><th>Picked</th><th>Remaining</th><th></th></tr></thead>
       <tbody>${body}</tbody>
     </table></div>
-    <h4 style="margin:16px 0 6px;font-size:13px;">Export picks / Lot IDs — ${esc(month)}</h4>
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:16px 0 6px;">
+      <h4 style="margin:0;font-size:13px;">Export picks / Lot IDs</h4>
+      <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;">Month
+        <select id="exportPicksMonthInput" class="dash-select">${monthOpts}</select>
+      </label>
+    </div>
     <div class="export-picks-list">${picksHtml}</div>
     ${picks.length ? `<div class="row-actions" style="margin-top:10px;">
       <button type="button" class="small primary" id="btnPackSelectedPicks" ${selectedCount ? '' : 'disabled'}>📦 Pack selected (${selectedCount}) → bags/boxes/pallets</button>
@@ -4594,20 +4713,26 @@ function openPackingPreviewModal(pickIds){
     openPrintPackingLabelsModal(plan.id);
   };
 }
-function renderExportDownloadSection(month){
+function renderExportDownloadSection(month, months){
   const selected = getSelectedExportItems(month);
   const summary = computeExportSummary(month);
   const companies = getExportCompanies();
   const previewCompany = companies[0];
+  const monthOpts = (months || [month]).map(m=>`<option value="${esc(m)}" ${m===month?'selected':''}>${esc(m)}</option>`).join('');
   return `
     <div class="panel export-builder-intro">
       <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;align-items:flex-start;">
         <div>
-          <h3 style="margin:0 0 4px;font-size:15px;">⬇ Download — ${esc(month)}</h3>
-          <p style="margin:0 0 6px;font-size:12px;color:var(--muted);">Manager picks strains + export kg for the file (not auto dump from QC)</p>
+          <h3 style="margin:0 0 4px;font-size:15px;">⬇ Download reports</h3>
+          <p style="margin:0 0 6px;font-size:12px;color:var(--muted);">Pick strains + export kg for the file (not auto dump from QC)</p>
           <p style="margin:0;font-size:12px;color:var(--muted);">${selected.length} strain${selected.length===1?'':'s'} selected · <b>${fmtNum(summary.total.exportKg, 3)} kg</b> total export</p>
         </div>
-        <button type="button" class="small purple admin-only" id="btnManageExportCompanies">+ Manage export companies</button>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <label style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;">Month
+            <select id="exportMonthInput" class="dash-select">${monthOpts}</select>
+          </label>
+          <button type="button" class="small purple admin-only" id="btnManageExportCompanies">+ Manage export companies</button>
+        </div>
       </div>
     </div>
     ${renderExportBatchPicker(month)}
@@ -7680,25 +7805,20 @@ function renderExportView(){
   months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
   const main = document.getElementById('mainArea');
   main.innerHTML = `
-    <div class="panel">
-      <h2 style="margin:0 0 4px;font-size:17px;">🚢 Export</h2>
-      <p class="sub" style="margin:0 0 10px;">Plan incoming shipments → see what's ready to pick → track company orders → download reports, all in one place.<br><span class="bi">วางแผนรับสินค้า → ดูสต็อกที่พร้อมส่งออก → ติดตามคำสั่งซื้อ → ดาวน์โหลดรายงาน</span></p>
-      <div class="dash-filter">
-        <label style="font-size:13px;font-weight:600;">Download / batch-picker month <span class="bi">/ เดือน</span>:</label>
-        <select id="exportMonthInput" class="dash-select">
-          ${months.map(m=>`<option value="${esc(m)}" ${m===dashMonth?'selected':''}>${esc(m)}</option>`).join('')}
-        </select>
-        <span class="muted" style="font-size:12px;">Applies to the batch picker + downloads below. Shipments and Company Orders below have their own month filters.</span>
-      </div>
-    </div>
+    ${renderExportLookupPanel()}
     <div id="shipmentsQcBannerWrap">${renderShipmentsQcBanner()}</div>
     ${renderShipmentsSection()}
-    ${renderFarmStrainTotalsPanel(dashMonth)}
+    ${renderFarmStrainTotalsPanel(dashMonth, months)}
     ${renderPackingPlansSection()}
     ${renderCompanyOrdersSection()}
-    ${renderExportDownloadSection(dashMonth)}
+    ${renderExportDownloadSection(dashMonth, months)}
   `;
-  document.getElementById('exportMonthInput').onchange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderExportView(); };
+  const onMonthChange = (e)=>{ dashMonth = e.target.value; exportSelectionMonth = ''; exportWeightsMonth = ''; renderExportView(); };
+  const picksMonth = document.getElementById('exportPicksMonthInput');
+  const dlMonth = document.getElementById('exportMonthInput');
+  if(picksMonth) picksMonth.onchange = onMonthChange;
+  if(dlMonth) dlMonth.onchange = onMonthChange;
+  bindExportLookupPanel(main);
   bindShipmentsSection(main);
   bindPackingPlansSection(main);
   bindCompanyOrdersSection(main);

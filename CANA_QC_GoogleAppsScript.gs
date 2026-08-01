@@ -2811,6 +2811,8 @@ function writePackingPlans(ss, plans) {
     sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, PACKING_PLANS_NUM_COLS).clearContent();
   }
   if (rows.length) {
+    // Keep Code as text so "2709" is not coerced / truncated as a number
+    sheet.getRange(CANA_FLOWER_DATA_START, 2, rows.length, 1).setNumberFormat('@');
     sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, PACKING_PLANS_NUM_COLS).setValues(rows);
     for (var r = 0; r < rows.length; r++) {
       sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, PACKING_PLANS_NUM_COLS)
