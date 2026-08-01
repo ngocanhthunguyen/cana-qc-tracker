@@ -3470,9 +3470,9 @@ function savePackingLabelPrintSettings(tier){
   }
 }
 function getPackingLabelRotate(tier){
-  // Keep API for preview/settings, but always upright for now — the 90° mapping
-  // scrambled the last box print (cut-off letters + wrong layout).
-  return false;
+  // Box/pallet always print landscape (via ^FWR) on 4×6 stock — fills the sticker
+  // like the paper sample. Bags stay upright.
+  return tier === 'box' || tier === 'pallet';
 }
 function wrapLabelWords(text, maxChars){
   const words = String(text || '').split(/\s+/).filter(Boolean);
@@ -3653,101 +3653,105 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Shipping-style box/pallet ZPL — upright on 4×6 stock, large clear ^A0 font.
- *  Layout matches the paper sample: From/To + address, product fields, HANDLE banner,
- *  counter + barcode. (90° rotate is disabled by default — it scrambled the last print.) */
+/** Box/pallet ZPL — landscape on 4×6 stock using ^FWR.
+ *  Physical media: PW=width(4"), LL=height(6"). With ^FWR, FO x runs along the
+ *  6" edge (reading left→right) and FO y along the 4" edge (reading top→bottom),
+ *  so the sticker reads landscape and fills the label like the paper sample. */
 function buildZplShipLabel(shape, sizeIn, dpi){
-  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
-  const pw = inchesToDots(sizeIn.w, dpi); // usually 4"
-  const ll = inchesToDots(sizeIn.h, dpi); // usually 6"
-  const m = Math.max(20, Math.round(pw * 0.04));
-  const innerW = pw - m * 2;
+  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 52);
+  const pw = inchesToDots(sizeIn.w, dpi); // physical across = 4"
+  const ll = inchesToDots(sizeIn.h, dpi); // physical feed  = 6"
+  // Reading canvas (landscape):
+  const DW = ll; // 6" left→right when reading
+  const DH = pw; // 4" top→bottom when reading
+  const m = Math.max(18, Math.round(Math.min(DW, DH) * 0.03));
+  const innerW = DW - m * 2;
+  const colGap = 16;
+  const halfW = Math.floor((innerW - colGap) / 2);
+  const rightX = m + halfW + colGap;
+
+  let zpl = '^XA^MMT^MNY^FWR^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
   let y = m;
-  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
 
-  const line = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',3,3^FS\n';
-  const center = (yy, fs, str)=>
-    '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.9) + '^FB' + innerW + ',1,0,C^FD' + str + '^FS\n';
-  const left = (yy, fs, str)=>
-    '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.9) + '^FD' + str + '^FS\n';
+  // Helpers use FO(x along 6", y along 4") under ^FWR + ^A0N
+  const t = (x, yy, fs, str, width)=>{
+    const fw = Math.round(fs * 0.92);
+    if(width){
+      return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + fw + '^FB' + width + ',1,0,C^FD' + str + '^FS\n';
+    }
+    return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + fw + '^FD' + str + '^FS\n';
+  };
+  const hline = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',3,3^FS\n';
 
-  // --- Header ---
-  const headerFs = Math.max(28, Math.round(ll * 0.055));
-  zpl += center(y, headerFs, safe(shape.header, 42));
+  // Header — large, centered across 6"
+  const headerFs = Math.max(36, Math.round(DH * 0.10));
+  zpl += t(m, y, headerFs, safe(shape.header, 44), innerW);
   y += headerFs + 6;
   if(shape.subheader){
-    const subFs = Math.max(18, Math.round(ll * 0.035));
-    zpl += center(y, subFs, safe(shape.subheader, 36));
-    y += subFs + 8;
+    const subFs = Math.max(22, Math.round(DH * 0.055));
+    zpl += t(m, y, subFs, safe(shape.subheader, 40), innerW);
+    y += subFs + 6;
   }
-  zpl += line(y); y += 14;
+  zpl += hline(y); y += 10;
 
-  // --- From / To (stacked — readable on 4" width) ---
-  const nameFs = Math.max(24, Math.round(ll * 0.042));
-  const addrFs = Math.max(18, Math.round(ll * 0.032));
-  const maxChars = Math.max(22, Math.floor(innerW / (addrFs * 0.52)));
+  // From / To side by side (matches paper sample)
+  const nameFs = Math.max(26, Math.round(DH * 0.07));
+  const addrFs = Math.max(20, Math.round(DH * 0.05));
+  const maxChars = Math.max(18, Math.floor(halfW / (addrFs * 0.50)));
   if(shape.fromTo){
-    zpl += left(y, nameFs, safe('From: ' + shape.fromTo.from, 44));
+    zpl += t(m, y, nameFs, safe('From: ' + shape.fromTo.from, 40));
+    zpl += t(rightX, y, nameFs, safe('To: ' + shape.fromTo.to, 40));
     y += nameFs + 4;
-    wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 3).forEach(ln=>{
-      zpl += left(y, addrFs, safe(ln, 48));
+    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
+    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
+    const rows = Math.max(fromLines.length, toLines.length, 1);
+    for(let i=0;i<rows;i++){
+      if(fromLines[i]) zpl += t(m, y, addrFs, safe(fromLines[i], 44));
+      if(toLines[i]) zpl += t(rightX, y, addrFs, safe(toLines[i], 44));
       y += addrFs + 3;
-    });
-    y += 8;
-    zpl += left(y, nameFs, safe('To: ' + shape.fromTo.to, 44));
-    y += nameFs + 4;
-    wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 3).forEach(ln=>{
-      zpl += left(y, addrFs, safe(ln, 48));
-      y += addrFs + 3;
-    });
-    y += 10;
+    }
+    y += 6;
   }
-  zpl += line(y); y += 14;
+  zpl += hline(y); y += 10;
 
-  // --- Product fields ---
-  const fieldFs = Math.max(26, Math.round(ll * 0.045));
+  // Product fields — large, full width
+  const fieldFs = Math.max(30, Math.round(DH * 0.075));
   (shape.fields || []).forEach(f=>{
-    zpl += left(y, fieldFs, safe(f.label + ' : ' + f.value, 48));
-    y += fieldFs + 8;
+    zpl += t(m, y, fieldFs, safe(f.label + ' : ' + f.value, 50));
+    y += fieldFs + 6;
   });
-  y += 6;
-  zpl += line(y); y += 14;
+  y += 4;
+  zpl += hline(y); y += 10;
 
-  // --- Footer: HANDLE (left) + counter/barcode (right) ---
-  const colGap = 12;
-  const leftW = Math.round(innerW * 0.55);
-  const rightW = innerW - leftW - colGap;
-  const rightX = m + leftW + colGap;
+  // Footer band: HANDLE left + counter/barcode right — use remaining height
   const footTop = y;
-  const remain = ll - footTop - m;
+  const footH = Math.max(80, DH - footTop - m);
+  const leftW = Math.round(innerW * 0.52);
+  const rightW = innerW - leftW - colGap;
+  const rx = m + leftW + colGap;
 
-  const hcFs = Math.max(20, Math.round(ll * 0.038));
-  const hcH = Math.max(hcFs * 3 + 24, Math.round(remain * 0.35));
-  zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + hcH + ',3^FS\n';
-  const hcLines = ['HANDLE', 'PACKAGE', 'CAREFULLY'];
-  let hy = footTop + Math.round((hcH - hcLines.length * (hcFs + 4)) / 2);
-  hcLines.forEach(ln=>{
-    zpl += '^FO' + m + ',' + hy + '^A0N,' + hcFs + ',' + Math.round(hcFs * 0.9) + '^FB' + leftW + ',1,0,C^FD' + ln + '^FS\n';
-    hy += hcFs + 4;
-  });
+  zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + footH + ',3^FS\n';
+  const hcFs = Math.max(28, Math.round(DH * 0.07));
+  zpl += t(m, footTop + Math.round(footH / 2 - hcFs / 2), hcFs, safe('HANDLE PACKAGE CAREFULLY', 28), leftW);
 
-  const cFs = Math.max(36, Math.round(ll * 0.06));
-  zpl += '^FO' + rightX + ',' + footTop + '^A0N,' + cFs + ',' + Math.round(cFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + safe(shape.counterText || '', 16) + '^FS\n';
-  let by = footTop + cFs + 10;
+  const cFs = Math.max(40, Math.round(DH * 0.11));
+  zpl += t(rx, footTop + 4, cFs, safe(shape.counterText || '', 16), rightW);
+  let by = footTop + cFs + 8;
   const id = safe(shape.code, 20);
-  let moduleW = 2;
+  let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(50, Math.min(Math.round(remain * 0.28), ll - by - m - 70));
-  const bx = rightX + Math.max(0, Math.round((rightW - barW) / 2));
+  if(barW > rightW - 8){ moduleW = Math.max(1, moduleW - 1); barW = estimateCode128Dots(id.length, moduleW); }
+  const bh = Math.max(55, Math.min(Math.round(footH * 0.42), DH - by - m - 55));
+  const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
+  // ^BCN under ^FWR rotates with the label
   zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  by += bh + 8;
-  const codeFs = Math.max(20, Math.round(ll * 0.035));
-  zpl += '^FO' + rightX + ',' + by + '^A0N,' + codeFs + ',' + Math.round(codeFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + id + '^FS\n';
-  by += codeFs + 6;
+  by += bh + 6;
+  const codeFs = Math.max(22, Math.round(DH * 0.055));
+  zpl += t(rx, by, codeFs, id, rightW);
+  by += codeFs + 4;
   if(shape.footNote){
-    const fnFs = Math.max(18, Math.round(ll * 0.032));
-    zpl += '^FO' + rightX + ',' + by + '^A0N,' + fnFs + ',' + Math.round(fnFs * 0.9) + '^FB' + rightW + ',1,0,C^FD' + safe(shape.footNote, 24) + '^FS\n';
+    const fnFs = Math.max(20, Math.round(DH * 0.05));
+    zpl += t(rx, by, fnFs, safe(shape.footNote, 24), rightW);
   }
 
   zpl += '^PQ1^XZ\n';
@@ -3788,7 +3792,7 @@ function openPrintPackingLabelsModal(planId){
   const root = document.getElementById('modalRoot');
   const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
   const savedDpi = getZebraDpi();
-  let tier = 'pallet';
+  let tier = 'box';
   let labelSize = getPackingLabelSizeIn(tier);
   const currentUnits = ()=> tier === 'bag' ? plan.bags : (tier === 'box' ? plan.boxes : plan.pallets);
   root.innerHTML = `
@@ -3797,14 +3801,14 @@ function openPrintPackingLabelsModal(planId){
       <h2>🖨 Print packing labels — ${esc(plan.code)}</h2>
       <p class="sub">${plan.totalBags} bags · ${plan.boxes.length} boxes · ${plan.pallets.length} pallets · <b>${fmtNum(plan.totalKg,3)} kg</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
       <div class="view-toggle" id="packingTierToggle">
-        <button type="button" class="active" data-tier="pallet">Pallets (${plan.pallets.length})</button>
-        <button type="button" data-tier="box">Boxes (${plan.boxes.length})</button>
+        <button type="button" data-tier="pallet">Pallets (${plan.pallets.length})</button>
+        <button type="button" class="active" data-tier="box">Boxes (${plan.boxes.length})</button>
         <button type="button" data-tier="bag">Bags (${plan.bags.length})</button>
       </div>
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
-        <p class="sub" style="margin:4px 0 0;">Box/pallet = upright 4×6 shipping label with large clear font (like your paper sample). Bags stay smaller.</p>
+        <p class="sub" style="margin:4px 0 0;">Box/pallet print landscape on your 4×6 stock (rotated with ^FWR) so text fills the sticker like the paper sample. Bags stay smaller and upright.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Deliver to — name</label>
@@ -3822,13 +3826,13 @@ function openPrintPackingLabelsModal(planId){
             <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
             <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
           </select></div>
-        <div class="field"><label>Label width (in) — <span id="packingSizeTierLabel">pallet</span></label>
+        <div class="field"><label>Label width (in) — <span id="packingSizeTierLabel">box</span></label>
           <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}"></div>
-        <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">pallet</span></label>
+        <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">box</span></label>
           <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions">
-        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.pallets.length}</span>)</button>
+        <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.boxes.length}</span>)</button>
         <button type="button" class="ghost" id="btnCopyZpl">Copy ZPL</button>
         <button type="button" class="ghost" id="btnClosePrint">Close</button>
       </div>
