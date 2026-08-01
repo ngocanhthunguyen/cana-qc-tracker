@@ -249,10 +249,10 @@ const PACKING_PRODUCT_TYPE = 'Cured Dried';
 const PACKING_FROM_ADDRESS_DEFAULT = '122/32 Moo 6 Bang Phriang, Bang Bo, Samut Prakan 10560 Thailand';
 const PACKING_LABEL_LAYOUTS = [
   { id: 'stacked', label: 'Full stacked', hint: 'Logo + From/To + all fields + HANDLE + barcode' },
-  { id: 'shipping', label: 'Shipping form', hint: 'Like last month paper label — From/To blocks, product grid, HANDLE + barcode' },
+  { id: 'shipping', label: 'Shipping form', hint: 'Paper-sample style: bordered From|To, product fields, HANDLE, large barcode filling the label' },
   { id: 'minimal', label: 'Minimal', hint: 'Logo + strain/lot/weight + N of Y + big barcode' }
 ];
-const PACKING_LABEL_LAYOUT_DEFAULT = 'stacked';
+const PACKING_LABEL_LAYOUT_DEFAULT = 'shipping';
 
 /** Company Orders — standalone monthly order tracker per company/strain (not yet linked to export picks) */
 const COMPANY_ORDER_COLS = [

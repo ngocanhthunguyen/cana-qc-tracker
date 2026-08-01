@@ -3678,7 +3678,9 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Box/pallet ZPL — upright 4×6 with selectable layout + Cana logo graphic. */
+/** Box/pallet ZPL — upright 4×6 that FILLS the sticker (no empty bottom third).
+ *  Layouts: stacked | shipping | minimal. Logo + content scale to use ~full height;
+ *  leftover space goes into a taller barcode. */
 function buildZplShipLabel(shape, sizeIn, dpi, opts){
   opts = opts || {};
   const layout = opts.layout || getPackingLabelLayout();
@@ -3687,113 +3689,174 @@ function buildZplShipLabel(shape, sizeIn, dpi, opts){
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
   const pw = inchesToDots(sizeIn.w, dpi);
   const ll = inchesToDots(sizeIn.h, dpi);
-  const m = Math.max(22, Math.round(pw * 0.04));
+  const m = Math.max(20, Math.round(pw * 0.035));
   const innerW = pw - m * 2;
-  let y = m;
-  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-  zpl += '^FO' + Math.round(m/2) + ',' + Math.round(m/2) + '^GB' + (pw - m) + ',' + (ll - m) + ',2^FS\n';
+  const usable = ll - m * 2;
 
-  const left = (yy, fs, str)=>{
-    const fw = Math.round(fs * 0.9);
-    return '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + fw + '^FD' + str + '^FS\n';
-  };
-  const center = (yy, fs, str)=>{
-    const fw = Math.round(fs * 0.9);
-    const approxChar = fs * 0.55;
-    const tw = Math.min(innerW, Math.round(String(str).length * approxChar));
-    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
-    return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + fw + '^FD' + str + '^FS\n';
-  };
-  const rule = (yy)=> '^FO' + m + ',' + yy + '^GB' + innerW + ',2,2^FS\n';
   const logoG = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoSize] || CANA_LOGO_ZPL.small) : null;
-  if(logoG && typeof buildCanaLogoGfa === 'function'){
-    const lx = m + Math.max(0, Math.round((innerW - logoG.widthDots) / 2));
-    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoSize);
-    else zpl += buildCanaLogoGfa(lx, y, logoSize);
-    y += logoG.heightDots + 10;
-  } else {
-    zpl += center(y, Math.max(28, Math.round(ll * 0.045)), safe(shape.header, 40));
-    y += Math.max(28, Math.round(ll * 0.045)) + 8;
-  }
+  const logoH = logoG ? logoG.heightDots : Math.round(ll * 0.08);
 
   const fields = layout === 'minimal'
     ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
     : (shape.fields || []);
 
-  if(layout !== 'minimal'){
-    if(shape.subheader){
-      const subFs = Math.max(18, Math.round(ll * 0.03));
-      zpl += center(y, subFs, safe(shape.subheader, 36));
-      y += subFs + 6;
-    }
-    zpl += rule(y); y += 12;
+  const fromLines = shape.fromTo ? wrapLabelWords(shape.fromTo.fromAddress || '', layout === 'shipping' ? 22 : 34).slice(0, 2) : [];
+  const toLines = shape.fromTo ? wrapLabelWords(shape.fromTo.toAddress || '', layout === 'shipping' ? 22 : 34).slice(0, 2) : [];
+  const addrRows = Math.max(fromLines.length, toLines.length, shape.fromTo ? 1 : 0);
 
-    const nameFs = Math.max(22, Math.round(ll * 0.038));
-    const addrFs = Math.max(16, Math.round(ll * 0.028));
-    if(shape.fromTo){
-      if(layout === 'shipping'){
-        // Side-by-side names, then full-width address lines under each block stacked to avoid overlap
-        const half = Math.floor((innerW - 12) / 2);
-        const rightX = m + half + 12;
-        zpl += '^FO' + m + ',' + y + '^A0N,' + nameFs + ',' + Math.round(nameFs*0.9) + '^FD' + safe('From: ' + shape.fromTo.from, 28) + '^FS\n';
-        zpl += '^FO' + rightX + ',' + y + '^A0N,' + nameFs + ',' + Math.round(nameFs*0.9) + '^FD' + safe('To: ' + shape.fromTo.to, 28) + '^FS\n';
-        y += nameFs + 4;
-        const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', 22).slice(0, 2);
-        const toLines = wrapLabelWords(shape.fromTo.toAddress || '', 22).slice(0, 2);
-        const rows = Math.max(fromLines.length, toLines.length);
-        for(let i=0;i<rows;i++){
-          if(fromLines[i]) zpl += '^FO' + m + ',' + y + '^A0N,' + addrFs + ',' + Math.round(addrFs*0.9) + '^FD' + safe(fromLines[i], 28) + '^FS\n';
-          if(toLines[i]) zpl += '^FO' + rightX + ',' + y + '^A0N,' + addrFs + ',' + Math.round(addrFs*0.9) + '^FD' + safe(toLines[i], 28) + '^FS\n';
-          y += addrFs + 3;
-        }
-      } else {
-        zpl += left(y, nameFs, safe('From: ' + shape.fromTo.from, 42)); y += nameFs + 3;
-        wrapLabelWords(shape.fromTo.fromAddress || '', 34).slice(0, 2).forEach(ln=>{ zpl += left(y, addrFs, safe(ln, 42)); y += addrFs + 2; });
-        y += 4;
-        zpl += left(y, nameFs, safe('To: ' + shape.fromTo.to, 42)); y += nameFs + 3;
-        wrapLabelWords(shape.fromTo.toAddress || '', 34).slice(0, 2).forEach(ln=>{ zpl += left(y, addrFs, safe(ln, 42)); y += addrFs + 2; });
-      }
-      y += 8;
-      zpl += rule(y); y += 12;
+  // Base font sizes (will be scaled up to fill height)
+  let fs = {
+    name: Math.round(ll * 0.038),
+    addr: Math.round(ll * 0.028),
+    field: Math.round(ll * (layout === 'minimal' ? 0.055 : 0.048)),
+    handle: Math.round(ll * 0.038),
+    counter: Math.round(ll * (layout === 'minimal' ? 0.07 : 0.055)),
+    code: Math.round(ll * 0.036),
+    foot: Math.round(ll * 0.030)
+  };
+  Object.keys(fs).forEach(k=>{ fs[k] = Math.max(18, fs[k]); });
+
+  // Estimate content height at base sizes (barcode starts small; grows with leftover)
+  let contentH = logoH + 12;
+  if(layout !== 'minimal' && shape.fromTo){
+    contentH += 10; // top pad in from/to box
+    if(layout === 'shipping'){
+      contentH += fs.name + 6 + addrRows * (fs.addr + 4) + 10;
+    } else {
+      contentH += (fs.name + 4) + fromLines.length * (fs.addr + 3) + 6;
+      contentH += (fs.name + 4) + toLines.length * (fs.addr + 3) + 10;
     }
+    contentH += 12; // rule after
+  }
+  contentH += fields.length * (fs.field + 10);
+  if(layout !== 'minimal' && shape.handleCareful) contentH += fs.handle + 28;
+  if(shape.counterText) contentH += fs.counter + 12;
+  contentH += 80; // min barcode
+  contentH += fs.code + 8;
+  if(shape.footNote && layout !== 'minimal') contentH += fs.foot + 6;
+
+  // Scale text up so we don't leave a blank bottom third; leftover → barcode
+  const scale = Math.min(1.55, Math.max(1.0, (usable * 0.62) / Math.max(1, contentH - 80)));
+  Object.keys(fs).forEach(k=>{ fs[k] = Math.round(fs[k] * scale); });
+
+  // Recompute fixed (non-barcode) height after scale
+  let fixedH = logoH + 12;
+  if(layout !== 'minimal' && shape.fromTo){
+    fixedH += 10;
+    if(layout === 'shipping') fixedH += fs.name + 6 + addrRows * (fs.addr + 4) + 10;
+    else {
+      fixedH += (fs.name + 4) + fromLines.length * (fs.addr + 3) + 6;
+      fixedH += (fs.name + 4) + toLines.length * (fs.addr + 3) + 10;
+    }
+    fixedH += 12;
+  }
+  fixedH += fields.length * (fs.field + 10);
+  if(layout !== 'minimal' && shape.handleCareful) fixedH += fs.handle + 28;
+  if(shape.counterText) fixedH += fs.counter + 12;
+  fixedH += fs.code + 8;
+  if(shape.footNote && layout !== 'minimal') fixedH += fs.foot + 6;
+
+  const barcodeH = Math.max(90, Math.min(Math.round(ll * 0.22), usable - fixedH - 8));
+
+  let y = m;
+  let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
+  // outer border
+  zpl += '^FO' + Math.round(m * 0.45) + ',' + Math.round(m * 0.45) + '^GB' + (pw - Math.round(m * 0.9)) + ',' + (ll - Math.round(m * 0.9)) + ',3^FS\n';
+
+  const left = (yy, fss, str, x0)=>{
+    x0 = x0 === undefined ? m : x0;
+    return '^FO' + x0 + ',' + yy + '^A0N,' + fss + ',' + Math.round(fss * 0.9) + '^FD' + str + '^FS\n';
+  };
+  const center = (yy, fss, str)=>{
+    const approxChar = fss * 0.55;
+    const tw = Math.min(innerW, Math.round(String(str).length * approxChar));
+    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
+    return '^FO' + x + ',' + yy + '^A0N,' + fss + ',' + Math.round(fss * 0.9) + '^FD' + str + '^FS\n';
+  };
+
+  // Logo
+  if(logoG && typeof buildCanaLogoGfa === 'function'){
+    const lx = m + Math.max(0, Math.round((innerW - logoG.widthDots) / 2));
+    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoSize);
+    else zpl += buildCanaLogoGfa(lx, y, logoSize);
+    y += logoH + 12;
+  } else {
+    zpl += center(y, fs.name + 6, safe(shape.header, 40));
+    y += fs.name + 16;
   }
 
-  const fieldFs = Math.max(layout === 'minimal' ? 32 : 26, Math.round(ll * (layout === 'minimal' ? 0.055 : 0.042)));
+  // From / To block
+  if(layout !== 'minimal' && shape.fromTo){
+    const blockTop = y;
+    let blockH;
+    if(layout === 'shipping'){
+      blockH = 10 + fs.name + 6 + addrRows * (fs.addr + 4) + 10;
+      zpl += '^FO' + m + ',' + blockTop + '^GB' + innerW + ',' + blockH + ',2^FS\n';
+      // vertical divider
+      const midX = m + Math.round(innerW / 2);
+      zpl += '^FO' + midX + ',' + blockTop + '^GB' + '2,' + blockH + ',2^FS\n';
+      const leftPad = m + 8;
+      const rightPad = midX + 8;
+      let ty = blockTop + 8;
+      zpl += left(ty, fs.name, safe('From: ' + shape.fromTo.from, 26), leftPad);
+      zpl += left(ty, fs.name, safe('To: ' + shape.fromTo.to, 26), rightPad);
+      ty += fs.name + 6;
+      for(let i=0;i<addrRows;i++){
+        if(fromLines[i]) zpl += left(ty, fs.addr, safe(fromLines[i], 26), leftPad);
+        if(toLines[i]) zpl += left(ty, fs.addr, safe(toLines[i], 26), rightPad);
+        ty += fs.addr + 4;
+      }
+    } else {
+      const stackedH = 10 + (fs.name + 4) + fromLines.length * (fs.addr + 3) + 6
+        + (fs.name + 4) + toLines.length * (fs.addr + 3) + 10;
+      blockH = stackedH;
+      zpl += '^FO' + m + ',' + blockTop + '^GB' + innerW + ',' + blockH + ',2^FS\n';
+      let ty = blockTop + 8;
+      zpl += left(ty, fs.name, safe('From: ' + shape.fromTo.from, 42)); ty += fs.name + 4;
+      fromLines.forEach(ln=>{ zpl += left(ty, fs.addr, safe(ln, 42)); ty += fs.addr + 3; });
+      ty += 6;
+      zpl += left(ty, fs.name, safe('To: ' + shape.fromTo.to, 42)); ty += fs.name + 4;
+      toLines.forEach(ln=>{ zpl += left(ty, fs.addr, safe(ln, 42)); ty += fs.addr + 3; });
+    }
+    y = blockTop + blockH + 12;
+  }
+
+  // Product fields
   fields.forEach(f=>{
-    zpl += left(y, fieldFs, safe(f.label + ' : ' + f.value, 44));
-    y += fieldFs + 8;
+    zpl += left(y, fs.field, safe(f.label + ' : ' + f.value, 44));
+    y += fs.field + 10;
   });
 
+  // HANDLE
   if(layout !== 'minimal' && shape.handleCareful){
-    y += 4;
-    const hcFs = Math.max(22, Math.round(ll * 0.036));
-    const boxH = hcFs + 20;
-    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
-    zpl += center(y + 8, hcFs, 'HANDLE PACKAGE CAREFULLY');
-    y += boxH + 10;
+    const boxH = fs.handle + 22;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',3^FS\n';
+    zpl += center(y + 9, fs.handle, 'HANDLE PACKAGE CAREFULLY');
+    y += boxH + 12;
   }
 
+  // Counter
   if(shape.counterText){
-    const cFs = Math.max(layout === 'minimal' ? 40 : 30, Math.round(ll * 0.05));
-    zpl += center(y, cFs, safe(shape.counterText, 16));
-    y += cFs + 10;
+    zpl += center(y, fs.counter, safe(shape.counterText, 16));
+    y += fs.counter + 12;
   }
 
+  // Barcode — uses remaining space so bottom isn't empty
   const id = safe(shape.code, 20);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > innerW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > innerW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(layout === 'minimal' ? 90 : 70, Math.min(Math.round(ll * (layout === 'minimal' ? 0.18 : 0.12)), ll - y - m - 50));
+  if(barW > innerW - 8){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > innerW - 8){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  // Grow barcode into whatever space is left before footer text
+  const footReserve = fs.code + 8 + ((shape.footNote && layout !== 'minimal') ? fs.foot + 6 : 0);
+  const bh = Math.max(barcodeH, Math.min(Math.round(ll * 0.24), ll - m - y - footReserve));
   const bx = m + Math.max(0, Math.round((innerW - barW) / 2));
   zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
   y += bh + 8;
-  const codeFs = Math.max(20, Math.round(ll * 0.032));
-  zpl += center(y, codeFs, id);
-  y += codeFs + 6;
+  zpl += center(y, fs.code, id);
+  y += fs.code + 6;
   if(shape.footNote && layout !== 'minimal'){
-    const fnFs = Math.max(18, Math.round(ll * 0.028));
-    zpl += center(y, fnFs, safe(shape.footNote, 24));
+    zpl += center(y, fs.foot, safe(shape.footNote, 24));
   }
 
   zpl += '^PQ1^XZ\n';
