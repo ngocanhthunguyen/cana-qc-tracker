@@ -235,21 +235,20 @@ const PACKING_PALLET_BOXES = 16;
 const PACKING_PLAN_CODE_LEN = 4;
 
 /** Label sizing + fixed content, based on the company's real bag/box printed sample labels.
- *  Box/pallet stickers print bigger than bag stickers, so each tier remembers its own
- *  width/height (localStorage keys cana_pkglabel_w_<tier> / _h_<tier>).
- *  Box/pallet sizes are physical stock (4×6 shipping labels), upright. Layout can be
- *  switched in the print modal (stacked / shipping / minimal). */
+ *  Box/pallet stickers are physical landscape stock: 6" wide × 4" tall.
+ *  (localStorage keys cana_pkglabel_w_<tier> / _h_<tier>). Layout can be switched
+ *  in the print modal (stacked / shipping / minimal). */
 const PACKING_LABEL_DEFAULTS_IN = {
   bag: { w: 3, h: 2 },
-  box: { w: 4, h: 6 },
-  pallet: { w: 4, h: 6 }
+  box: { w: 6, h: 4 },
+  pallet: { w: 6, h: 4 }
 };
 const PACKING_COMPANY_NAME = 'Cana Australasia Pty Co., Ltd';
 const PACKING_PRODUCT_TYPE = 'Cured Dried';
 const PACKING_FROM_ADDRESS_DEFAULT = '122/32 Moo 6 Bang Phriang, Bang Bo, Samut Prakan 10560 Thailand';
 const PACKING_LABEL_LAYOUTS = [
   { id: 'stacked', label: 'Full stacked', hint: 'Logo + From/To + all fields + HANDLE + barcode' },
-  { id: 'shipping', label: 'Shipping form', hint: 'Paper-sample style: bordered From|To, product fields, HANDLE, large barcode filling the label' },
+  { id: 'shipping', label: 'Shipping form', hint: '6×4 sticker: bordered From|To, product fields, HANDLE, barcode' },
   { id: 'minimal', label: 'Minimal', hint: 'Logo + strain/lot/weight + N of Y + big barcode' }
 ];
 const PACKING_LABEL_LAYOUT_DEFAULT = 'shipping';
