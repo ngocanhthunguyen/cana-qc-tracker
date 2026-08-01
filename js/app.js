@@ -3447,7 +3447,7 @@ function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
   let w = Number(localStorage.getItem('cana_pkglabel_w_' + tier));
   let h = Number(localStorage.getItem('cana_pkglabel_h_' + tier));
-  // Printer feed: 4" wide × 6" long. Reading landscape 6×4 is done with ^FWR (not by swapping inches).
+  // Zebra roll feeds 4" across the head × 6" in the feed direction — print upright (no ^FWR).
   if(tier === 'box' || tier === 'pallet'){
     const bad = !w || !h || (w === 4 && h === 3) || (w === 6 && h === 4) || (w === 3 && h === 4) || (w > h);
     if(bad){
@@ -3455,10 +3455,7 @@ function getPackingLabelSizeIn(tier){
       localStorage.setItem('cana_pkglabel_w_' + tier, String(w));
       localStorage.setItem('cana_pkglabel_h_' + tier, String(h));
     }
-    // Always print box/pallet landscape (ngang) unless user explicitly chose portrait.
-    if(localStorage.getItem('cana_pkglabel_orient') !== 'portrait'){
-      localStorage.setItem('cana_pkglabel_orient', 'landscape');
-    }
+    localStorage.setItem('cana_pkglabel_orient', 'portrait');
   }
   return { w: (w > 0 ? w : d.w), h: (h > 0 ? h : d.h) };
 }
@@ -3483,11 +3480,9 @@ function savePackingLabelPrintSettings(tier){
 function getPackingLabelRotate(tier){
   return getPackingLabelOrient() === 'landscape' && (tier === 'box' || tier === 'pallet');
 }
-/** box/pallet default landscape. Bags stay portrait. */
+/** Box/pallet print upright with the roll (4" across head). Landscape ^FWR disabled. */
 function getPackingLabelOrient(){
-  const v = localStorage.getItem('cana_pkglabel_orient');
-  if(v === 'portrait' || v === 'landscape') return v;
-  return 'landscape';
+  return 'portrait';
 }
 function setPackingLabelOrient(v){
   const o = (v === 'portrait') ? 'portrait' : 'landscape';
@@ -3601,15 +3596,10 @@ function packingLabelBodyHtml(shape, layout){
   const isShip = shape.kind === 'box' || shape.kind === 'pallet';
   const logoHtml = isShip ? `<div class="pkg-label-logo"><img src="${typeof CANA_LOGO_IMG!=='undefined'?CANA_LOGO_IMG:'assets/cana-logo.png'}" alt="Cana"></div>` : '';
   const addrBlock = shape.fromTo ? (
-    layout === 'shipping'
-      ? `<div class="pkg-label-fromto-grid shipping">
-          <div><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
-          <div><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
-        </div>`
-      : `<div class="pkg-label-fromto-grid">
-          <div><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
-          <div><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
-        </div>`
+    `<div class="pkg-label-fromto-grid pkg-label-fromto-stacked">
+      <div class="pkg-fromto-block"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}</div>
+      <div class="pkg-fromto-block"><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}</div>
+    </div>`
   ) : '';
   const fields = (layout === 'minimal'
     ? shape.fields.filter(f=> ['Strain','Lot ID','Net Weight'].includes(f.label) || /kg|Kg/i.test(f.value))
@@ -3631,13 +3621,10 @@ function buildPackingLabelsPreviewHtml(plan, type){
   const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
   const size = getPackingLabelSizeIn(type);
   const layout = getPackingLabelLayout();
-  const land = getPackingLabelRotate(type);
-  const previewW = land ? size.h : size.w;
-  const previewH = land ? size.w : size.h;
   return (list || []).map(unit=>{
     const shape = packingUnitLabelShape(type, unit, plan);
     return `
-    <div class="zebra-label packing-label packing-label-${type} packing-layout-${layout} ${land?'packing-label-landscape':''} ${unit.mixed?'mixed':''}" style="width:${previewW}in;min-height:${previewH}in;" data-code="${esc(shape.code)}">
+    <div class="zebra-label packing-label packing-label-${type} packing-layout-${layout} ${unit.mixed?'mixed':''}" style="width:${size.w}in;min-height:${size.h}in;" data-code="${esc(shape.code)}">
       ${packingLabelBodyHtml(shape, layout)}
       <button type="button" class="small ghost test-print-one-btn" data-test-print-code="${esc(shape.code)}">🖨 Test print just this one</button>
     </div>`;
@@ -3647,11 +3634,10 @@ function buildZplForOneUnit(type, unit, plan){
   const shape = packingUnitLabelShape(type, unit, plan);
   if(shape.kind === 'bag') return buildZplBagLabel(shape, getPackingLabelSizeIn(type), getZebraDpi());
   const layout = getPackingLabelLayout();
-  const land = getPackingLabelOrient() === 'landscape';
   return buildZplShipLabel(shape, getPackingLabelSizeIn(type), getZebraDpi(), {
     layout,
-    landscape: land,
-    logoSize: land ? (layout === 'minimal' ? 'landSmall' : 'landMed') : (layout === 'minimal' ? 'small' : 'med'),
+    landscape: false,
+    logoSize: layout === 'minimal' ? 'small' : 'med',
     logoRecall: false
   });
 }
@@ -3703,146 +3689,9 @@ function buildZplBagLabel(shape, sizeIn, dpi){
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-/** Box/pallet ZPL.
- *  landscape (default): ^FWR on 4×6 stock — reading canvas is 6" wide × 4" tall (ngang).
- *  portrait: upright fill on 4×6 (dọc).
- *  FO under ^FWR: x along 6" (left→right when reading), y along 4" (top→bottom). */
+/** Box/pallet ZPL — upright on Zebra roll: 4" print width × 6" label length. No ^FWR. */
 function buildZplShipLabel(shape, sizeIn, dpi, opts){
-  opts = opts || {};
-  const landscape = opts.landscape !== undefined ? !!opts.landscape : (getPackingLabelOrient() === 'landscape');
-  if(!landscape) return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
-  return buildZplShipLabelLandscape(shape, sizeIn, dpi, opts);
-}
-function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
-  opts = opts || {};
-  const layout = opts.layout || getPackingLabelLayout();
-  const logoSize = opts.logoSize || (layout === 'minimal' ? 'landSmall' : 'landMed');
-  const logoRecall = !!opts.logoRecall;
-  const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
-  const pw = inchesToDots(sizeIn.w, dpi); // physical 4"
-  const ll = inchesToDots(sizeIn.h, dpi); // physical 6"
-  // Reading canvas under ^FWR
-  const DW = ll;
-  const DH = pw;
-  const m = Math.max(16, Math.round(Math.min(DW, DH) * 0.03));
-  const innerW = DW - m * 2;
-  const halfW = Math.floor((innerW - 14) / 2);
-  const rightX = m + halfW + 14;
-
-  let zpl = '^XA^MMT^MNY^FWR^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-  // Outer border in FO space (x along 6", y along 4")
-  zpl += '^FO' + Math.round(m*0.5) + ',' + Math.round(m*0.5) + '^GB' + (DW - m) + ',' + (DH - m) + ',3^FS\n';
-
-  const t = (x, y, fs, str)=>{
-    return '^FO' + x + ',' + y + '^A0N,' + fs + ',' + Math.round(fs * 0.9) + '^FD' + str + '^FS\n';
-  };
-  const tc = (y, fs, str)=>{
-    const approx = fs * 0.55;
-    const tw = Math.min(innerW, Math.round(String(str).length * approx));
-    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
-    return t(x, y, fs, str);
-  };
-
-  let y = m;
-  const logoG = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoSize] || CANA_LOGO_ZPL.landMed || CANA_LOGO_ZPL.med) : null;
-  // Under ^FWR, graphic may not rotate with text — use upright logo centered; if sideways on printer, we can switch.
-  // Prefer upright med placed with FO under FWR (position in reading coords).
-  const logoKey = (logoG && logoG === CANA_LOGO_ZPL.landMed) ? 'med' : (layout === 'minimal' ? 'small' : 'med');
-  const logoUse = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoKey] || CANA_LOGO_ZPL.small) : null;
-  if(logoUse && typeof buildCanaLogoGfa === 'function'){
-    const lx = m + Math.max(0, Math.round((innerW - logoUse.widthDots) / 2));
-    // Slightly smaller visual: recall/gfa
-    if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoKey);
-    else zpl += buildCanaLogoGfa(lx, y, logoKey);
-    y += Math.min(logoUse.heightDots, Math.round(DH * 0.28)) + 8;
-  }
-
-  const fields = layout === 'minimal'
-    ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
-    : (shape.fields || []);
-
-  const nameFs = Math.max(22, Math.round(DH * 0.07));
-  const addrFs = Math.max(16, Math.round(DH * 0.048));
-  const fieldFs = Math.max(24, Math.round(DH * (layout === 'minimal' ? 0.09 : 0.075)));
-  const handleFs = Math.max(20, Math.round(DH * 0.06));
-  const counterFs = Math.max(28, Math.round(DH * 0.09));
-  const codeFs = Math.max(18, Math.round(DH * 0.055));
-
-  if(layout !== 'minimal' && shape.fromTo){
-    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', 24).slice(0, 2);
-    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', 24).slice(0, 2);
-    const rows = Math.max(fromLines.length, toLines.length, 1);
-    const boxH = 8 + nameFs + 4 + rows * (addrFs + 3) + 8;
-    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
-    zpl += '^FO' + (m + halfW + 6) + ',' + y + '^GB' + 2 + ',' + boxH + ',2^FS\n';
-    let ty = y + 6;
-    zpl += t(m + 6, ty, nameFs, safe('From: ' + shape.fromTo.from, 28));
-    zpl += t(rightX, ty, nameFs, safe('To: ' + shape.fromTo.to, 28));
-    ty += nameFs + 4;
-    for(let i=0;i<rows;i++){
-      if(fromLines[i]) zpl += t(m + 6, ty, addrFs, safe(fromLines[i], 28));
-      if(toLines[i]) zpl += t(rightX, ty, addrFs, safe(toLines[i], 28));
-      ty += addrFs + 3;
-    }
-    y += boxH + 8;
-  }
-
-  fields.forEach(f=>{
-    zpl += t(m, y, fieldFs, safe(f.label + ' : ' + f.value, 48));
-    y += fieldFs + 6;
-  });
-
-  // Footer row: HANDLE | counter+barcode — use remaining height
-  const footTop = y;
-  const footH = Math.max(70, DH - m - footTop);
-  const leftW = Math.round(innerW * 0.48);
-  const rightW = innerW - leftW - 12;
-  const rx = m + leftW + 12;
-
-  if(layout !== 'minimal' && shape.handleCareful){
-    zpl += '^FO' + m + ',' + footTop + '^GB' + leftW + ',' + footH + ',2^FS\n';
-    // center HANDLE in left box manually
-    const hs = handleFs;
-    const approx = hs * 0.55;
-    const tw = Math.min(leftW - 8, Math.round(22 * approx));
-    const hx = m + Math.max(4, Math.round((leftW - tw) / 2));
-    const hy = footTop + Math.max(8, Math.round(footH / 2 - hs / 2));
-    zpl += t(hx, hy, hs, 'HANDLE PACKAGE CAREFULLY');
-  }
-
-  let by = footTop + 4;
-  if(shape.counterText){
-    const approx = counterFs * 0.55;
-    const tw = Math.min(rightW, Math.round(String(shape.counterText).length * approx));
-    const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
-    zpl += t(cx, by, counterFs, safe(shape.counterText, 16));
-    by += counterFs + 6;
-  }
-
-  const id = safe(shape.code, 20);
-  let moduleW = dpi >= 300 ? 3 : 2;
-  let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 4){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(50, Math.min(Math.round(footH * 0.45), DH - by - m - codeFs - 20));
-  const bx = rx + Math.max(0, Math.round((rightW - barW) / 2));
-  // ^BCN under ^FWR rotates with label
-  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  by += bh + 6;
-  const approx = codeFs * 0.55;
-  const tw = Math.min(rightW, Math.round(id.length * approx));
-  const cx = rx + Math.max(0, Math.round((rightW - tw) / 2));
-  zpl += t(cx, by, codeFs, id);
-  by += codeFs + 4;
-  if(shape.footNote && layout !== 'minimal'){
-    const fnFs = Math.max(16, Math.round(DH * 0.045));
-    const tw2 = Math.min(rightW, Math.round(String(shape.footNote).length * fnFs * 0.55));
-    const fx = rx + Math.max(0, Math.round((rightW - tw2) / 2));
-    zpl += t(fx, by, fnFs, safe(shape.footNote, 24));
-  }
-
-  zpl += '^PQ1^XZ\n';
-  return zpl;
+  return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
 }
 function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   opts = opts || {};
@@ -3850,64 +3699,105 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   const logoSize = opts.logoSize || (layout === 'minimal' ? 'small' : 'med');
   const logoRecall = !!opts.logoRecall;
   const safe = (s, n)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, n || 48);
-  const pw = inchesToDots(sizeIn.w, dpi);
-  const ll = inchesToDots(sizeIn.h, dpi);
-  const m = Math.max(20, Math.round(pw * 0.035));
+  const pw = inchesToDots(sizeIn.w, dpi); // 4" across print head
+  const ll = inchesToDots(sizeIn.h, dpi); // 6" feed direction
+  const m = Math.max(24, Math.round(pw * 0.04));
   const innerW = pw - m * 2;
   let y = m;
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-  zpl += '^FO' + Math.round(m*0.45) + ',' + Math.round(m*0.45) + '^GB' + (pw - Math.round(m*0.9)) + ',' + (ll - Math.round(m*0.9)) + ',3^FS\n';
-  const left = (yy, fs, str)=> '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs*0.9) + '^FD' + str + '^FS\n';
-  const center = (yy, fs, str)=>{
-    const tw = Math.min(innerW, Math.round(String(str).length * fs * 0.55));
-    const x = m + Math.max(0, Math.round((innerW - tw) / 2));
-    return '^FO' + x + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs*0.9) + '^FD' + str + '^FS\n';
+  zpl += '^FO' + Math.round(m * 0.4) + ',' + Math.round(m * 0.4) + '^GB' + (pw - Math.round(m * 0.8)) + ',' + (ll - Math.round(m * 0.8)) + ',3^FS\n';
+
+  const left = (yy, fs, str)=> '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) + '^FD' + str + '^FS\n';
+  const block = (yy, fs, str, lines)=>{
+    lines = lines || 2;
+    return '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) +
+      '^FB' + innerW + ',' + lines + ',0,L^FD' + str + '^FS\n';
   };
+  const center = (yy, fs, str)=>{
+    return '^FO' + m + ',' + yy + '^A0N,' + fs + ',' + Math.round(fs * 0.85) +
+      '^FB' + innerW + ',1,0,C^FD' + str + '^FS\n';
+  };
+
   const logoG = (typeof CANA_LOGO_ZPL !== 'undefined') ? (CANA_LOGO_ZPL[logoSize] || CANA_LOGO_ZPL.small) : null;
   if(logoG && typeof buildCanaLogoGfa === 'function'){
     const lx = m + Math.max(0, Math.round((innerW - logoG.widthDots) / 2));
     if(logoRecall && typeof buildCanaLogoRecall === 'function') zpl += buildCanaLogoRecall(lx, y, logoSize);
     else zpl += buildCanaLogoGfa(lx, y, logoSize);
-    y += logoG.heightDots + 10;
+    y += Math.min(logoG.heightDots, Math.round(ll * 0.14)) + 10;
   }
+
   const fields = layout === 'minimal'
     ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
     : (shape.fields || []);
-  const nameFs = Math.max(24, Math.round(ll * 0.04));
-  const addrFs = Math.max(18, Math.round(ll * 0.03));
-  const fieldFs = Math.max(28, Math.round(ll * 0.048));
+
+  const nameFs = Math.max(22, Math.round(ll * 0.032));
+  const addrFs = Math.max(18, Math.round(ll * 0.026));
+  const fieldFs = Math.max(26, Math.round(ll * (layout === 'minimal' ? 0.042 : 0.036)));
+  const maxChars = Math.max(28, Math.floor(innerW / (addrFs * 0.52)));
+
   if(layout !== 'minimal' && shape.fromTo){
-    zpl += left(y, nameFs, safe('From: ' + shape.fromTo.from, 42)); y += nameFs + 4;
-    wrapLabelWords(shape.fromTo.fromAddress || '', 34).slice(0,2).forEach(ln=>{ zpl += left(y, addrFs, safe(ln, 42)); y += addrFs + 3; });
-    y += 6;
-    zpl += left(y, nameFs, safe('To: ' + shape.fromTo.to, 42)); y += nameFs + 4;
-    wrapLabelWords(shape.fromTo.toAddress || '', 34).slice(0,2).forEach(ln=>{ zpl += left(y, addrFs, safe(ln, 42)); y += addrFs + 3; });
-    y += 10;
+    // From block
+    const fromLines = 1 + Math.min(2, wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).length);
+    const fromH = 10 + nameFs + 4 + fromLines * (addrFs + 2) + 8;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + fromH + ',2^FS\n';
+    let ty = y + 8;
+    zpl += block(ty, nameFs, safe('From: ' + shape.fromTo.from, 48), 1);
+    ty += nameFs + 4;
+    wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2).forEach(ln=>{
+      zpl += left(ty, addrFs, safe(ln, maxChars + 2));
+      ty += addrFs + 2;
+    });
+    y += fromH + 8;
+
+    // To block
+    const toLines = 1 + Math.min(2, wrapLabelWords(shape.fromTo.toAddress || '', maxChars).length);
+    const toH = 10 + nameFs + 4 + toLines * (addrFs + 2) + 8;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + toH + ',2^FS\n';
+    ty = y + 8;
+    zpl += block(ty, nameFs, safe('To: ' + shape.fromTo.to, 48), 1);
+    ty += nameFs + 4;
+    wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2).forEach(ln=>{
+      zpl += left(ty, addrFs, safe(ln, maxChars + 2));
+      ty += addrFs + 2;
+    });
+    y += toH + 10;
   }
-  fields.forEach(f=>{ zpl += left(y, fieldFs, safe(f.label + ' : ' + f.value, 44)); y += fieldFs + 8; });
+
+  fields.forEach(f=>{
+    zpl += block(y, fieldFs, safe(f.label + ' : ' + f.value, 52), 1);
+    y += fieldFs + 8;
+  });
+
   if(layout !== 'minimal' && shape.handleCareful){
-    const hcFs = Math.max(22, Math.round(ll * 0.036));
-    const boxH = hcFs + 20;
+    const hcFs = Math.max(20, Math.round(ll * 0.03));
+    const boxH = hcFs + 22;
     zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + boxH + ',2^FS\n';
-    zpl += center(y + 8, hcFs, 'HANDLE PACKAGE CAREFULLY');
-    y += boxH + 10;
+    zpl += center(y + 10, hcFs, 'HANDLE PACKAGE CAREFULLY');
+    y += boxH + 12;
   }
+
   if(shape.counterText){
-    const cFs = Math.max(32, Math.round(ll * 0.05));
+    const cFs = Math.max(34, Math.round(ll * 0.045));
     zpl += center(y, cFs, safe(shape.counterText, 16));
-    y += cFs + 10;
+    y += cFs + 12;
   }
+
   const id = safe(shape.code, 20);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > innerW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const bh = Math.max(80, Math.min(Math.round(ll * 0.2), ll - y - m - 50));
+  if(barW > innerW - 8){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > innerW - 8){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const codeFs = Math.max(20, Math.round(ll * 0.028));
+  const footReserve = codeFs + 16 + ((shape.footNote && layout !== 'minimal') ? 28 : 0);
+  const bh = Math.max(90, Math.min(Math.round(ll * 0.18), ll - y - m - footReserve));
   const bx = m + Math.max(0, Math.round((innerW - barW) / 2));
   zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  y += bh + 8;
-  zpl += center(y, Math.max(20, Math.round(ll * 0.032)), id);
-  y += 28;
-  if(shape.footNote && layout !== 'minimal') zpl += center(y, Math.max(18, Math.round(ll * 0.028)), safe(shape.footNote, 24));
+  y += bh + 10;
+  zpl += center(y, codeFs, id);
+  y += codeFs + 8;
+  if(shape.footNote && layout !== 'minimal'){
+    zpl += center(y, Math.max(16, Math.round(ll * 0.024)), safe(shape.footNote, 28));
+  }
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
@@ -3918,14 +3808,13 @@ function buildZplForPackingUnits(type, units, plan){
     return (units || []).map(unit=> buildZplBagLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi)).join('');
   }
   const layout = getPackingLabelLayout();
-  const land = getPackingLabelOrient() === 'landscape';
-  const logoSize = land ? (layout === 'minimal' ? 'small' : 'med') : (layout === 'minimal' ? 'small' : 'med');
+  const logoSize = layout === 'minimal' ? 'small' : 'med';
   let zpl = '';
   if(typeof buildCanaLogoDownloadCmd === 'function'){
     zpl += buildCanaLogoDownloadCmd(logoSize);
   }
   zpl += (units || []).map(unit=> buildZplShipLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi, {
-    layout, landscape: land, logoSize, logoRecall: typeof buildCanaLogoRecall === 'function'
+    layout, landscape: false, logoSize, logoRecall: typeof buildCanaLogoRecall === 'function'
   })).join('');
   return zpl;
 }
@@ -4001,10 +3890,10 @@ function openPrintPackingLabelsModal(planId){
             <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
             <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
           </select></div>
-        <div class="field"><label>Printer width (in) — <span id="packingSizeTierLabel">box</span></label>
-          <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}" title="Across the print head — usually 4"></div>
-        <div class="field"><label>Label length (in) — <span id="packingSizeTierLabel2">box</span></label>
-          <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}" title="Feed direction — usually 6. Layout rotates to read as 6×4"></div>
+        <div class="field"><label>Roll width (in) — <span id="packingSizeTierLabel">box</span></label>
+          <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}" title="Across the print head — 4"></div>
+        <div class="field"><label>Feed length (in) — <span id="packingSizeTierLabel2">box</span></label>
+          <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}" title="How far the label advances — 6"></div>
       </div>
       <div class="row-actions">
         <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.boxes.length}</span>)</button>
@@ -4052,7 +3941,7 @@ function openPrintPackingLabelsModal(planId){
   const layoutHint = root.querySelector('#packingLayoutHint');
   const syncLayoutHint = ()=>{
     const l = PACKING_LABEL_LAYOUTS.find(x=> x.id === getPackingLabelLayout());
-    if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + 'Landscape on 4×6 stock (^FWR) — reads as 6" × 4"';
+    if(layoutHint) layoutHint.textContent = (l ? l.hint + ' · ' : '') + 'Prints upright with the roll: 4" wide × 6" long (no rotate)';
   };
   syncLayoutHint();
   if(layoutSel){
