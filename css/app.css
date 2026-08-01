@@ -549,6 +549,10 @@
   .packing-label{min-height:1.3in;justify-content:flex-start;box-sizing:border-box;}
   .packing-label.mixed{border-color:#f59e0b;border-style:solid;background:#fffbeb;}
   .packing-label-box,.packing-label-pallet{justify-content:space-between;padding:0.12in 0.14in;gap:0.05in;border-style:solid;}
+  .pkg-label-logo{width:100%;display:flex;justify-content:center;margin:0 0 4px;}
+  .pkg-label-logo img{max-width:1.5in;max-height:1.15in;width:auto;height:auto;object-fit:contain;}
+  .packing-layout-minimal .pkg-label-logo img{max-width:1.2in;max-height:0.95in;}
+  .pkg-label-fromto-grid.shipping{grid-template-columns:1fr 1fr;gap:10px;}
   .test-print-one-btn{margin-top:0.06in;font-size:9px!important;padding:3px 6px!important;}
   .zebra-label-title{font-size:11.5px;font-weight:800;margin-top:0.02in;color:var(--ink);line-height:1.2;}
   .zebra-label-manifest{font-size:10px;font-weight:600;color:var(--muted);margin-top:0.02in;line-height:1.3;max-width:1.92in;}
