@@ -3424,24 +3424,108 @@ function deletePackingPlan(id){
   refreshExportView();
   showDocToast('Packing plan deleted ✓');
 }
+function normalizePackingScanRaw(raw){
+  return String(raw || '')
+    .trim()
+    .toUpperCase()
+    // scanners / OCR often turn "-" into en/em dashes
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9\-]/g, '');
+}
 function parsePackingScanCode(raw){
-  const s = String(raw || '').trim().toUpperCase().replace(/\s+/g, '');
-  const m = s.match(/^([A-Z0-9]{4})-(G|B|P)0*(\d+)$/);
+  const s = normalizePackingScanRaw(raw);
+  // Plan codes are 4 digits (e.g. 2709-B001). Hyphen optional.
+  let m = s.match(/^([0-9]{4})-(G|B|P)0*(\d+)$/);
+  if(!m) m = s.match(/^([0-9]{4})(G|B|P)0*(\d+)$/);
+  if(!m) m = s.match(/(?:^|[^0-9])([0-9]{4})-(G|B|P)0*(\d+)/);
+  if(!m) m = s.match(/(?:^|[^0-9])([0-9]{4})(G|B|P)0*(\d+)/);
   if(!m) return null;
   return { planCode: m[1], type: m[2] === 'G' ? 'bag' : (m[2] === 'B' ? 'box' : 'pallet'), seq: parseInt(m[3], 10) };
 }
 function findPackingPlanByCode(code){
-  return (state.packingPlans || []).find(pl=> pl.code === String(code || '').toUpperCase());
+  const want = String(code || '').toUpperCase();
+  return (state.packingPlans || []).find(pl=> String(pl.code || '').toUpperCase() === want);
 }
+function packingUnitTypeFromListKey(key){
+  if(key === 'bags') return 'bag';
+  if(key === 'boxes') return 'box';
+  if(key === 'pallets') return 'pallet';
+  return null;
+}
+/** Resolve a scanned/typed packing code to { plan, type, unit }. Tries exact unit.code first. */
 function lookupPackingUnit(rawCode){
-  const parsed = parsePackingScanCode(rawCode);
-  if(!parsed) return null;
+  const normalized = normalizePackingScanRaw(rawCode);
+  if(!normalized) return null;
+  const plans = state.packingPlans || [];
+  const tryExact = (needle)=>{
+    for(let i=0;i<plans.length;i++){
+      const plan = plans[i];
+      const keys = ['bags', 'boxes', 'pallets'];
+      for(let k=0;k<keys.length;k++){
+        const listKey = keys[k];
+        const unit = (plan[listKey] || []).find(u=> normalizePackingScanRaw(u.code) === needle);
+        if(unit) return { plan, type: packingUnitTypeFromListKey(listKey), unit };
+      }
+    }
+    return null;
+  };
+  // 1) Exact unit code match (most reliable)
+  let found = tryExact(normalized);
+  if(found) return found;
+  // 2) Some 1D scanners reverse the payload when the barcode was printed rotated
+  const reversed = normalized.split('').reverse().join('');
+  if(reversed !== normalized){
+    found = tryExact(reversed);
+    if(found) return found;
+    const revParsed = parsePackingScanCode(reversed);
+    if(revParsed){
+      found = lookupPackingUnitFromParsed(revParsed);
+      if(found) return found;
+    }
+  }
+  // 3) Structured parse: 2709-B001
+  const parsed = parsePackingScanCode(normalized);
+  if(parsed){
+    found = lookupPackingUnitFromParsed(parsed);
+    if(found) return found;
+  }
+  // 4) Needle contained inside a longer scan string
+  for(let i=0;i<plans.length;i++){
+    const plan = plans[i];
+    const keys = ['bags', 'boxes', 'pallets'];
+    for(let k=0;k<keys.length;k++){
+      const listKey = keys[k];
+      const unit = (plan[listKey] || []).find(u=>{
+        const c = normalizePackingScanRaw(u.code);
+        return c && (normalized.includes(c) || reversed.includes(c));
+      });
+      if(unit) return { plan, type: packingUnitTypeFromListKey(listKey), unit };
+    }
+  }
+  return null;
+}
+function lookupPackingUnitFromParsed(parsed){
   const plan = findPackingPlanByCode(parsed.planCode);
   if(!plan) return null;
   const list = parsed.type === 'bag' ? plan.bags : (parsed.type === 'box' ? plan.boxes : plan.pallets);
-  const unit = (list || []).find(u=> u.seq === parsed.seq);
+  const unit = (list || []).find(u=> Number(u.seq) === parsed.seq)
+    || (list || []).find(u=> normalizePackingScanRaw(u.code) === normalizePackingScanRaw(parsed.planCode + '-' + (parsed.type === 'bag' ? 'G' : (parsed.type === 'box' ? 'B' : 'P')) + String(parsed.seq).padStart(parsed.type === 'bag' ? 4 : (parsed.type === 'box' ? 3 : 2), '0')));
   if(!unit) return null;
   return { plan, type: parsed.type, unit };
+}
+function describePackingLookupMiss(rawCode){
+  const normalized = normalizePackingScanRaw(rawCode);
+  const parsed = parsePackingScanCode(normalized);
+  const planCount = (state.packingPlans || []).length;
+  if(!normalized) return 'Empty code.';
+  if(!planCount) return 'No packing plans loaded — open Export, confirm plans are listed, then Save / Reload from Google Sheet.';
+  if(!parsed) return 'Code "' + rawCode + '" is not a packing barcode (expected like 2709-B001).';
+  const plan = findPackingPlanByCode(parsed.planCode);
+  if(!plan) return 'Plan ' + parsed.planCode + ' not found among ' + planCount + ' loaded plan(s). Check Packing Plans on the sheet, then Reload.';
+  const list = parsed.type === 'bag' ? plan.bags : (parsed.type === 'box' ? plan.boxes : plan.pallets);
+  if(!(list || []).length) return 'Plan ' + parsed.planCode + ' is loaded but has no ' + parsed.type + 's (sheet JSON may be empty) — Save the plan again or check Packing Plans columns.';
+  return parsed.type + ' #' + parsed.seq + ' not in plan ' + parsed.planCode + ' (' + (list || []).length + ' ' + parsed.type + '(s) loaded).';
 }
 function getPackingLabelSizeIn(tier){
   const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
@@ -4226,7 +4310,7 @@ function bindPackingPlansSection(main){
 function renderPackingLookupResult(rawCode){
   const found = lookupPackingUnit(rawCode);
   if(!found){
-    return `<div class="pending-banner"><span>⚠ Code "${esc(rawCode)}" not found. Check the code and try again.</span></div>`;
+    return `<div class="pending-banner"><span>⚠ ${esc(describePackingLookupMiss(rawCode))}</span></div>`;
   }
   const { plan, type, unit } = found;
   const shape = packingUnitLabelShape(type, unit, plan);
