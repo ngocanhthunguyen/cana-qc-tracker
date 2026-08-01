@@ -558,6 +558,12 @@
   .packing-layout-shipping .pkg-label-fields{font-size:17px;}
   .packing-layout-shipping .pkg-label-counter{font-size:22px;}
   .packing-layout-shipping .zebra-barcode svg{width:3.5in;max-width:3.5in;height:0.85in;}
+  .packing-label-landscape{justify-content:space-between;}
+  .packing-label-landscape .pkg-label-logo img{max-width:1.3in;max-height:0.95in;}
+  .packing-label-landscape .pkg-label-fields{font-size:16px;}
+  .packing-label-landscape .pkg-label-fromto-grid.shipping{font-size:13px;}
+  .packing-label-landscape .zebra-barcode svg{width:2.8in;max-width:2.8in;height:0.65in;}
+  .plant-print-modal .zebra-label-sheet{max-height:min(520px,60vh);}
   .test-print-one-btn{margin-top:0.06in;font-size:9px!important;padding:3px 6px!important;}
   .zebra-label-title{font-size:11.5px;font-weight:800;margin-top:0.02in;color:var(--ink);line-height:1.2;}
   .zebra-label-manifest{font-size:10px;font-weight:600;color:var(--muted);margin-top:0.02in;line-height:1.3;max-width:1.92in;}
