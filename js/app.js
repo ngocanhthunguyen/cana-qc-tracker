@@ -3367,17 +3367,37 @@ function savePackingPlan(pickIds, meta){
     const seq = idx + 1;
     return { ...b, seq, code: code + '-G' + String(seq).padStart(4,'0'), boxSeq: Math.floor(idx / PACKING_BOX_BAGS) + 1 };
   });
+  // "X of Y" counters printed on real labels are per source Lot ID, not per whole plan
+  const lotBagTotals = {};
+  bags.forEach(b=> lotBagTotals[b.lotId] = (lotBagTotals[b.lotId] || 0) + 1);
+  const lotBagRunning = {};
+  bags.forEach(b=>{
+    lotBagRunning[b.lotId] = (lotBagRunning[b.lotId] || 0) + 1;
+    b.seqInLot = lotBagRunning[b.lotId];
+    b.totalInLot = lotBagTotals[b.lotId];
+  });
   const boxes = preview.boxes.map(box=> ({
     ...box,
     code: code + '-B' + String(box.seq).padStart(3,'0'),
     palletSeq: Math.ceil(box.seq / PACKING_PALLET_BOXES)
   }));
+  const lotBoxTotals = {};
+  boxes.forEach(box=>{ if(!box.mixed) lotBoxTotals[box.contents[0].lotId] = (lotBoxTotals[box.contents[0].lotId] || 0) + 1; });
+  const lotBoxRunning = {};
+  boxes.forEach(box=>{
+    if(box.mixed) return;
+    const lot = box.contents[0].lotId;
+    lotBoxRunning[lot] = (lotBoxRunning[lot] || 0) + 1;
+    box.boxSeqInLot = lotBoxRunning[lot];
+    box.boxTotalInLot = lotBoxTotals[lot];
+  });
   const pallets = preview.pallets.map(pl=> ({ ...pl, code: code + '-P' + String(pl.seq).padStart(2,'0') }));
   const plan = {
     id: uid(),
     code,
     company: (meta && meta.company) || '',
     label: (meta && meta.label) || '',
+    grade: (meta && meta.grade) || '',
     pickIds: preview.pickIds,
     bags, boxes, pallets,
     totalBags: preview.totalBags,
@@ -3420,98 +3440,198 @@ function lookupPackingUnit(rawCode){
   if(!unit) return null;
   return { plan, type: parsed.type, unit };
 }
-function packingUnitLabelShape(type, unit){
+function getPackingLabelSizeIn(tier){
+  const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
+  const w = Number(localStorage.getItem('cana_pkglabel_w_' + tier));
+  const h = Number(localStorage.getItem('cana_pkglabel_h_' + tier));
+  return { w: (w > 0 ? w : d.w), h: (h > 0 ? h : d.h) };
+}
+function savePackingLabelSizeIn(tier, w, h){
+  const d = PACKING_LABEL_DEFAULTS_IN[tier] || PACKING_LABEL_DEFAULTS_IN.box;
+  localStorage.setItem('cana_pkglabel_w_' + tier, String(Number(w) || d.w));
+  localStorage.setItem('cana_pkglabel_h_' + tier, String(Number(h) || d.h));
+}
+function savePackingLabelPrintSettings(tier){
+  const ip = document.getElementById('zebraIpInput');
+  const dpi = document.getElementById('zebraDpiInput');
+  const w = document.getElementById('labelWIn');
+  const h = document.getElementById('labelHIn');
+  if(ip) localStorage.setItem('cana_zebra_ip', String(ip.value || '').trim());
+  if(dpi) localStorage.setItem('cana_zebra_dpi', dpi.value === '300' ? '300' : '203');
+  savePackingLabelSizeIn(tier, w ? w.value : undefined, h ? h.value : undefined);
+}
+/** Shapes label content to mirror the real printed samples: company header on bags,
+ *  From/To + Type/Grade/Net Weight + "HANDLE PACKAGE CAREFULLY" on boxes/pallets,
+ *  and a "N of Y" counter scoped to the source Lot ID (matching how the Thai partner
+ *  already numbers bags/boxes on paper), falling back to a plan-wide count for mixed units. */
+function packingUnitLabelShape(type, unit, plan){
+  const company = (plan && plan.company) || '—';
+  const grade = (plan && plan.grade) || '';
   if(type === 'bag'){
     return {
       code: unit.code,
-      title: unit.strain || '—',
-      lines: [`Lot ${unit.lotId || '—'}`, `Box ${unit.boxSeq}`, `${fmtNum(PACKING_BAG_KG,1)} kg`]
+      kind: 'bag',
+      header: PACKING_COMPANY_NAME,
+      subheader: 'Dried & Cured Lab Tested Flowers',
+      fromTo: null,
+      fields: [
+        { label: 'Strain', value: unit.strain || '—' },
+        { label: 'Lot ID', value: unit.lotId || '—' },
+        { label: 'Quantity', value: Math.round(PACKING_BAG_KG * 1000) + ' g' }
+      ],
+      handleCareful: false,
+      footNote: '',
+      counterText: `${unit.seqInLot || unit.seq} of ${unit.totalInLot || ''}`
     };
   }
   if(type === 'box'){
-    const contentLines = unit.mixed
-      ? unit.contents.map(c=> `${c.strain} (Lot ${c.lotId}): ${c.bagCount} bag${c.bagCount===1?'':'s'}`)
-      : [`${(unit.contents[0]||{}).strain || '—'} (Lot ${(unit.contents[0]||{}).lotId || '—'})`];
+    const fields = [];
+    if(unit.mixed){
+      unit.contents.forEach(c=> fields.push({ label: c.strain, value: `Lot ${c.lotId} · ${c.bagCount} bag${c.bagCount===1?'':'s'}` }));
+    } else {
+      const c = unit.contents[0] || {};
+      fields.push({ label: 'Strain', value: c.strain || '—' });
+      fields.push({ label: 'Lot ID', value: c.lotId || '—' });
+    }
+    fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
+    if(grade) fields.push({ label: 'Grade', value: grade });
+    fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' kg' });
     return {
       code: unit.code,
-      title: (unit.mixed ? 'MIXED - ' : '') + `${unit.bagCount} bag${unit.bagCount===1?'':'s'} / ${fmtNum(unit.kg,1)} kg`,
-      lines: [...contentLines, `Pallet ${unit.palletSeq}`]
+      kind: 'box',
+      header: PACKING_COMPANY_NAME,
+      subheader: unit.mixed ? 'MIXED CONTENTS' : '',
+      fromTo: { from: PACKING_COMPANY_NAME, to: company },
+      fields,
+      handleCareful: true,
+      footNote: `Pallet ${unit.palletSeq}`,
+      counterText: !unit.mixed ? `${unit.boxSeqInLot} of ${unit.boxTotalInLot}` : `${unit.seq} of ${(plan && plan.boxes.length) || ''}`
     };
   }
+  const fields = unit.contents.map(c=> ({ label: c.strain, value: fmtNum(c.kg,1) + ' kg' }));
+  fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
+  fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' kg' });
   return {
     code: unit.code,
-    title: `${unit.boxCount} box${unit.boxCount===1?'':'es'} / ${fmtNum(unit.kg,1)} kg`,
-    lines: unit.contents.map(c=> `${c.strain}: ${fmtNum(c.kg,1)} kg`)
+    kind: 'pallet',
+    header: PACKING_COMPANY_NAME,
+    subheader: unit.mixed ? 'MIXED CONTENTS' : '',
+    fromTo: { from: PACKING_COMPANY_NAME, to: company },
+    fields,
+    handleCareful: true,
+    footNote: '',
+    counterText: `${unit.seq} of ${(plan && plan.pallets.length) || ''}`
   };
+}
+function packingLabelBodyHtml(shape){
+  return `
+    <div class="pkg-label-header">${esc(shape.header)}</div>
+    ${shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : ''}
+    <div class="pkg-label-rule"></div>
+    ${shape.fromTo ? `<div class="pkg-label-fromto"><div>From: ${esc(shape.fromTo.from)}</div><div>To: ${esc(shape.fromTo.to)}</div></div>` : ''}
+    <div class="pkg-label-fields">${shape.fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
+    ${shape.handleCareful ? `<div class="pkg-label-handle">⚠ HANDLE PACKAGE CAREFULLY</div>` : ''}
+    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 40, width: 1.6, margin: 1 })}</div>
+    <div class="zebra-label-id">${esc(shape.code)}</div>
+    ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
+    ${shape.footNote ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
+  `;
 }
 function buildPackingLabelsPreviewHtml(plan, type){
   const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
+  const size = getPackingLabelSizeIn(type);
   return (list || []).map(unit=>{
-    const shape = packingUnitLabelShape(type, unit);
+    const shape = packingUnitLabelShape(type, unit, plan);
     return `
-    <div class="zebra-label packing-label ${unit.mixed?'mixed':''}" data-code="${esc(shape.code)}">
-      <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 40, width: 1.9, margin: 1 })}</div>
-      <div class="zebra-label-id">${esc(shape.code)}</div>
-      <div class="zebra-label-title">${esc(shape.title)}</div>
-      <div class="zebra-label-manifest">${shape.lines.map(l=> `<div>${esc(l)}</div>`).join('')}</div>
+    <div class="zebra-label packing-label packing-label-${type} ${unit.mixed?'mixed':''}" style="width:${size.w}in;min-height:${size.h}in;" data-code="${esc(shape.code)}">
+      ${packingLabelBodyHtml(shape)}
       <button type="button" class="small ghost test-print-one-btn" data-test-print-code="${esc(shape.code)}">🖨 Test print just this one</button>
     </div>`;
   }).join('');
 }
-function buildZplForOneUnit(type, unit){
-  const shape = packingUnitLabelShape(type, unit);
-  return buildZplLabelMulti(shape.code, shape.title, shape.lines);
+function buildZplForOneUnit(type, unit, plan){
+  const shape = packingUnitLabelShape(type, unit, plan);
+  return buildZplPackingLabel(shape, getPackingLabelSizeIn(type), getZebraDpi());
 }
-function buildZplLabelMulti(code, title, lines){
-  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 34);
-  const id = safe(code);
-  const titleSafe = safe(title);
-  const lineTexts = (lines || []).map(l=> safe(l)).filter(Boolean).slice(0, 4);
-  const dpi = getZebraDpi();
-  const { w, h } = getLabelSizeIn();
-  const pw = inchesToDots(w, dpi);
-  const ll = inchesToDots(h, dpi);
-  let moduleW = 2;
-  let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > pw - 10){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  const barRatio = 3;
-  const idFs = Math.max(20, Math.round(ll * 0.12));
-  const titleFs = Math.max(16, Math.round(ll * 0.09));
-  const lineFs = Math.max(13, Math.round(ll * 0.07));
-  const gap = 2;
-  let bh = Math.round(ll * 0.30);
-  const textBlockH = idFs + gap + (titleSafe ? titleFs + gap : 0) + lineTexts.length * (lineFs + 1);
-  let totalH = bh + gap + textBlockH;
-  if(totalH > ll - 4){
-    bh = Math.max(Math.round(ll * 0.22), ll - 4 - gap - textBlockH);
-    totalH = bh + gap + textBlockH;
-  }
-  const by = Math.max(2, Math.round((ll - totalH) / 2));
-  const bx = Math.max(6, Math.round((pw - barW) / 2));
-  let y = by + bh + gap;
+/** Left-aligned "form" style ZPL layout (header / from-to / fields / handle-careful banner /
+ *  barcode + code + "N of Y" counter) — mirrors the real printed bag/box sample layouts,
+ *  and scales with each tier's own label width/height. */
+function buildZplPackingLabel(shape, sizeIn, dpi){
+  const safe = (s)=> String(s || '').replace(/[^\x20-\x7E]/g, '').slice(0, 44);
+  const pw = inchesToDots(sizeIn.w, dpi);
+  const ll = inchesToDots(sizeIn.h, dpi);
+  const margin = Math.max(10, Math.round(pw * 0.025));
+  const innerW = pw - margin * 2;
+  let y = margin;
   let zpl = '^XA^MMT^MNY^PW' + pw + '^LL' + ll + '^LH0,0^LT0\n';
-  zpl += '^FO' + bx + ',' + by + '^BY' + moduleW + ',' + barRatio + ',' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
-  zpl += '^FO0,' + y + '^A0N,' + idFs + ',' + idFs + '^FB' + pw + ',1,0,C^FD' + id + '^FS\n';
-  y += idFs + gap;
-  if(titleSafe){
-    zpl += '^FO0,' + y + '^A0N,' + titleFs + ',' + titleFs + '^FB' + pw + ',1,0,C^FD' + titleSafe + '^FS\n';
-    y += titleFs + gap;
+
+  const headerFs = Math.max(16, Math.round(ll * 0.075));
+  zpl += '^FO' + margin + ',' + y + '^A0N,' + headerFs + ',' + headerFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.header) + '^FS\n';
+  y += headerFs + 3;
+
+  if(shape.subheader){
+    const subFs = Math.max(11, Math.round(ll * 0.045));
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + subFs + ',' + subFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.subheader) + '^FS\n';
+    y += subFs + 4;
   }
-  lineTexts.forEach(l=>{
-    zpl += '^FO0,' + y + '^A0N,' + lineFs + ',' + lineFs + '^FB' + pw + ',1,0,C^FD' + l + '^FS\n';
-    y += lineFs + 1;
+  y += 2;
+  zpl += '^FO' + margin + ',' + y + '^GB' + innerW + ',1,1^FS\n';
+  y += 8;
+
+  if(shape.fromTo){
+    const ftFs = Math.max(11, Math.round(ll * 0.042));
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + ftFs + ',' + ftFs + '^FD' + safe('From: ' + shape.fromTo.from) + '^FS\n';
+    y += ftFs + 4;
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + ftFs + ',' + ftFs + '^FD' + safe('To: ' + shape.fromTo.to) + '^FS\n';
+    y += ftFs + 6;
+  }
+
+  const fieldFs = Math.max(13, Math.round(ll * 0.05));
+  (shape.fields || []).forEach(f=>{
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + fieldFs + ',' + fieldFs + '^FD' + safe(f.label + ': ' + f.value) + '^FS\n';
+    y += fieldFs + 5;
   });
+
+  if(shape.handleCareful){
+    y += 3;
+    const hcFs = Math.max(13, Math.round(ll * 0.052));
+    zpl += '^FO' + margin + ',' + y + '^GB' + innerW + ',' + (hcFs + 10) + ',1^FS\n';
+    zpl += '^FO' + margin + ',' + (y + 5) + '^A0N,' + hcFs + ',' + hcFs + '^FB' + innerW + ',1,0,C^FD' + safe('HANDLE PACKAGE CAREFULLY') + '^FS\n';
+    y += hcFs + 18;
+  }
+
+  const id = safe(shape.code);
+  let moduleW = sizeIn.w >= 2.5 ? 2 : 1;
+  let barW = estimateCode128Dots(id.length, moduleW);
+  if(barW > innerW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  const remaining = Math.max(30, ll - y - margin);
+  const bh = Math.max(30, Math.min(Math.round(ll * 0.14), remaining - 46));
+  const bx = margin + Math.max(0, Math.round((innerW - barW) / 2));
+  y += 4;
+  zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  y += bh + 5;
+  const codeFs = Math.max(14, Math.round(ll * 0.055));
+  zpl += '^FO' + margin + ',' + y + '^A0N,' + codeFs + ',' + codeFs + '^FB' + innerW + ',1,0,C^FD' + id + '^FS\n';
+  y += codeFs + 4;
+  if(shape.counterText){
+    const cFs = Math.max(12, Math.round(ll * 0.045));
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + cFs + ',' + cFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.counterText) + '^FS\n';
+    y += cFs + 3;
+  }
+  if(shape.footNote){
+    const fnFs = Math.max(11, Math.round(ll * 0.04));
+    zpl += '^FO' + margin + ',' + y + '^A0N,' + fnFs + ',' + fnFs + '^FB' + innerW + ',1,0,C^FD' + safe(shape.footNote) + '^FS\n';
+  }
   zpl += '^PQ1^XZ\n';
   return zpl;
 }
-function buildZplForPackingUnits(type, units){
-  return (units || []).map(unit=>{
-    const shape = packingUnitLabelShape(type, unit);
-    return buildZplLabelMulti(shape.code, shape.title, shape.lines);
-  }).join('');
+function buildZplForPackingUnits(type, units, plan){
+  const sizeIn = getPackingLabelSizeIn(type);
+  const dpi = getZebraDpi();
+  return (units || []).map(unit=> buildZplPackingLabel(packingUnitLabelShape(type, unit, plan), sizeIn, dpi)).join('');
 }
 function downloadPackingZpl(plan, type, units){
-  const zpl = buildZplForPackingUnits(type, units);
+  const zpl = buildZplForPackingUnits(type, units, plan);
   const filename = plan.code + '-' + type + 's.zpl';
   const blob = new Blob([zpl], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);
@@ -3523,8 +3643,8 @@ function downloadPackingZpl(plan, type, units){
   showDocToast('ZPL downloaded ✓');
   return filename;
 }
-async function copyPackingZplToClipboard(type, units){
-  const zpl = buildZplForPackingUnits(type, units);
+async function copyPackingZplToClipboard(type, units, plan){
+  const zpl = buildZplForPackingUnits(type, units, plan);
   try {
     await navigator.clipboard.writeText(zpl);
     showDocToast('ZPL copied ✓');
@@ -3540,8 +3660,8 @@ function openPrintPackingLabelsModal(planId){
   const root = document.getElementById('modalRoot');
   const savedIp = localStorage.getItem('cana_zebra_ip') || '192.168.1.151';
   const savedDpi = getZebraDpi();
-  const labelSize = getLabelSizeIn();
   let tier = 'pallet';
+  let labelSize = getPackingLabelSizeIn(tier);
   const currentUnits = ()=> tier === 'bag' ? plan.bags : (tier === 'box' ? plan.boxes : plan.pallets);
   root.innerHTML = `
   <div class="overlay" id="overlay">
@@ -3556,6 +3676,7 @@ function openPrintPackingLabelsModal(planId){
       <div class="plant-print-help">
         <p>Download or copy ZPL, then send to the printer in Terminal:<br>
         <code>nc ${esc(savedIp)} 9100 &lt; ~/Downloads/….zpl</code> or <code>pbpaste | nc ${esc(savedIp)} 9100</code></p>
+        <p class="sub" style="margin:4px 0 0;">Pallets/boxes print bigger than bags by default (matches your paper samples) — each tier remembers its own size.</p>
       </div>
       <div class="form-grid">
         <div class="field"><label>Printer IP</label>
@@ -3565,10 +3686,10 @@ function openPrintPackingLabelsModal(planId){
             <option value="203" ${savedDpi===203?'selected':''}>203 dpi</option>
             <option value="300" ${savedDpi===300?'selected':''}>300 dpi</option>
           </select></div>
-        <div class="field"><label>Label width (in)</label>
-          <input id="labelWIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.w}"></div>
-        <div class="field"><label>Label height (in)</label>
-          <input id="labelHIn" type="number" step="0.1" min="0.5" max="4" value="${labelSize.h}"></div>
+        <div class="field"><label>Label width (in) — <span id="packingSizeTierLabel">pallet</span></label>
+          <input id="labelWIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.w}"></div>
+        <div class="field"><label>Label height (in) — <span id="packingSizeTierLabel2">pallet</span></label>
+          <input id="labelHIn" type="number" step="0.1" min="0.5" max="8" value="${labelSize.h}"></div>
       </div>
       <div class="row-actions">
         <button type="button" class="primary" id="btnDownloadZpl">Download ZPL (<span id="packingTierCount">${plan.pallets.length}</span>)</button>
@@ -3587,8 +3708,8 @@ function openPrintPackingLabelsModal(planId){
         const code = btn.dataset.testPrintCode;
         const unit = currentUnits().find(u=> u.code === code);
         if(!unit) return;
-        saveLabelPrintSettings();
-        const zpl = buildZplForOneUnit(tier, unit);
+        savePackingLabelPrintSettings(tier);
+        const zpl = buildZplForOneUnit(tier, unit, plan);
         try{
           await navigator.clipboard.writeText(zpl);
           setStatus('Copied 1 label (' + code + ') — run: pbpaste | nc ' + getIp() + ' 9100');
@@ -3601,8 +3722,14 @@ function openPrintPackingLabelsModal(planId){
   bindTestPrintButtons();
   root.querySelectorAll('#packingTierToggle button').forEach(btn=>{
     btn.onclick = ()=>{
+      savePackingLabelPrintSettings(tier);
       tier = btn.dataset.tier;
+      labelSize = getPackingLabelSizeIn(tier);
       root.querySelectorAll('#packingTierToggle button').forEach(b=> b.classList.toggle('active', b===btn));
+      document.getElementById('labelWIn').value = labelSize.w;
+      document.getElementById('labelHIn').value = labelSize.h;
+      document.getElementById('packingSizeTierLabel').textContent = tier;
+      document.getElementById('packingSizeTierLabel2').textContent = tier;
       document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
       document.getElementById('packingTierCount').textContent = currentUnits().length;
       setStatus('');
@@ -3612,12 +3739,12 @@ function openPrintPackingLabelsModal(planId){
   root.querySelector('#btnClosePrint').onclick = ()=>{ modalDirty = false; closeModal(); };
   root.querySelector('#overlay').onclick = (e)=>{ if(e.target.id==='overlay'){ modalDirty = false; closeModal(); } };
   root.querySelector('#btnCopyZpl').onclick = async ()=>{
-    saveLabelPrintSettings();
-    if(await copyPackingZplToClipboard(tier, currentUnits())) setStatus('Copied — run: pbpaste | nc ' + getIp() + ' 9100');
+    savePackingLabelPrintSettings(tier);
+    if(await copyPackingZplToClipboard(tier, currentUnits(), plan)) setStatus('Copied — run: pbpaste | nc ' + getIp() + ' 9100');
     else setStatus('Copy failed — try Download ZPL');
   };
   root.querySelector('#btnDownloadZpl').onclick = ()=>{
-    saveLabelPrintSettings();
+    savePackingLabelPrintSettings(tier);
     const fn = downloadPackingZpl(plan, tier, currentUnits());
     setStatus('Saved to Downloads/' + fn + ' — run: nc ' + getIp() + ' 9100 < ~/Downloads/' + fn);
   };
@@ -3660,13 +3787,15 @@ function renderPackingLookupResult(rawCode){
     return `<div class="pending-banner"><span>⚠ Code "${esc(rawCode)}" not found. Check the code and try again.</span></div>`;
   }
   const { plan, type, unit } = found;
-  const shape = packingUnitLabelShape(type, unit);
+  const shape = packingUnitLabelShape(type, unit, plan);
   const typeLabel = type === 'bag' ? 'Bag' : (type === 'box' ? 'Box' : 'Pallet');
   return `<div class="panel" style="margin:0;background:var(--grey-bg);">
     <h3 style="margin:0 0 6px;font-size:15px;">${typeLabel} <code class="batch-id">${esc(shape.code)}</code></h3>
-    <p style="margin:0 0 6px;font-weight:700;">${esc(shape.title)}</p>
-    <div style="font-size:13px;line-height:1.7;">${shape.lines.map(l=> esc(l)).join('<br>')}</div>
-    <p class="sub" style="margin:10px 0 0;">Part of packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
+    ${shape.fromTo ? `<p class="sub" style="margin:0 0 4px;">From: ${esc(shape.fromTo.from)} · To: ${esc(shape.fromTo.to)}</p>` : ''}
+    <div style="font-size:13px;line-height:1.7;">${shape.fields.map(f=> `<b>${esc(f.label)}:</b> ${esc(f.value)}`).join('<br>')}</div>
+    ${shape.handleCareful ? `<p style="margin:6px 0 0;font-weight:700;color:#92400e;">⚠ HANDLE PACKAGE CAREFULLY</p>` : ''}
+    <p class="sub" style="margin:10px 0 0;">${esc(shape.counterText || '')}${shape.footNote ? ' · ' + esc(shape.footNote) : ''}</p>
+    <p class="sub" style="margin:4px 0 0;">Part of packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
   </div>`;
 }
 let packingCameraScanner = null;
@@ -3880,6 +4009,8 @@ function openPackingPreviewModal(pickIds){
         </div>
         <div class="field"><label>Label / reference (optional)</label>
           <input id="packingLabelInput" placeholder="e.g. Aug shipment #1"></div>
+        <div class="field"><label>Grade (optional, printed on box/pallet labels)</label>
+          <input id="packingGradeInput" placeholder="e.g. A" maxlength="8"></div>
       </div>
       <h3 style="margin:16px 0 8px;font-size:14px;">Pallets</h3>
       <div class="table-wrap"><table class="compact-table">
@@ -3913,7 +4044,8 @@ function openPackingPreviewModal(pickIds){
   root.querySelector('#btnConfirmPacking').onclick = ()=>{
     const company = root.querySelector('#packingCompanyInput').value.trim();
     const label = root.querySelector('#packingLabelInput').value.trim();
-    const plan = savePackingPlan(pickIds, { company, label });
+    const grade = root.querySelector('#packingGradeInput').value.trim();
+    const plan = savePackingPlan(pickIds, { company, label, grade });
     if(!plan){ alert('Could not create packing plan.'); return; }
     packingSelectedPickIds.clear();
     modalDirty = false;

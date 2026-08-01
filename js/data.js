@@ -234,6 +234,17 @@ const PACKING_BOX_BAGS = 5;
 const PACKING_PALLET_BOXES = 16;
 const PACKING_PLAN_CODE_LEN = 4;
 
+/** Label sizing + fixed content, based on the company's real bag/box printed sample labels.
+ *  Box/pallet stickers print bigger than bag stickers, so each tier remembers its own
+ *  width/height (localStorage keys cana_pkglabel_w_<tier> / _h_<tier>). */
+const PACKING_LABEL_DEFAULTS_IN = {
+  bag: { w: 3, h: 2 },
+  box: { w: 4, h: 3 },
+  pallet: { w: 4, h: 6 }
+};
+const PACKING_COMPANY_NAME = 'Cana Australasia Pty Co., Ltd';
+const PACKING_PRODUCT_TYPE = 'Cured Dried';
+
 /** Company Orders — standalone monthly order tracker per company/strain (not yet linked to export picks) */
 const COMPANY_ORDER_COLS = [
   {key:'company', label:'Company', labelTh:'บริษัท', type:'text'},
