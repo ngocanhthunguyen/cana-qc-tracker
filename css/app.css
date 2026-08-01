@@ -555,11 +555,11 @@
   .pkg-label-fromto-stacked{grid-template-columns:1fr;gap:8px;width:100%;margin:4px 0;}
   .pkg-fromto-block{border:1.5px solid #111;padding:8px 10px;text-align:left;}
   .pkg-fromto-kicker{display:block;font-size:10px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#64748b;margin-bottom:2px;}
-  .pkg-fromto-name{font-size:18px;font-weight:800;line-height:1.15;margin-bottom:2px;}
-  .pkg-ship-to{width:100%;text-align:left;border-bottom:2px solid #111;padding-bottom:6px;margin-bottom:4px;}
-  .pkg-ship-to .pkg-fromto-name{font-size:20px;}
-  .pkg-ship-from{width:100%;text-align:left;font-size:11px;font-weight:600;color:#334155;line-height:1.3;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #111;}
-  .pkg-ship-from b{letter-spacing:0.06em;text-transform:uppercase;font-size:10px;margin-right:4px;}
+  .pkg-fromto-name{font-size:15px;font-weight:800;line-height:1.15;margin-bottom:2px;}
+  .pkg-label-fromto-grid.shipping{grid-template-columns:1fr 1fr;gap:0;width:100%;border:1.5px solid #111;margin:0 0 6px;}
+  .pkg-label-fromto-grid.shipping > .pkg-fromto-block{border:0;border-radius:0;min-width:0;}
+  .pkg-label-fromto-grid.shipping > .pkg-fromto-block:first-child{border-right:1.5px solid #111;}
+  .packing-label-landscape .pkg-label-addr{font-size:11px;}
   .pkg-metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:0;width:100%;border-bottom:2px solid #111;margin-bottom:8px;}
   .pkg-metric{padding:4px 6px;text-align:left;border-right:1px solid #cbd5e1;}
   .pkg-metric:last-child{border-right:0;}

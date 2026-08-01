@@ -3600,19 +3600,21 @@ function packingLabelBodyHtml(shape, layout){
     ? shape.fields.filter(f=> ['Strain','Lot ID','Net Weight'].includes(f.label) || /kg|Kg/i.test(f.value))
     : shape.fields);
   if(isShip && landPreview){
-    const toBlock = shape.fromTo ? `
-      <div class="pkg-ship-to">
-        <span class="pkg-fromto-kicker">Ship to</span>
-        <div class="pkg-fromto-name">${esc(shape.fromTo.to)}</div>
-        ${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}
-      </div>` : '';
-    const fromLine = shape.fromTo ? `
-      <div class="pkg-ship-from">
-        <b>From</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? ` · ${esc(shape.fromTo.fromAddress)}` : ''}
+    const addrBlock = shape.fromTo ? `
+      <div class="pkg-label-fromto-grid shipping">
+        <div class="pkg-fromto-block">
+          <span class="pkg-fromto-kicker">From</span>
+          <div class="pkg-fromto-name">${esc(shape.fromTo.from)}</div>
+          ${shape.fromTo.fromAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.fromAddress)}</div>` : ''}
+        </div>
+        <div class="pkg-fromto-block">
+          <span class="pkg-fromto-kicker">To</span>
+          <div class="pkg-fromto-name">${esc(shape.fromTo.to)}</div>
+          ${shape.fromTo.toAddress ? `<div class="pkg-label-addr">${esc(shape.fromTo.toAddress)}</div>` : ''}
+        </div>
       </div>` : '';
     return `
-      ${layout === 'minimal' ? '' : toBlock}
-      ${layout === 'minimal' ? '' : fromLine}
+      ${layout === 'minimal' ? '' : addrBlock}
       <div class="pkg-metric-row">${fields.map(f=> `
         <div class="pkg-metric"><b>${esc(f.label)}</b><span>${esc(f.value)}</span></div>
       `).join('')}</div>
@@ -3731,7 +3733,7 @@ function buildZplShipLabel(shape, sizeIn, dpi, opts){
   if(landscape) return buildZplShipLabelLandscape(shape, sizeIn, dpi, opts);
   return buildZplShipLabelPortrait(shape, sizeIn, dpi, opts);
 }
-/** Landscape shipping label — TO-first hierarchy, product metric strip, slim HANDLE + barcode.
+/** Landscape shipping label — equal FROM | TO, product metric strip, HANDLE + barcode.
  *  Same 4×6 roll; reading 6"×4" mapped 90° CW via ^A0R / ^BCR (no ^FWR, no logo). */
 function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   opts = opts || {};
@@ -3743,6 +3745,10 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   const DH = pw;
   const m = Math.max(26, Math.round(Math.min(DW, DH) * 0.045));
   const innerW = DW - m * 2;
+  const gap = 12;
+  const halfW = Math.floor((innerW - gap) / 2);
+  const colL = m;
+  const colR = m + halfW + gap;
 
   const map = (rx, ry, rw, rh)=>({
     x: Math.max(0, pw - ry - rh),
@@ -3775,45 +3781,44 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
     : (shape.fields || []);
 
   const kickerFs = Math.max(15, Math.round(DH * 0.038));
-  const toNameFs = Math.max(28, Math.round(DH * 0.072));
-  const toAddrFs = Math.max(18, Math.round(DH * 0.046));
-  const fromFs = Math.max(15, Math.round(DH * 0.038));
+  const nameFs = Math.max(22, Math.round(DH * 0.058));
+  const addrFs = Math.max(16, Math.round(DH * 0.042));
   const metricLabelFs = Math.max(14, Math.round(DH * 0.036));
   const metricValFs = Math.max(24, Math.round(DH * 0.062));
   const handleFs = Math.max(20, Math.round(DH * 0.05));
   const counterFs = Math.max(32, Math.round(DH * 0.08));
   const codeFs = Math.max(20, Math.round(DH * 0.048));
-  const maxChars = Math.max(42, Math.floor(innerW / (toAddrFs * 0.48)));
+  const maxChars = Math.max(24, Math.floor(halfW / (addrFs * 0.48)));
 
-  // —— Ship-to (dominant) ——
+  // —— Equal FROM | TO ——
   if(layout !== 'minimal' && shape.fromTo){
-    zpl += t(m + 4, y, kickerFs, 'SHIP TO');
-    y += kickerFs + 3;
-    const toNames = wrapLabelWords(shape.fromTo.to || '', Math.floor(maxChars * 0.85)).slice(0, 2);
-    toNames.forEach(ln=>{
-      zpl += t(m + 4, y, toNameFs, safe(ln, 48));
-      y += toNameFs + 2;
-    });
-    wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2).forEach(ln=>{
-      zpl += t(m + 4, y, toAddrFs, safe(ln, maxChars + 2));
-      y += toAddrFs + 2;
-    });
-    y += 4;
-    // Compact from line
-    const fromOne = safe(
-      'From: ' + (shape.fromTo.from || '') + (shape.fromTo.fromAddress ? '  ·  ' + shape.fromTo.fromAddress : ''),
-      70
-    );
-    wrapLabelWords(fromOne, maxChars).slice(0, 2).forEach(ln=>{
-      zpl += t(m + 4, y, fromFs, ln);
-      y += fromFs + 2;
-    });
-    y += 6;
-    zpl += box(m, y, innerW, 2, 2);
-    y += 8;
+    const fromNames = wrapLabelWords(shape.fromTo.from || '', maxChars).slice(0, 2);
+    const toNames = wrapLabelWords(shape.fromTo.to || '', maxChars).slice(0, 2);
+    const fromLines = wrapLabelWords(shape.fromTo.fromAddress || '', maxChars).slice(0, 2);
+    const toLines = wrapLabelWords(shape.fromTo.toAddress || '', maxChars).slice(0, 2);
+    const nameRows = Math.max(fromNames.length, toNames.length, 1);
+    const addrRows = Math.max(fromLines.length, toLines.length, 1);
+    const boxH = 8 + kickerFs + 2 + nameRows * (nameFs + 2) + addrRows * (addrFs + 2) + 8;
+    zpl += box(m, y, innerW, boxH, 2);
+    zpl += box(colR - Math.round(gap / 2), y, 2, boxH, 2);
+    let ty = y + 6;
+    zpl += t(colL + 6, ty, kickerFs, 'FROM');
+    zpl += t(colR + 6, ty, kickerFs, 'TO');
+    ty += kickerFs + 2;
+    for(let i = 0; i < nameRows; i++){
+      if(fromNames[i]) zpl += t(colL + 6, ty, nameFs, safe(fromNames[i], maxChars + 2));
+      if(toNames[i]) zpl += t(colR + 6, ty, nameFs, safe(toNames[i], maxChars + 2));
+      ty += nameFs + 2;
+    }
+    for(let i = 0; i < addrRows; i++){
+      if(fromLines[i]) zpl += t(colL + 6, ty, addrFs, safe(fromLines[i], maxChars + 2));
+      if(toLines[i]) zpl += t(colR + 6, ty, addrFs, safe(toLines[i], maxChars + 2));
+      ty += addrFs + 2;
+    }
+    y += boxH + 8;
   }
 
-  // —— Product metrics: full-width grid (2×2 or 1×n) ——
+  // —— Product metrics: full-width grid ——
   if(fields.length){
     const cols = Math.min(4, fields.length);
     const colW = Math.floor(innerW / cols);
@@ -3825,39 +3830,34 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
       const ry = y + r * rowH;
       zpl += t(rx, ry, metricLabelFs, safe(f.label.toUpperCase(), 16));
       zpl += t(rx, ry + metricLabelFs + 2, metricValFs, safe(f.value, 22));
-      // light divider between metric cells (not after last col)
-      if(c < cols - 1){
-        zpl += box(m + (c + 1) * colW, ry, 1, rowH - 4, 1);
-      }
+      if(c < cols - 1) zpl += box(m + (c + 1) * colW, ry, 1, rowH - 4, 1);
     });
-    const rows = Math.ceil(fields.length / cols);
-    y += rows * rowH + 4;
+    y += Math.ceil(fields.length / cols) * rowH + 4;
     zpl += box(m, y, innerW, 2, 2);
     y += 8;
   }
 
-  // —— Bottom: HANDLE (left ~40%) | counter + barcode (right ~60%) ——
+  // —— Bottom: HANDLE | barcode ——
   const footTop = y;
   const footH = Math.max(70, DH - m - footTop);
   const leftW = Math.round(innerW * 0.38);
   const rightW = innerW - leftW - 10;
-  const colL = m;
-  const colR = m + leftW + 10;
+  const footL = m;
+  const footR = m + leftW + 10;
 
   if(layout !== 'minimal' && shape.handleCareful){
-    zpl += box(colL, footTop, leftW, footH, 3);
-    // Two-line HANDLE centered in the panel
+    zpl += box(footL, footTop, leftW, footH, 3);
     const line1 = 'HANDLE PACKAGE';
     const line2 = 'CAREFULLY';
     const blockH = handleFs * 2 + 6;
     const hy = footTop + Math.max(8, Math.round((footH - blockH) / 2));
-    zpl += tc(colL, leftW, hy, handleFs, line1);
-    zpl += tc(colL, leftW, hy + handleFs + 4, handleFs, line2);
+    zpl += tc(footL, leftW, hy, handleFs, line1);
+    zpl += tc(footL, leftW, hy + handleFs + 4, handleFs, line2);
   }
 
   let by = footTop + 4;
   if(shape.counterText){
-    zpl += tc(colR, rightW, by, counterFs, safe(shape.counterText, 16));
+    zpl += tc(footR, rightW, by, counterFs, safe(shape.counterText, 16));
     by += counterFs + 4;
   }
 
@@ -3873,14 +3873,14 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   const footNoteFs = Math.max(15, Math.round(DH * 0.038));
   const footReserve = codeFs + 6 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 4 : 0);
   const bh = Math.max(80, Math.min(Math.round(DH * 0.38), footTop + footH - by - footReserve));
-  const bx = colR + Math.max(0, Math.round((rightW - barW) / 2));
+  const bx = footR + Math.max(0, Math.round((rightW - barW) / 2));
   const bar = map(bx, by, barW, bh);
   zpl += '^FO' + bar.x + ',' + bar.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
   by += bh + 4;
-  zpl += tc(colR, rightW, by, codeFs, id);
+  zpl += tc(footR, rightW, by, codeFs, id);
   by += codeFs + 3;
   if(shape.footNote && layout !== 'minimal'){
-    zpl += tc(colR, rightW, by, footNoteFs, safe(shape.footNote, 24));
+    zpl += tc(footR, rightW, by, footNoteFs, safe(shape.footNote, 24));
   }
 
   zpl += '^PQ1^XZ\n';
