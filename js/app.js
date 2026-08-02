@@ -4534,6 +4534,46 @@ function bindExportLookupPanel(main){
     });
   }
 }
+/** Human-readable "what's inside" for scan lookup (bag / box / pallet). */
+function packingLookupContentsHtml(type, unit, plan){
+  if(type === 'bag'){
+    return `<div class="packing-lookup-inside">
+      <h4>Inside this bag</h4>
+      <ul>
+        <li><b>${esc(unit.strain || '—')}</b> · Lot <code>${esc(unit.lotId || '—')}</code> · ${Math.round(PACKING_BAG_KG * 1000)} g · Farm ${esc(unit.farm || '—')}</li>
+      </ul>
+    </div>`;
+  }
+  if(type === 'box'){
+    const contents = unit.contents || [];
+    const bagsInBox = (plan.bags || []).filter(b=> Number(b.boxSeq) === Number(unit.seq));
+    const lines = contents.length
+      ? contents.map(c=> `<li><b>${esc(c.strain || '—')}</b> · Lot <code>${esc(c.lotId || '—')}</code> · ${fmtNum(c.kg,1)} kg (${c.bagCount || 0} bag${(c.bagCount===1)?'':'s'})${c.farm ? ' · ' + esc(c.farm) : ''}</li>`).join('')
+      : `<li class="muted">No content breakdown saved for this box.</li>`;
+    const bagCodes = bagsInBox.length
+      ? `<p class="sub" style="margin:8px 0 0;">Bag codes in this box: ${bagsInBox.map(b=> `<code>${esc(b.code)}</code>`).join(' · ')}</p>`
+      : '';
+    return `<div class="packing-lookup-inside">
+      <h4>${unit.mixed ? '⚠ MIXED — ' : ''}What's in this box <span class="muted">(${unit.bagCount || bagsInBox.length || 0} bags · ${fmtNum(unit.kg,1)} kg)</span></h4>
+      <ul>${lines}</ul>
+      ${bagCodes}
+    </div>`;
+  }
+  // pallet
+  const contents = unit.contents || [];
+  const boxesOnPal = (plan.boxes || []).filter(b=> Number(b.palletSeq) === Number(unit.seq));
+  const lines = contents.length
+    ? contents.map(c=> `<li><b>${esc(c.strain || '—')}</b> · Lot <code>${esc(c.lotId || '—')}</code> · ${fmtNum(c.kg,1)} kg</li>`).join('')
+    : `<li class="muted">No content breakdown saved for this pallet.</li>`;
+  const boxCodes = boxesOnPal.length
+    ? `<p class="sub" style="margin:8px 0 0;">Boxes on this pallet: ${boxesOnPal.map(b=> `<code>${esc(b.code)}</code>${b.mixed ? ' <span class="doc-badge">mixed</span>' : ''}`).join(' · ')}</p>`
+    : '';
+  return `<div class="packing-lookup-inside">
+    <h4>${unit.mixed ? '⚠ MIXED — ' : ''}What's on this pallet <span class="muted">(${unit.boxCount || boxesOnPal.length || 0} boxes · ${fmtNum(unit.kg,1)} kg)</span></h4>
+    <ul>${lines}</ul>
+    ${boxCodes}
+  </div>`;
+}
 function renderPackingLookupResult(rawCode){
   const found = lookupPackingUnit(rawCode);
   if(!found){
@@ -4543,12 +4583,12 @@ function renderPackingLookupResult(rawCode){
   const shape = packingUnitLabelShape(type, unit, plan);
   const typeLabel = type === 'bag' ? 'Bag' : (type === 'box' ? 'Box' : 'Pallet');
   return `<div class="panel" style="margin:0;background:var(--grey-bg);">
-    <h3 style="margin:0 0 6px;font-size:15px;">${typeLabel} <code class="batch-id">${esc(shape.code)}</code></h3>
-    ${shape.fromTo ? `<p class="sub" style="margin:0 0 4px;"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? ' — ' + esc(shape.fromTo.fromAddress) : ''}<br><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? ' — ' + esc(shape.fromTo.toAddress) : ''}</p>` : ''}
-    <div style="font-size:13px;line-height:1.7;">${shape.fields.map(f=> `<b>${esc(f.label)}:</b> ${esc(f.value)}`).join('<br>')}</div>
-    ${shape.handleCareful ? `<p style="margin:6px 0 0;font-weight:700;color:#92400e;">⚠ HANDLE PACKAGE CAREFULLY</p>` : ''}
+    <h3 style="margin:0 0 6px;font-size:15px;">${typeLabel} <code class="batch-id">${esc(shape.code)}</code>${unit.mixed ? ' <span class="doc-badge">MIXED</span>' : ''}</h3>
+    ${packingLookupContentsHtml(type, unit, plan)}
+    ${shape.fromTo ? `<p class="sub" style="margin:10px 0 4px;"><b>From:</b> ${esc(shape.fromTo.from)}${shape.fromTo.fromAddress ? ' — ' + esc(shape.fromTo.fromAddress) : ''}<br><b>To:</b> ${esc(shape.fromTo.to)}${shape.fromTo.toAddress ? ' — ' + esc(shape.fromTo.toAddress) : ''}</p>` : ''}
+    <div style="font-size:13px;line-height:1.7;margin-top:6px;">${shape.fields.map(f=> `<b>${esc(f.label)}:</b> ${esc(f.value)}`).join('<br>')}</div>
     <p class="sub" style="margin:10px 0 0;">${esc(shape.counterText || '')}${shape.footNote ? ' · ' + esc(shape.footNote) : ''}</p>
-    <p class="sub" style="margin:4px 0 0;">Part of packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
+    <p class="sub" style="margin:4px 0 0;">Packing plan <b>${esc(plan.code)}</b>${plan.company ? ' · ' + esc(plan.company) : ''}${plan.label ? ' · ' + esc(plan.label) : ''}</p>
   </div>`;
 }
 async function runPackingLookup(rawCode, resultEl){
