@@ -15,6 +15,7 @@ let cureSearchText = '';
 let cureMonth = '';
 let stockSearchText = '';
 let stockStatusFilter = '';
+let stockLocationFilter = '';
 let exportSelection = {};
 let exportSelectionMonth = '';
 let exportWeights = {}; // batchKey -> export kg (string)
@@ -5975,10 +5976,29 @@ function getFilteredCureLogs(){
     return db.localeCompare(da);
   });
 }
+function isCanaStockSmallSample(s){
+  const loc = String((s && s.room) || '');
+  return loc === STOCK_LOCATION_SMALL_SAMPLES
+    || loc.indexOf('Small samples') >= 0
+    || loc.indexOf('ตัวอย่างเล็ก') >= 0;
+}
+function getStockLocationOptions(current){
+  const set = new Set(STOCK_LOCATION_OPTIONS);
+  (state.canaStock || []).forEach(s=>{ if(s && s.room) set.add(String(s.room)); });
+  if(current) set.add(String(current));
+  return [...set];
+}
 function getFilteredCanaStock(){
   const q = stockSearchText.trim().toLowerCase();
   return (state.canaStock||[]).filter(s=>{
     if(stockStatusFilter && s.status !== stockStatusFilter) return false;
+    if(stockLocationFilter === '__samples__'){
+      if(!isCanaStockSmallSample(s)) return false;
+    } else if(stockLocationFilter === '__main__'){
+      if(isCanaStockSmallSample(s)) return false;
+    } else if(stockLocationFilter && s.room !== stockLocationFilter){
+      return false;
+    }
     if(!q) return true;
     const hay = [s.strain, s.room, s.notes, s.status, s.linkedTrimId, s.flowerType, s.cropAge, s.bigsG, s.popsG].join(' ').toLowerCase();
     return hay.includes(q);
@@ -6179,7 +6199,7 @@ function renderCanaStockCardList(rows){
       <div class="card-top">
         <div class="card-head-text">
           <div class="card-title">${esc(s.strain||'—')}</div>
-          <div class="card-subtitle">${esc(s.room||'—')} · ${esc(typeShort)} · ${esc(ageShort)}</div>
+          <div class="card-subtitle">${esc(s.room||'—')} · ${esc(typeShort)} · ${esc(ageShort)}${isCanaStockSmallSample(s) ? ' · Sample' : ''}</div>
         </div>
         <span class="status-chip ${sc}">${esc((s.status||'—').split(' / ')[0])}</span>
       </div>
@@ -6191,6 +6211,7 @@ function renderCanaStockCardList(rows){
       <div class="card-meta">
         <span>Harvest ${esc(s.harvestDate||'—')}</span>
         <span>Trim ${esc(s.trimDate||'—')}</span>
+        ${isCanaStockSmallSample(s) ? '<span class="doc-badge">Small sample</span>' : ''}
       </div>
       <div class="action-group">
         <button class="small" data-edit-stock="${s.id}">Edit</button>
@@ -6210,9 +6231,9 @@ function renderCanaStockTable(rows){
     const sc = stockStatusClass(s.status);
     const typeShort = (s.flowerType || '—').split(' / ')[0];
     const ageShort = (s.cropAge || '—').split(' / ')[0];
-    return `<tr>
+    return `<tr class="${isCanaStockSmallSample(s) ? 'stock-row-sample' : ''}">
       <td><b>${esc(s.strain||'—')}</b></td>
-      <td>${esc(s.room||'—')}</td>
+      <td>${esc(s.room||'—')}${isCanaStockSmallSample(s) ? ' <span class="doc-badge">Sample</span>' : ''}</td>
       <td>${esc(typeShort)}</td>
       <td>${esc(ageShort)}</td>
       <td>${fmtWeight(s.bigsG)}</td>
@@ -6230,7 +6251,7 @@ function renderCanaStockTable(rows){
   }).join('');
   return `<div class="cana-stock-summary"><span class="doc-badge">${rows.length} line${rows.length===1?'':'s'}</span><span class="doc-badge"><b>${fmtWeight(totalG)}</b> on list</span></div>
   <div class="table-wrap desktop-table"><table class="compact-table cana-table cana-stock-table">
-    <thead><tr><th>Strain</th><th>Room</th><th>Type</th><th>Age</th><th>Bigs</th><th>Pops</th><th>Total</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Strain</th><th>Location</th><th>Type</th><th>Age</th><th>Bigs</th><th>Pops</th><th>Total</th><th>Status</th><th>Harvest</th><th>Trim</th><th>By</th><th>Actions</th></tr></thead>
     <tbody>${body}</tbody>
   </table></div>
   <div class="card-list">${renderCanaStockCardList(rows)}</div>`;
@@ -6508,7 +6529,7 @@ function renderCanaStockView(){
     <div class="cana-header">
       <div>
         <h2>📦 Cana Stock — flower on hand</h2>
-        <p class="sub">Cana flower inventory · strain, room, big/pop type, new/old crop, qty · Syncs to <b>Cana Stock</b> sheet<br><span class="bi">สต็อกดอก Cana · ใหญ่/เล็ก · เก่า/ใหม่</span></p>
+        <p class="sub">Cana flower inventory · strain, location, big/pop, crop age · use location <b>Small samples</b> for tiny jars (excluded from shipment deductions) · Syncs to <b>Cana Stock</b> sheet<br><span class="bi">สต็อกดอก Cana · เลือก Small samples สำหรับตัวอย่างเล็ก</span></p>
       </div>
     </div>
     <div class="row-actions cana-toolbar">
@@ -6518,6 +6539,12 @@ function renderCanaStockView(){
         <option value="">All status / ทุกสถานะ</option>
         ${STOCK_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${stockStatusFilter===o?'selected':''}>${esc(o.split(' / ')[0])}</option>`).join('')}
       </select>
+      <select id="stockLocationFilter">
+        <option value="">All locations / ทุกที่เก็บ</option>
+        <option value="__samples__" ${stockLocationFilter==='__samples__'?'selected':''}>Small samples only / ตัวอย่างเล็ก</option>
+        <option value="__main__" ${stockLocationFilter==='__main__'?'selected':''}>Main stock (no samples) / ไม่รวมตัวอย่าง</option>
+        ${getStockLocationOptions().map(o=>`<option value="${esc(o)}" ${stockLocationFilter===o?'selected':''}>${esc(o.split(' / ')[0])}</option>`).join('')}
+      </select>
       <input class="search-box" id="stockSearchBox" placeholder="Search strain, room…" value="${esc(stockSearchText)}">
     </div>
     <div class="mob-section-label mobile-only">Stock lines</div>
@@ -6526,6 +6553,7 @@ function renderCanaStockView(){
   document.getElementById('btnNewStock').onclick = ()=> openCanaStockModal(null);
   document.getElementById('btnStockFromTrim').onclick = ()=> openCanaStockFromTrimModal();
   document.getElementById('stockStatusFilter').onchange = (e)=>{ stockStatusFilter = e.target.value; updateCanaStockResults(); };
+  document.getElementById('stockLocationFilter').onchange = (e)=>{ stockLocationFilter = e.target.value; updateCanaStockResults(); };
   document.getElementById('stockSearchBox').oninput = (e)=>{ stockSearchText = e.target.value; updateCanaStockResults(); };
   bindCanaStockActions(main);
 }
@@ -6553,12 +6581,17 @@ function openCanaStockModal(id, prefill){
   const isNew = !id;
   modalDirty = !isNew;
   const root = document.getElementById('modalRoot');
+  const cols = CANA_STOCK_COLS.map(c=>{
+    if(c.key !== 'room') return c;
+    return { ...c, type: 'select', options: getStockLocationOptions(rec.room) };
+  });
   root.innerHTML = `
   <div class="overlay" id="overlay">
     <div class="modal" style="max-width:720px">
       <h2>${isNew ? '+ Add Cana stock' : 'Edit stock line'}</h2>
+      <p class="sub" style="margin:0 0 10px;">For tiny sample jars, set location to <b>Small samples</b> — they stay out of shipment stock deductions.<br><span class="bi">ตัวอย่างเล็ก: เลือก location = Small samples</span></p>
       <form id="stockForm" class="form-grid">
-        ${CANA_STOCK_COLS.map(c=> fieldHtml(c, rec[c.key] || (c.key === 'updatedBy' ? getCurrentUserName() : ''))).join('')}
+        ${cols.map(c=> fieldHtml(c, rec[c.key] || (c.key === 'updatedBy' ? getCurrentUserName() : ''))).join('')}
         <div class="modal-actions full">
           <button type="button" class="ghost" id="btnCancelStock">Cancel</button>
           <button type="submit" class="primary">Save</button>
@@ -6587,7 +6620,7 @@ function openCanaStockModal(id, prefill){
     if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
     closeModal();
     renderCanaStockView();
-    showDocToast('Stock line saved');
+    showDocToast(isCanaStockSmallSample(updated) ? 'Small sample saved ✓' : 'Stock line saved');
   };
 }
 function openCanaStockFromTrimModal(){
@@ -6807,7 +6840,12 @@ function deleteCompanyOrder(id){
 const CANA_STOCK_SHIPMENT_SOURCE = '__cana_stock__';
 function deductCanaStockForShipment(strain, totalKgNeeded){
   const norm = (strain||'').trim().toLowerCase();
-  const lines = (state.canaStock||[]).filter(s=> (s.strain||'').trim().toLowerCase() === norm && isStockOnHandStatus(s.status))
+  // Small-sample jars are labeled separately — never auto-deduct into shipments
+  const lines = (state.canaStock||[]).filter(s=>
+      (s.strain||'').trim().toLowerCase() === norm
+      && isStockOnHandStatus(s.status)
+      && !isCanaStockSmallSample(s)
+    )
     .slice().sort((a,b)=> (a.updatedAt||a.harvestDate||'').localeCompare(b.updatedAt||b.harvestDate||''));
   let remainingG = Math.round((totalKgNeeded||0)*1000);
   const allocations = [];

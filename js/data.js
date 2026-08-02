@@ -173,6 +173,15 @@ const CURE_ACTION_OPTIONS = [
 const STOCK_STATUS_OPTIONS = ['On hand / คงคลัง', 'In cure / กำลัง cure', 'Reserved / จอง', 'Shipped / ส่งแล้ว'];
 const STOCK_FLOWER_TYPE_OPTIONS = ['Big / ใหญ่', 'Pop / เล็ก', 'Mixed / ผสม'];
 const STOCK_CROP_AGE_OPTIONS = ['New / ใหม่', 'Old / เก่า'];
+/** Preset Room / location values for Cana Stock. Small samples stay out of shipment deductions. */
+const STOCK_LOCATION_SMALL_SAMPLES = 'Small samples / ตัวอย่างเล็ก';
+const STOCK_LOCATION_OPTIONS = [
+  'Cold room / ห้องเย็น',
+  'Dry store / คลังแห้ง',
+  'Cure room / ห้อง cure',
+  STOCK_LOCATION_SMALL_SAMPLES,
+  'Other / อื่นๆ'
+];
 
 const CURE_SESSION_COLS = [
   {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
@@ -203,7 +212,7 @@ const CURE_LOG_KEYS = ['sessionId','date','time','room','action','minutes','desc
 
 const CANA_STOCK_COLS = [
   {key:'strain', label:'Strain', labelTh:'สายพันธุ์', type:'text'},
-  {key:'room', label:'Room / location', labelTh:'ห้อง', type:'text'},
+  {key:'room', label:'Room / location', labelTh:'ห้อง / ที่เก็บ', type:'select', options: STOCK_LOCATION_OPTIONS},
   {key:'flowerType', label:'Type (Big / Pop)', labelTh:'ประเภท (ใหญ่/เล็ก)', type:'select', options: STOCK_FLOWER_TYPE_OPTIONS},
   {key:'cropAge', label:'Crop age (New / Old)', labelTh:'เก่า/ใหม่', type:'select', options: STOCK_CROP_AGE_OPTIONS},
   {key:'bigsG', label:'Bigs (g)', labelTh:'ดอกใหญ่ (กรัม)', type:'number'},
