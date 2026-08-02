@@ -3686,6 +3686,39 @@ function wrapLabelWords(text, maxChars){
 /** Shapes label content to mirror the real printed samples: company header on bags,
  *  From/To + addresses + Type/Grade/Net Weight + "HANDLE PACKAGE CAREFULLY" on boxes/pallets,
  *  and a "N of Y" counter scoped to the source Lot ID. */
+/** Outer-sticker lines for mixed boxes/pallets — both strains visible without opening the box. */
+function packingMixedOuterFields(contents, mode){
+  const list = contents || [];
+  const fields = [];
+  fields.push({ label: 'Strain', value: 'MIXED · ' + list.length + ' strains' });
+  fields.push({ label: 'Contains', value: list.map(c=> c.strain || '—').join(' + ') });
+  list.forEach((c, i)=>{
+    const lot = c.lotId ? ('Lot ' + c.lotId) : 'Lot —';
+    let detail = '';
+    if(mode === 'box'){
+      const bags = (c.bagCount != null) ? (c.bagCount + ' bag' + (c.bagCount === 1 ? '' : 's')) : '';
+      detail = lot + ' · ' + fmtNum(c.kg, 1) + ' kg' + (bags ? ' (' + bags + ')' : '');
+    } else {
+      detail = lot + ' · ' + fmtNum(c.kg, 1) + ' kg';
+    }
+    fields.push({
+      label: (i + 1) + ') ' + (c.strain || '—'),
+      value: detail,
+      contentLine: true
+    });
+  });
+  return fields;
+}
+function filterPackingLabelFields(fields, layout){
+  if(layout !== 'minimal') return fields || [];
+  // Keep mixed content lines — old filter only kept "Strain"/"Lot ID" and hid 1) / 2) rows
+  return (fields || []).filter(f=>
+    ['Strain', 'Contains', 'Lot ID', 'Type', 'Grade', 'Net Weight'].includes(f.label) ||
+    f.contentLine ||
+    /^\d+\)/.test(String(f.label || '')) ||
+    /kg|Kg|bag/i.test(String(f.value || ''))
+  );
+}
 function packingUnitLabelShape(type, unit, plan){
   const shipToName = (plan && (plan.shipToName || plan.company)) || '';
   const shipToAddress = (plan && plan.shipToAddress) || '';
@@ -3706,18 +3739,19 @@ function packingUnitLabelShape(type, unit, plan){
       ],
       handleCareful: false,
       footNote: '',
-      counterText: `${unit.seqInLot || unit.seq} of ${unit.totalInLot || ''}`
+      counterText: `${unit.seqInLot || unit.seq} of ${unit.totalInLot || ''}`,
+      mixed: false
     };
   }
   if(type === 'box'){
-    const fields = [];
-    if(unit.mixed){
-      unit.contents.forEach(c=> fields.push({ label: c.strain, value: `Lot ${c.lotId} · ${c.bagCount} bag${c.bagCount===1?'':'s'}` }));
-    } else {
-      const c = unit.contents[0] || {};
-      fields.push({ label: 'Strain', value: c.strain || '—' });
-      fields.push({ label: 'Lot ID', value: c.lotId || '—' });
-    }
+    const contents = unit.contents || [];
+    const mixed = !!(unit.mixed && contents.length > 1);
+    const fields = mixed
+      ? packingMixedOuterFields(contents, 'box')
+      : [
+          { label: 'Strain', value: (contents[0] && contents[0].strain) || '—' },
+          { label: 'Lot ID', value: (contents[0] && contents[0].lotId) || '—' }
+        ];
     fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
     if(grade) fields.push({ label: 'Grade', value: grade });
     fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' Kg' });
@@ -3726,7 +3760,7 @@ function packingUnitLabelShape(type, unit, plan){
       kind: 'box',
       rotate: getPackingLabelRotate('box'),
       header: PACKING_COMPANY_NAME,
-      subheader: unit.mixed ? 'MIXED CONTENTS' : '',
+      subheader: mixed ? ('MIXED · ' + contents.length + ' STRAINS') : '',
       fromTo: {
         from: PACKING_COMPANY_NAME,
         fromAddress: shipFromAddress,
@@ -3736,10 +3770,16 @@ function packingUnitLabelShape(type, unit, plan){
       fields,
       handleCareful: true,
       footNote: `Pallet ${unit.palletSeq}`,
-      counterText: !unit.mixed ? `${unit.boxSeqInLot} of ${unit.boxTotalInLot}` : `${unit.seq} of ${(plan && plan.boxes.length) || ''}`
+      counterText: !mixed ? `${unit.boxSeqInLot} of ${unit.boxTotalInLot}` : `MIXED box ${unit.seq} of ${(plan && plan.boxes.length) || ''}`,
+      mixed,
+      mixedCount: mixed ? contents.length : 0
     };
   }
-  const fields = unit.contents.map(c=> ({ label: c.strain, value: fmtNum(c.kg,1) + ' kg' }));
+  const contents = unit.contents || [];
+  const mixed = !!(unit.mixed && contents.length > 1);
+  const fields = mixed
+    ? packingMixedOuterFields(contents, 'pallet')
+    : contents.map(c=> ({ label: c.strain || '—', value: fmtNum(c.kg, 1) + ' kg' }));
   fields.push({ label: 'Type', value: PACKING_PRODUCT_TYPE });
   if(grade) fields.push({ label: 'Grade', value: grade });
   fields.push({ label: 'Net Weight', value: fmtNum(unit.kg,1) + ' Kg' });
@@ -3748,7 +3788,7 @@ function packingUnitLabelShape(type, unit, plan){
     kind: 'pallet',
     rotate: getPackingLabelRotate('pallet'),
     header: PACKING_COMPANY_NAME,
-    subheader: unit.mixed ? 'MIXED CONTENTS' : '',
+    subheader: mixed ? ('MIXED · ' + contents.length + ' STRAINS') : '',
     fromTo: {
       from: PACKING_COMPANY_NAME,
       fromAddress: shipFromAddress,
@@ -3758,16 +3798,18 @@ function packingUnitLabelShape(type, unit, plan){
     fields,
     handleCareful: true,
     footNote: '',
-    counterText: `${unit.seq} of ${(plan && plan.pallets.length) || ''}`
+    counterText: mixed
+      ? (`MIXED pallet ${unit.seq} of ${(plan && plan.pallets.length) || ''}`)
+      : (`${unit.seq} of ${(plan && plan.pallets.length) || ''}`),
+    mixed,
+    mixedCount: mixed ? contents.length : 0
   };
 }
 function packingLabelBodyHtml(shape, layout){
   layout = layout || getPackingLabelLayout();
   const isShip = shape.kind === 'box' || shape.kind === 'pallet';
   const landPreview = getPackingLabelOrient() === 'landscape' && isShip;
-  const fields = (layout === 'minimal'
-    ? shape.fields.filter(f=> ['Strain','Lot ID','Net Weight'].includes(f.label) || /kg|Kg/i.test(f.value))
-    : shape.fields);
+  const fields = filterPackingLabelFields(shape.fields, layout);
   if(isShip && landPreview){
     const addrBlock = shape.fromTo ? `
       <div class="pkg-label-fromto-grid shipping">
@@ -3784,8 +3826,9 @@ function packingLabelBodyHtml(shape, layout){
       </div>` : '';
     return `
       ${layout === 'minimal' ? '' : addrBlock}
+      ${shape.mixed ? `<div class="pkg-mixed-banner">${esc(shape.subheader || ('MIXED · ' + (shape.mixedCount || 2) + ' STRAINS'))}</div>` : ''}
       <div class="pkg-metric-row">${fields.map(f=> `
-        <div class="pkg-metric"><b>${esc(f.label)}</b><span>${esc(f.value)}</span></div>
+        <div class="pkg-metric ${f.contentLine ? 'pkg-metric-content' : ''}"><b>${esc(f.label)}</b><span>${esc(f.value)}</span></div>
       `).join('')}</div>
       <div class="pkg-label-body-land">
         <div class="pkg-label-body-left">
@@ -3811,10 +3854,10 @@ function packingLabelBodyHtml(shape, layout){
   ) : '';
   return `
     ${!isShip && shape.header ? `<div class="pkg-label-header">${esc(shape.header)}</div>` : ''}
-    ${layout === 'minimal' ? '' : (shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : '')}
+    ${shape.mixed ? `<div class="pkg-mixed-banner">${esc(shape.subheader || ('MIXED · ' + (shape.mixedCount || 2) + ' STRAINS'))}</div>` : (layout === 'minimal' ? '' : (shape.subheader ? `<div class="pkg-label-sub">${esc(shape.subheader)}</div>` : ''))}
     ${layout === 'minimal' || isShip ? '' : '<div class="pkg-label-rule"></div>'}
     ${layout === 'minimal' ? '' : addrBlock}
-    <div class="pkg-label-fields">${fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
+    <div class="pkg-label-fields">${fields.map(f=> `<div class="${f.contentLine ? 'pkg-field-content' : ''}"><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
     ${shape.handleCareful && layout !== 'minimal' ? `<div class="pkg-label-handle">HANDLE PACKAGE CAREFULLY</div>` : ''}
     ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
     <div class="pkg-scan-codes">
@@ -3982,9 +4025,7 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   };
 
   let y = m;
-  const fields = layout === 'minimal'
-    ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
-    : (shape.fields || []);
+  const fields = filterPackingLabelFields(shape.fields, layout);
 
   const kickerFs = Math.max(15, Math.round(DH * 0.038));
   const nameFs = Math.max(22, Math.round(DH * 0.058));
@@ -4024,9 +4065,18 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
     y += boxH + 8;
   }
 
-  // —— Product metrics: full-width grid ——
+  // —— Mixed banner (outer sticker must show 2+ strains clearly) ——
+  if(shape.mixed){
+    const mixFs = Math.max(20, Math.round(DH * 0.052));
+    const mixH = mixFs + 16;
+    zpl += box(m, y, innerW, mixH, 3);
+    zpl += tc(m, innerW, y + 8, mixFs, safe(shape.subheader || 'MIXED CONTENTS', 28));
+    y += mixH + 8;
+  }
+
+  // —— Product metrics: full-width grid (mixed uses 2 cols so strain lines stay readable) ——
   if(fields.length){
-    const cols = Math.min(4, fields.length);
+    const cols = shape.mixed ? 2 : Math.min(4, fields.length);
     const colW = Math.floor(innerW / cols);
     const rowH = metricLabelFs + 2 + metricValFs + 6;
     fields.forEach((f, i)=>{
@@ -4034,8 +4084,10 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
       const r = Math.floor(i / cols);
       const rx = m + c * colW + 4;
       const ry = y + r * rowH;
-      zpl += t(rx, ry, metricLabelFs, safe(f.label.toUpperCase(), 16));
-      zpl += t(rx, ry + metricLabelFs + 2, metricValFs, safe(f.value, 22));
+      const labelFs = f.contentLine ? Math.max(13, metricLabelFs - 1) : metricLabelFs;
+      const valFs = f.contentLine ? Math.max(18, metricValFs - 4) : metricValFs;
+      zpl += t(rx, ry, labelFs, safe(String(f.label || '').toUpperCase(), 22));
+      zpl += t(rx, ry + labelFs + 2, valFs, safe(f.value, shape.mixed ? 28 : 22));
       if(c < cols - 1) zpl += box(m + (c + 1) * colW, ry, 1, rowH - 4, 1);
     });
     y += Math.ceil(fields.length / cols) * rowH + 4;
@@ -4124,9 +4176,7 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   };
   // No logo — brand already printed on the carton.
 
-  const fields = layout === 'minimal'
-    ? (shape.fields || []).filter(f=> f.label === 'Strain' || f.label === 'Lot ID' || f.label === 'Net Weight')
-    : (shape.fields || []);
+  const fields = filterPackingLabelFields(shape.fields, layout);
 
   const nameFs = Math.max(22, Math.round(ll * 0.032));
   const addrFs = Math.max(18, Math.round(ll * 0.026));
@@ -4161,9 +4211,18 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
     y += toH + 10;
   }
 
+  if(shape.mixed){
+    const mixFs = Math.max(26, Math.round(ll * 0.038));
+    const mixH = mixFs + 22;
+    zpl += '^FO' + m + ',' + y + '^GB' + innerW + ',' + mixH + ',3^FS\n';
+    zpl += center(y + Math.round((mixH - mixFs) / 2), mixFs, safe(shape.subheader || 'MIXED CONTENTS', 32));
+    y += mixH + 10;
+  }
+
   fields.forEach(f=>{
-    zpl += block(y, fieldFs, safe(f.label + ' : ' + f.value, 52), 1);
-    y += fieldFs + 8;
+    const fs = f.contentLine ? Math.max(22, fieldFs - 2) : fieldFs;
+    zpl += block(y, fs, safe(f.label + ' : ' + f.value, 56), f.contentLine ? 2 : 1);
+    y += fs + (f.contentLine ? 10 : 8);
   });
   y += 6;
 
