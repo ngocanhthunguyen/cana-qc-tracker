@@ -972,7 +972,7 @@ function upgradeSheetHeaders() {
 }
 
 function orderTabs(ss) {
-  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
+  var order = ['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Insect Scout', 'Flower Cycles', 'Trim Record', 'Trim Cana', 'Cure Sessions', 'Cure Log', 'Cana Stock'].concat(getFarmList(ss));
   for (var i = order.length - 1; i >= 0; i--) {
     var sh = ss.getSheetByName(order[i]);
     if (sh) {
@@ -1214,6 +1214,8 @@ function readAllFarms() {
     cureLog: readCureLog(ss),
     canaStock: readCanaStock(ss),
     plants: readPlants(ss),
+    insectScouts: readInsectScouts(ss),
+    flowerCycles: readFlowerCycles(ss),
     exportLog: readExportLog(ss),
     exportCompanies: readExportCompaniesFromMeta(ss) || [{ id: 'bls', name: 'BLS', templateId: 'bls' }],
     exportPicks: readExportPicks(ss),
@@ -1284,7 +1286,7 @@ function writeAllFarms(state) {
     writeFarmSheet(sheet, records, docs);
   });
   ss.getSheets().map(function(sh) { return sh.getName(); }).forEach(function(name) {
-    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
+    if (['README', 'Dashboard', 'Documents', 'Export Log', 'Export Picks', 'Company Orders', 'Shipments', 'Packing Plans', 'Staff Users', 'Activity Log', 'Plant Registry', 'Insect Scout', 'Flower Cycles', 'Trim Record', 'Trim Rework', 'Trim Cana', 'Trimming', 'Cure Sessions', 'Cure Log', 'Cana Stock', '_Meta'].indexOf(name) >= 0) return;
     deleteOrphanFarmSheet(ss, name, farmList);
   });
   if (state.documents) writeDocuments(ss, state.documents, farmList);
@@ -1293,6 +1295,8 @@ function writeAllFarms(state) {
   if (state.cureLog !== undefined) writeCureLog(ss, state.cureLog);
   if (state.canaStock !== undefined) writeCanaStock(ss, state.canaStock);
   if (state.plants !== undefined) writePlants(ss, state.plants);
+  if (state.insectScouts !== undefined) writeInsectScouts(ss, state.insectScouts);
+  if (state.flowerCycles !== undefined) writeFlowerCycles(ss, state.flowerCycles);
   if (state.exportLog) writeExportLog(ss, state.exportLog);
   if (state.exportCompanies) writeExportCompanies(ss, state.exportCompanies);
   if (state.exportPicks !== undefined) writeExportPicks(ss, state.exportPicks);
@@ -2528,6 +2532,146 @@ function writePlants(ss, plants) {
     }
     sheet.getRange(CANA_FLOWER_DATA_START, 2, rows.length, 1).setFontFamily('Courier New').setFontWeight('bold');
   }
+}
+
+/* ---------- IPM — Insect Scout + Flower Cycles ---------- */
+
+var INSECT_SCOUT_SHEET = 'Insect Scout';
+var INSECT_SCOUT_HEADERS = ['_id', 'Date', 'Time', 'Room', 'Cycle ID', 'Cycle Name', 'Pest', 'Severity', 'Count', 'Action', 'Notes', 'Scouted By', 'Created At'];
+var INSECT_SCOUT_NUM_COLS = INSECT_SCOUT_HEADERS.length;
+
+var FLOWER_CYCLES_SHEET = 'Flower Cycles';
+var FLOWER_CYCLES_HEADERS = ['_id', 'Room', 'Cycle Name', 'Start Date', 'End Date', 'Status', 'Strain', 'Notes', 'Created By', 'Created At'];
+var FLOWER_CYCLES_NUM_COLS = FLOWER_CYCLES_HEADERS.length;
+
+function readInsectScouts(ss) {
+  var sheet = ss.getSheetByName(INSECT_SCOUT_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, INSECT_SCOUT_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[0] && !row[1] && !row[3]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      date: formatSheetDate(row[1]),
+      time: cellStr(row[2]),
+      room: String(row[3] || ''),
+      cycleId: String(row[4] || ''),
+      cycleName: String(row[5] || ''),
+      pest: String(row[6] || ''),
+      severity: String(row[7] || ''),
+      count: cellStr(row[8]),
+      action: String(row[9] || ''),
+      notes: String(row[10] || ''),
+      scoutedBy: String(row[11] || ''),
+      createdAt: String(row[12] || '')
+    });
+  });
+  return list;
+}
+
+function writeInsectScouts(ss, scouts) {
+  setupCanaFlowerTab(ss, INSECT_SCOUT_SHEET, 'CANA QC TRACKER  ·  INSECT SCOUT / IPM',
+    'Room-by-room insect scouting · Clone · Veg · Flower 1–4 · flower scouts link to Flower Cycles',
+    '#b45309', INSECT_SCOUT_HEADERS);
+  var sheet = ss.getSheetByName(INSECT_SCOUT_SHEET);
+  var rows = (scouts || []).map(function(r) {
+    return [
+      r.id || newId(),
+      r.date || '',
+      r.time || '',
+      r.room || '',
+      r.cycleId || '',
+      r.cycleName || '',
+      r.pest || '',
+      r.severity || '',
+      r.count || '',
+      r.action || '',
+      r.notes || '',
+      r.scoutedBy || '',
+      r.createdAt || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, INSECT_SCOUT_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, INSECT_SCOUT_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, INSECT_SCOUT_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#fff7ed')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+function readFlowerCycles(ss) {
+  var sheet = ss.getSheetByName(FLOWER_CYCLES_SHEET);
+  if (!sheet || sheet.getLastRow() < CANA_FLOWER_DATA_START) return [];
+  var numRows = sheet.getLastRow() - CANA_FLOWER_HEADER_ROW;
+  if (numRows < 1) return [];
+  var values = sheet.getRange(CANA_FLOWER_DATA_START, 1, numRows, FLOWER_CYCLES_NUM_COLS).getValues();
+  var list = [];
+  values.forEach(function(row) {
+    if (!row[0] && !row[1] && !row[2]) return;
+    list.push({
+      id: String(row[0] || '') || newId(),
+      room: String(row[1] || ''),
+      name: String(row[2] || ''),
+      startDate: formatSheetDate(row[3]),
+      endDate: formatSheetDate(row[4]),
+      status: String(row[5] || ''),
+      strain: String(row[6] || ''),
+      notes: String(row[7] || ''),
+      createdBy: String(row[8] || ''),
+      createdAt: String(row[9] || '')
+    });
+  });
+  return list;
+}
+
+function writeFlowerCycles(ss, cycles) {
+  setupCanaFlowerTab(ss, FLOWER_CYCLES_SHEET, 'CANA QC TRACKER  ·  FLOWER CYCLES',
+    'One active grow cycle per Flower room 1–4 · insect scouts link to cycle for history',
+    '#7c3aed', FLOWER_CYCLES_HEADERS);
+  var sheet = ss.getSheetByName(FLOWER_CYCLES_SHEET);
+  var rows = (cycles || []).map(function(c) {
+    return [
+      c.id || newId(),
+      c.room || '',
+      c.name || '',
+      c.startDate || '',
+      c.endDate || '',
+      c.status || '',
+      c.strain || '',
+      c.notes || '',
+      c.createdBy || '',
+      c.createdAt || ''
+    ];
+  });
+  if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, sheet.getLastRow() - CANA_FLOWER_HEADER_ROW, FLOWER_CYCLES_NUM_COLS).clearContent();
+  }
+  if (rows.length) {
+    sheet.getRange(CANA_FLOWER_DATA_START, 1, rows.length, FLOWER_CYCLES_NUM_COLS).setValues(rows);
+    for (var r = 0; r < rows.length; r++) {
+      sheet.getRange(CANA_FLOWER_DATA_START + r, 1, 1, FLOWER_CYCLES_NUM_COLS)
+        .setBackground(r % 2 === 0 ? THEME.white : '#f5f3ff')
+        .setFontSize(10).setWrap(true);
+    }
+  }
+}
+
+/** Run once — creates Insect Scout + Flower Cycles tabs */
+function upgradeIpmTabs() {
+  var ss = getSpreadsheet();
+  writeInsectScouts(ss, readInsectScouts(ss));
+  writeFlowerCycles(ss, readFlowerCycles(ss));
+  orderTabs(ss);
+  SpreadsheetApp.flush();
+  Logger.log('Insect Scout + Flower Cycles tabs ready.');
 }
 
 /* ---------- Export Picks — kg picked from a farm+strain QC pool, 4-char Lot IDs, FIFO batch trace ---------- */

@@ -5,7 +5,7 @@
 /* ============ STATE ============ */
 let state = null;
 let currentFarm = '';
-let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'companyOrders' | 'shipments' | 'export'
+let currentView = 'dashboard'; // 'dashboard' | 'allFarms' | 'farm' | 'trimming' | 'curing' | 'canaStock' | 'plants' | 'ipm' | 'companyOrders' | 'shipments' | 'export'
 let trimSubTab = 'record'; // 'record' | 'cana'
 let trimSearchText = '';
 let trimMonth = '';
@@ -1038,6 +1038,10 @@ function ensureStateShape(){
   if(!state.canaStock) state.canaStock = [];
   if(!state.plants) state.plants = [];
   state.plants = state.plants.map(normalizePlant);
+  if(!state.insectScouts) state.insectScouts = [];
+  state.insectScouts = state.insectScouts.map(normalizeInsectScout);
+  if(!state.flowerCycles) state.flowerCycles = [];
+  state.flowerCycles = state.flowerCycles.map(normalizeFlowerCycle);
   if(!state.exportLog) state.exportLog = [];
   if(!state.exportCompanies || !state.exportCompanies.length){
     state.exportCompanies = [{ id:'bls', name:'BLS', templateId:'bls' }];
@@ -1396,6 +1400,8 @@ function mergeSharedModulesFromRemote(data){
   mergeCureFromRemote(data.curingSessions, data.cureLog);
   mergeCanaStockFromRemote(data.canaStock);
   mergePlantsFromRemote(data.plants);
+  mergeInsectScoutsFromRemote(data.insectScouts);
+  mergeFlowerCyclesFromRemote(data.flowerCycles);
   if(!localDirty && Array.isArray(data.exportLog)) state.exportLog = data.exportLog.slice();
   if(!localDirty && Array.isArray(data.exportCompanies) && data.exportCompanies.length){
     state.exportCompanies = data.exportCompanies.slice();
@@ -1592,7 +1598,9 @@ function sharedModulesFingerprint(){
     curingSessions: state.curingSessions || [],
     cureLog: state.cureLog || [],
     canaStock: state.canaStock || [],
-    plants: state.plants || []
+    plants: state.plants || [],
+    insectScouts: state.insectScouts || [],
+    flowerCycles: state.flowerCycles || []
   });
 }
 function mergeDocumentsFromRemote(remoteDocs){
@@ -1650,6 +1658,8 @@ function stateFingerprint(){
     cureLog: state.cureLog || [],
     canaStock: state.canaStock || [],
     plants: state.plants || [],
+    insectScouts: state.insectScouts || [],
+    flowerCycles: state.flowerCycles || [],
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
@@ -1792,6 +1802,8 @@ async function pullFromGoogleSheet(silent){
       cureLog: data.cureLog || [],
       canaStock: data.canaStock || [],
       plants: data.plants || [],
+      insectScouts: data.insectScouts || [],
+      flowerCycles: data.flowerCycles || [],
       exportLog: data.exportLog || [],
       exportCompanies: data.exportCompanies || [],
       exportPicks: data.exportPicks || [],
@@ -1862,6 +1874,8 @@ async function pushToGoogleSheet(silent){
         cureLog: state.cureLog || [],
         canaStock: state.canaStock || [],
         plants: state.plants || [],
+        insectScouts: state.insectScouts || [],
+        flowerCycles: state.flowerCycles || [],
         exportLog: state.exportLog || [],
         exportCompanies: state.exportCompanies || [],
         exportPicks: state.exportPicks || [],
@@ -2385,6 +2399,8 @@ function buildStateForStorage(){
     cureLog: state.cureLog || [],
     canaStock: state.canaStock || [],
     plants: state.plants || [],
+    insectScouts: state.insectScouts || [],
+    flowerCycles: state.flowerCycles || [],
     exportLog: state.exportLog || [],
     exportCompanies: state.exportCompanies || [],
     exportPicks: state.exportPicks || [],
@@ -5119,6 +5135,7 @@ function render(){
   else if(currentView==='trimming') renderTrimmingView();
   else if(currentView==='curing') renderCuringView();
   else if(currentView==='plants') renderPlantsView();
+  else if(currentView==='ipm') renderIpmView();
   else if(currentView==='canaStock') renderCanaStockView();
   else if(currentView==='export') renderExportView();
   else if(currentFarmTab==='documents') renderFarmDocuments();
@@ -5158,6 +5175,7 @@ function renderTabs(){
   nav.appendChild(navBtn('✂️ Trimming', currentView === 'trimming', ()=>{ currentView = 'trimming'; render(); }));
   nav.appendChild(navBtn('🌡️ Curing', currentView === 'curing', ()=>{ currentView = 'curing'; render(); }));
   nav.appendChild(navBtn('🌱 Plants', currentView === 'plants', ()=>{ currentView = 'plants'; plantSelectedIds.clear(); render(); }));
+  nav.appendChild(navBtn('🐛 IPM', currentView === 'ipm', ()=>{ currentView = 'ipm'; render(); }));
   if(isManager()){
     nav.appendChild(navBtn('📦 Cana Stock', currentView === 'canaStock', ()=>{ currentView = 'canaStock'; render(); }));
     nav.appendChild(navBtn('🚢 Export', currentView === 'export', ()=>{ currentView = 'export'; render(); }));

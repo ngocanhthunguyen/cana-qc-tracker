@@ -568,6 +568,19 @@
   .pkg-label-body-land{display:grid;grid-template-columns:0.9fr 1.3fr;gap:10px;width:100%;flex:1;align-items:stretch;}
   .pkg-label-body-left{display:flex;flex-direction:column;min-width:0;}
   .pkg-label-body-right{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;}
+  .ipm-room-strip{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;}
+  .ipm-room-chip{
+    display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+    padding:8px 10px;border:1px solid var(--border,#e2e8f0);border-radius:10px;
+    background:#fff;cursor:pointer;min-width:120px;text-align:left;font:inherit;
+  }
+  .ipm-room-chip.active{border-color:#059669;box-shadow:0 0 0 2px rgba(5,150,105,.15);}
+  .ipm-room-chip span{font-size:11px;color:var(--muted,#64748b);}
+  .ipm-room-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-top:2px;}
+  .ipm-room-dot.ok{background:#16a34a;}
+  .ipm-room-dot.miss{background:#f59e0b;}
+  .ipm-cycle-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;}
+  .ipm-cycle-card{margin:0;}
   .packing-lookup-inside{
     margin:8px 0 0;
     padding:10px 12px;

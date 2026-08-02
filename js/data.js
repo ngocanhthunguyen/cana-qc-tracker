@@ -118,6 +118,8 @@ function defaultState(){
     cureLog: [],
     canaStock: [],
     plants: [],
+    insectScouts: [],
+    flowerCycles: [],
     exportLog: [],
     exportCompanies: [{ id:'bls', name:'BLS', templateId:'bls' }],
     exportPicks: [],
@@ -181,6 +183,46 @@ const STOCK_LOCATION_OPTIONS = [
   'Cure room / ห้อง cure',
   STOCK_LOCATION_SMALL_SAMPLES,
   'Other / อื่นๆ'
+];
+
+/** Grow rooms used by Plants + IPM insect scouting */
+const CANA_GROW_ROOMS = [
+  'Clone',
+  'Veg',
+  'Flower room 1',
+  'Flower room 2',
+  'Flower room 3',
+  'Flower room 4'
+];
+function isFlowerGrowRoom(room){
+  return /^Flower room\s*[1-4]$/i.test(String(room || '').trim());
+}
+const IPM_PEST_OPTIONS = [
+  'None / ไม่พบ',
+  'Thrips / เพลี้ยไฟ',
+  'Spider mites / ไร',
+  'Fungus gnats / ริ้น',
+  'Aphids / เพลี้ยอ่อน',
+  'Whitefly / แมลงหวี่ขาว',
+  'Caterpillar / หนอน',
+  'Other / อื่นๆ'
+];
+const IPM_SEVERITY_OPTIONS = [
+  'None / ไม่มี',
+  'Low / ต่ำ',
+  'Medium / ปานกลาง',
+  'High / สูง'
+];
+const IPM_ACTION_OPTIONS = [
+  'Monitor only / เฝ้าดู',
+  'Sticky traps / กับดักเหนียว',
+  'Spray / พ่น',
+  'Remove plants / ย้าย-ทิ้งต้น',
+  'Other / อื่นๆ'
+];
+const FLOWER_CYCLE_STATUS_OPTIONS = [
+  'Active / กำลังปลูก',
+  'Complete / จบรอบ'
 ];
 
 const CURE_SESSION_COLS = [

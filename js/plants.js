@@ -15,11 +15,9 @@ const PLANT_STATUS_OPTIONS = [
   'Discarded / ทิ้ง'
 ];
 
-const PLANT_ROOM_PRESETS = [
-  'Cloning',
-  'Veg room',
-  'Flower room'
-];
+const PLANT_ROOM_PRESETS = (typeof CANA_GROW_ROOMS !== 'undefined' && CANA_GROW_ROOMS.length)
+  ? CANA_GROW_ROOMS.slice()
+  : ['Clone', 'Veg', 'Flower room 1', 'Flower room 2', 'Flower room 3', 'Flower room 4'];
 
 const PLANT_BATCH_PREFIX = 'CA-P-';
 const PLANT_LOT_PREFIX = 'CA-L-';
