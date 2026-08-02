@@ -3793,7 +3793,10 @@ function packingLabelBodyHtml(shape, layout){
         </div>
         <div class="pkg-label-body-right">
           ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
-          <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 96, width: 2.8, margin: 1 })}</div>
+          <div class="pkg-scan-codes">
+            <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: 96, width: 2.4, margin: 1 })}</div>
+            ${renderPackingQrHtml(shape.code, 96)}
+          </div>
           <div class="zebra-label-id">${esc(shape.code)}</div>
           ${shape.footNote && layout !== 'minimal' ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
         </div>
@@ -3814,10 +3817,44 @@ function packingLabelBodyHtml(shape, layout){
     <div class="pkg-label-fields">${fields.map(f=> `<div><b>${esc(f.label)}:</b> ${esc(f.value)}</div>`).join('')}</div>
     ${shape.handleCareful && layout !== 'minimal' ? `<div class="pkg-label-handle">HANDLE PACKAGE CAREFULLY</div>` : ''}
     ${shape.counterText ? `<div class="pkg-label-counter">${esc(shape.counterText)}</div>` : ''}
-    <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: isShip ? (layout==='minimal'?84:70) : 40, width: isShip ? 2.4 : 1.6, margin: 1 })}</div>
+    <div class="pkg-scan-codes">
+      <div class="zebra-barcode">${renderBarcodeSvg(shape.code, { height: isShip ? (layout==='minimal'?84:70) : 40, width: isShip ? 2.2 : 1.6, margin: 1 })}</div>
+      ${isShip ? renderPackingQrHtml(shape.code, isShip ? 88 : 72) : ''}
+    </div>
     <div class="zebra-label-id">${esc(shape.code)}</div>
     ${shape.footNote && layout !== 'minimal' ? `<div class="pkg-label-foot">${esc(shape.footNote)}</div>` : ''}
   `;
+}
+function packingQrMag(dpi){
+  return dpi >= 300 ? 6 : 7;
+}
+function packingQrSizeDots(dpi){
+  return packingQrMag(dpi) * 29;
+}
+function zplPackingQr(x, y, orient, dpi, data){
+  const mag = packingQrMag(dpi);
+  const o = (orient === 'R' || orient === 'I' || orient === 'B') ? orient : 'N';
+  return '^FO' + Math.round(x) + ',' + Math.round(y) + '^BQ' + o + ',2,' + mag + '^FDQA,' + data + '^FS\n';
+}
+function renderPackingQrHtml(code, size){
+  const s = size || 88;
+  return `<canvas class="pkg-qr-canvas" data-pack-qr="${esc(code)}" width="${s}" height="${s}" aria-label="QR ${esc(code)}"></canvas>`;
+}
+function paintPackingQrCanvases(root){
+  if(typeof QRCode === 'undefined' || typeof QRCode.toCanvas !== 'function') return;
+  const scope = root || document;
+  scope.querySelectorAll('canvas[data-pack-qr]').forEach(canvas=>{
+    const code = canvas.getAttribute('data-pack-qr');
+    if(!code) return;
+    try{
+      QRCode.toCanvas(canvas, code, {
+        width: Number(canvas.getAttribute('width')) || 88,
+        margin: 1,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#000000', light: '#ffffff' }
+      }, function(){});
+    }catch(e){ /* preview-only */ }
+  });
 }
 function buildPackingLabelsPreviewHtml(plan, type){
   const list = type === 'bag' ? plan.bags : (type === 'box' ? plan.boxes : plan.pallets);
@@ -4031,20 +4068,28 @@ function buildZplShipLabelLandscape(shape, sizeIn, dpi, opts){
   }
 
   const id = safe(shape.code, 20);
+  // Phone cameras struggle with rotated Code 128 — print QR (same code) beside the 1D bar
+  const qrDots = packingQrSizeDots(dpi);
+  const gapBarQr = 10;
+  const barMaxW = Math.max(80, rightW - qrDots - gapBarQr);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > rightW - 4){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > rightW - 4){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= rightW - 4){
+  if(barW > barMaxW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > barMaxW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= barMaxW){
     moduleW += 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
   const footNoteFs = Math.max(15, Math.round(DH * 0.038));
   const footReserve = codeFs + 6 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 4 : 0);
   const bh = Math.max(80, Math.min(Math.round(DH * 0.38), footTop + footH - by - footReserve));
-  const bx = footR + Math.max(0, Math.round((rightW - barW) / 2));
-  const bar = map(bx, by, barW, bh);
+  const codesW = Math.min(rightW, barW + gapBarQr + qrDots);
+  const codesX = footR + Math.max(0, Math.round((rightW - codesW) / 2));
+  const bar = map(codesX, by, barW, bh);
   zpl += '^FO' + bar.x + ',' + bar.y + '^BY' + moduleW + ',3,' + bh + '^BCR,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  const qrSide = Math.min(qrDots, bh);
+  const qr = map(codesX + barW + gapBarQr, by + Math.max(0, Math.round((bh - qrSide) / 2)), qrSide, qrSide);
+  zpl += zplPackingQr(qr.x, qr.y, 'R', dpi, id);
   by += bh + 4;
   zpl += tc(footR, rightW, by, codeFs, id);
   by += codeFs + 3;
@@ -4137,13 +4182,16 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
     y += cFs + 10;
   }
 
-  // Barcode fills remaining height so the bottom isn't empty
+  // Barcode + QR fill remaining height (QR = reliable phone scan)
   const id = safe(shape.code, 20);
+  const qrDots = packingQrSizeDots(dpi);
+  const gapBarQr = 12;
+  const barMaxW = Math.max(80, innerW - qrDots - gapBarQr);
   let moduleW = dpi >= 300 ? 3 : 2;
   let barW = estimateCode128Dots(id.length, moduleW);
-  if(barW > innerW - 8){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
-  if(barW > innerW - 8){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
-  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= innerW - 8){
+  if(barW > barMaxW){ moduleW = 2; barW = estimateCode128Dots(id.length, moduleW); }
+  if(barW > barMaxW){ moduleW = 1; barW = estimateCode128Dots(id.length, moduleW); }
+  if(moduleW < 3 && estimateCode128Dots(id.length, moduleW + 1) <= barMaxW){
     moduleW += 1;
     barW = estimateCode128Dots(id.length, moduleW);
   }
@@ -4151,8 +4199,13 @@ function buildZplShipLabelPortrait(shape, sizeIn, dpi, opts){
   const footNoteFs = Math.max(18, Math.round(ll * 0.026));
   const footReserve = codeFs + 12 + ((shape.footNote && layout !== 'minimal') ? footNoteFs + 8 : 0) + m;
   const bh = Math.max(120, ll - y - footReserve);
-  const bx = m + Math.max(0, Math.round((innerW - barW) / 2));
-  zpl += '^FO' + bx + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  const codesW = Math.min(innerW, barW + gapBarQr + qrDots);
+  const codesX = m + Math.max(0, Math.round((innerW - codesW) / 2));
+  zpl += '^FO' + codesX + ',' + y + '^BY' + moduleW + ',3,' + bh + '^BCN,' + bh + ',N,N,N^FD' + id + '^FS\n';
+  const qrSide = Math.min(qrDots, bh);
+  const qx = codesX + barW + gapBarQr;
+  const qy = y + Math.max(0, Math.round((bh - qrSide) / 2));
+  zpl += zplPackingQr(qx, qy, 'N', dpi, id);
   y += bh + 10;
   zpl += center(y, codeFs, id);
   y += codeFs + 8;
@@ -4279,8 +4332,10 @@ function openPrintPackingLabelsModal(planId){
   };
   const refreshSheet = ()=>{
     document.getElementById('packingLabelSheet').innerHTML = buildPackingLabelsPreviewHtml(plan, tier);
+    paintPackingQrCanvases(document.getElementById('packingLabelSheet'));
     bindTestPrintButtons();
   };
+  paintPackingQrCanvases(document.getElementById('packingLabelSheet'));
   const bindTestPrintButtons = ()=>{
     document.querySelectorAll('.test-print-one-btn').forEach(btn=>{
       btn.onclick = async ()=>{
@@ -4389,7 +4444,7 @@ function renderExportLookupPanel(){
   return `
   <div class="panel" id="exportLookupPanel">
     <h2 style="margin:0 0 4px;font-size:17px;">🔍 Look up bag / box / pallet</h2>
-    <p class="sub" style="margin:0 0 10px;">Type or scan the code under the barcode (e.g. <code>2709-B003</code>)<br><span class="bi">พิมพ์หรือสแกนรหัสใต้บาร์โค้ด</span></p>
+    <p class="sub" style="margin:0 0 10px;">Type the code, or scan the <b>QR</b> / barcode (e.g. <code>2709-B003</code>). Old stickers without QR: use <b>Photo</b> or type the code.<br><span class="bi">พิมพ์รหัส หรือสแกน QR / บาร์โค้ด</span></p>
     <div class="row-actions">
       <input id="packingLookupInput" placeholder="e.g. 2709-B003" style="flex:1;" autocomplete="off" enterkeyhint="search">
       <button type="button" class="primary" id="btnPackingLookupGo">Look up</button>
@@ -4506,19 +4561,42 @@ async function openPackingCameraReader(root, input, go){
     return;
   }
   packingScanLock = false;
-  wrap.innerHTML = `<div id="packingCameraReader" class="plant-camera-reader" style="margin-top:10px;"></div><p class="sub" id="packingCameraStatus">Point at the barcode — hold steady…</p>`;
+  wrap.innerHTML = `
+    <div id="packingCameraReader" class="plant-camera-reader packing-scan-reader" style="margin-top:10px;"></div>
+    <p class="sub" id="packingCameraStatus">Point at the <b>QR</b> (or barcode) — hold steady…</p>
+    <div class="row-actions" style="margin-top:8px;">
+      <label class="small ghost packing-scan-photo-btn" style="cursor:pointer;">
+        🖼 Photo of sticker
+        <input type="file" accept="image/*" capture="environment" id="packingScanFile" hidden>
+      </label>
+    </div>`;
   const statusEl = wrap.querySelector('#packingCameraStatus');
   const formats = (typeof Html5QrcodeSupportedFormats !== 'undefined')
-    ? [Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39]
+    ? [
+        Html5QrcodeSupportedFormats.QR_CODE,
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.DATA_MATRIX
+      ]
     : undefined;
-  // Tall qrbox helps 1D codes; landscape labels are often scanned sideways
-  const boxW = Math.min(340, Math.max(260, window.innerWidth - 48));
   packingCameraScanner = new Html5Qrcode('packingCameraReader');
   const config = {
-    fps: 15,
-    qrbox: { width: boxW, height: Math.round(boxW * 0.5) },
+    fps: 12,
+    // Wide box for 1D; still large enough for QR on new labels
+    qrbox: (vw, vh)=>{
+      const w = Math.floor(Math.min(vw, vh) * 0.92);
+      const h = Math.floor(Math.min(vh * 0.55, w * 0.55));
+      return { width: Math.max(220, w), height: Math.max(140, h) };
+    },
     aspectRatio: 1.333,
-    disableFlip: false
+    disableFlip: false,
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    videoConstraints: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      focusMode: { ideal: 'continuous' }
+    }
   };
   if(formats) config.formatsToSupport = formats;
   const acceptScan = (decodedText)=>{
@@ -4533,27 +4611,49 @@ async function openPackingCameraReader(root, input, go){
       else runPackingLookup(code, document.getElementById('packingLookupResult'));
     });
   };
+  const onDecoded = (decodedText)=>{
+    if(packingScanLock) return;
+    const matched = lookupPackingUnit(decodedText);
+    if(matched || looksLikePackingScan(decodedText)){
+      acceptScan(decodedText);
+      return;
+    }
+    if(statusEl){
+      statusEl.textContent = 'Saw "' + String(decodedText || '').slice(0, 28) + '" — keep scanning QR/barcode…';
+    }
+  };
+  const fileInput = wrap.querySelector('#packingScanFile');
+  if(fileInput){
+    fileInput.onchange = async ()=>{
+      const file = fileInput.files && fileInput.files[0];
+      if(!file || packingScanLock) return;
+      if(statusEl) statusEl.textContent = 'Reading photo…';
+      try{
+        await stopPackingCameraScanner();
+        packingCameraScanner = new Html5Qrcode('packingCameraReader');
+        const decodedText = await packingCameraScanner.scanFile(file, true);
+        onDecoded(decodedText);
+        if(!packingScanLock && statusEl){
+          statusEl.textContent = 'Photo read "' + String(decodedText || '').slice(0, 28) + '" — not a packing code. Try again closer.';
+          // Restart live camera
+          openPackingCameraReader(root, input, go);
+        }
+      }catch(err){
+        if(statusEl) statusEl.textContent = 'Could not read photo — brighter light, fill the frame, try again.';
+        try{ openPackingCameraReader(root, input, go); }catch(e2){}
+      }
+    };
+  }
   try{
-    await packingCameraScanner.start({ facingMode: 'environment' }, config, (decodedText)=>{
-      if(packingScanLock) return;
-      // Ignore early false reads (common while aiming) unless it looks like our code
-      const matched = lookupPackingUnit(decodedText);
-      if(matched){
-        acceptScan(decodedText);
-        return;
-      }
-      if(looksLikePackingScan(decodedText)){
-        acceptScan(decodedText);
-        return;
-      }
-      if(statusEl){
-        const shown = String(decodedText || '').slice(0, 24);
-        statusEl.textContent = 'Saw "' + shown + '" — not a packing code, keep scanning…';
-      }
-    });
-    if(statusEl) statusEl.textContent = 'Point at the barcode — hold steady…';
+    await packingCameraScanner.start(
+      { facingMode: 'environment' },
+      config,
+      onDecoded,
+      ()=>{}
+    );
+    if(statusEl) statusEl.textContent = 'Point at the QR (or barcode) — or use Photo if the bars won’t read.';
   }catch(e){
-    if(statusEl) statusEl.textContent = 'Camera unavailable: ' + (e.message || e);
+    if(statusEl) statusEl.textContent = 'Camera unavailable: ' + (e.message || e) + ' — use Photo of sticker instead.';
   }
 }
 function openPrintExportLotLabels(pickIds){
