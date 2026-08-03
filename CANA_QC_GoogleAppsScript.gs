@@ -2464,7 +2464,7 @@ function upgradeCanaFlowerTabs() {
 /* ---------- Plant Registry — potting IDs + barcodes ---------- */
 
 var PLANT_REGISTRY_SHEET = 'Plant Registry';
-var PLANT_REGISTRY_HEADERS = ['_id', 'Batch ID', 'Strain', 'Pot Date', 'Current Room', 'Status', 'Source', 'Harvest Date', 'Linked Trim ID', 'Transfer Batch Ref', 'Room History', 'Notes', 'Created By', 'Created At'];
+var PLANT_REGISTRY_HEADERS = ['_id', 'Batch ID', 'Strain', 'Pot Date', 'Current Room', 'Status', 'Source', 'Harvest Date', 'Linked Trim ID', 'Transfer Batch Ref', 'Room History', 'Notes', 'Created By', 'Created At', 'Cycle ID', 'Cycle Name'];
 var PLANT_REGISTRY_NUM_COLS = PLANT_REGISTRY_HEADERS.length;
 
 function readPlants(ss) {
@@ -2491,7 +2491,9 @@ function readPlants(ss) {
       roomHistory: String(row[10] || ''),
       notes: String(row[11] || ''),
       createdBy: String(row[12] || ''),
-      createdAt: String(row[13] || '')
+      createdAt: String(row[13] || ''),
+      cycleId: String(row[14] || ''),
+      cycleName: String(row[15] || '')
     });
   });
   return list;
@@ -2499,7 +2501,7 @@ function readPlants(ss) {
 
 function writePlants(ss, plants) {
   setupCanaFlowerTab(ss, PLANT_REGISTRY_SHEET, 'CANA QC TRACKER  ·  PLANT REGISTRY',
-    'One batch ID per plant at potting · Code128 barcodes · links to Trim Cana & Stock',
+    'One batch ID per plant · flower rooms link to IPM Flower Cycles · barcodes · Trim Cana & Stock',
     '#15803d', PLANT_REGISTRY_HEADERS);
   var sheet = ss.getSheetByName(PLANT_REGISTRY_SHEET);
   var rows = (plants || []).map(function(p) {
@@ -2517,7 +2519,9 @@ function writePlants(ss, plants) {
       p.roomHistory || '',
       p.notes || '',
       p.createdBy || '',
-      p.createdAt || ''
+      p.createdAt || '',
+      p.cycleId || '',
+      p.cycleName || ''
     ];
   });
   if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {

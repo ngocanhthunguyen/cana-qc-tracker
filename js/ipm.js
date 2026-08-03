@@ -42,15 +42,24 @@ function normalizeFlowerCycle(rec){
 function isFlowerCycleActive(c){
   return String((c && c.status) || '').indexOf('Active') >= 0;
 }
+function growRoomsEqual(a, b){
+  const ca = typeof canonicalizeGrowRoom === 'function' ? canonicalizeGrowRoom(a) : String(a || '').trim();
+  const cb = typeof canonicalizeGrowRoom === 'function' ? canonicalizeGrowRoom(b) : String(b || '').trim();
+  return ca.toLowerCase() === cb.toLowerCase();
+}
 function getActiveCycleForRoom(room){
   return (state.flowerCycles || []).map(normalizeFlowerCycle)
-    .find(c=> c.room === room && isFlowerCycleActive(c)) || null;
+    .find(c=> growRoomsEqual(c.room, room) && isFlowerCycleActive(c)) || null;
 }
 function getCyclesForRoom(room){
   return (state.flowerCycles || []).map(normalizeFlowerCycle)
-    .filter(c=> !room || c.room === room)
+    .filter(c=> !room || growRoomsEqual(c.room, room))
     .slice()
     .sort((a,b)=> (b.startDate || '').localeCompare(a.startDate || ''));
+}
+function countPlantsForCycle(cycleId){
+  if(!cycleId) return 0;
+  return (state.plants || []).filter(p=> String(p.cycleId || '') === String(cycleId)).length;
 }
 function nextFlowerCycleName(room){
   const m = String(room || '').match(/Flower room\s*([1-4])/i);
@@ -432,7 +441,7 @@ function renderIpmCyclesPanel(){
         <div>
           <h3 style="margin:0 0 4px;font-size:15px;">${esc(room)}</h3>
           ${active
-            ? `<p style="margin:0;font-size:13px;"><span class="status-chip pass">Active</span> <b>${esc(active.name)}</b><br><span class="muted">Started ${esc(active.startDate||'—')}${active.strain ? ' · ' + esc(active.strain) : ''}</span></p>`
+            ? `<p style="margin:0;font-size:13px;"><span class="status-chip pass">Active</span> <b>${esc(active.name)}</b><br><span class="muted">Started ${esc(active.startDate||'—')}${active.strain ? ' · ' + esc(active.strain) : ''} · ${countPlantsForCycle(active.id)} plant(s)</span></p>`
             : `<p class="sub" style="margin:0;">No active cycle</p>`}
         </div>
         <div class="action-group">
@@ -446,7 +455,7 @@ function renderIpmCyclesPanel(){
     </div>`;
   }).join('');
   const table = cycles.length ? `<div class="table-wrap desktop-table" style="margin-top:12px;"><table class="compact-table">
-    <thead><tr><th>Cycle</th><th>Room</th><th>Status</th><th>Start</th><th>End</th><th>Strain</th><th>By</th><th></th></tr></thead>
+    <thead><tr><th>Cycle</th><th>Room</th><th>Status</th><th>Start</th><th>End</th><th>Strain</th><th>Plants</th><th>By</th><th></th></tr></thead>
     <tbody>${cycles.map(c=>`<tr>
       <td><b>${esc(c.name)}</b></td>
       <td>${esc(c.room)}</td>
@@ -454,6 +463,7 @@ function renderIpmCyclesPanel(){
       <td>${esc(c.startDate||'—')}</td>
       <td>${esc(c.endDate||'—')}</td>
       <td>${esc(c.strain||'—')}</td>
+      <td>${countPlantsForCycle(c.id)}</td>
       <td>${esc(c.createdBy||'—')}</td>
       <td><div class="action-group">
         <button type="button" class="small" data-edit-cycle="${esc(c.id)}">Edit</button>
@@ -465,7 +475,7 @@ function renderIpmCyclesPanel(){
   return `
     <div class="row-actions cana-toolbar">
       <button class="primary" id="btnNewFlowerCycle">+ Start flower cycle</button>
-      <span class="muted" style="font-size:12px;">Only one <b>Active</b> cycle per flower room. Scout logs link to the cycle for history.</span>
+      <span class="muted" style="font-size:12px;">One <b>Active</b> cycle per flower room · Plants in that room auto-link · Scout logs keep cycle history.</span>
     </div>
     <div class="ipm-cycle-grid">${cards}</div>
     ${table}`;
@@ -571,19 +581,31 @@ function openFlowerCycleModal(id, presetRoom){
       const i = state.flowerCycles.findIndex(c=> c.id === rec.id);
       if(i >= 0) state.flowerCycles[i] = updated;
     }
+    let linkedPlants = 0;
+    if(isFlowerCycleActive(updated)){
+      (state.plants || []).forEach(p=>{
+        normalizePlant(p);
+        if(!growRoomsEqual(p.room, updated.room)) return;
+        if(p.cycleId) return; // keep prior cycle tag until Move / Link cycle
+        p.cycleId = updated.id;
+        p.cycleName = updated.name;
+        linkedPlants += 1;
+      });
+    }
     modalDirty = false;
     onDataChanged();
     if(appsScriptUrl){ clearTimeout(sheetSaveTimer); pushToGoogleSheet(true); }
     closeModal();
     ipmSubTab = 'cycles';
     renderIpmView();
-    showDocToast('Cycle saved · ' + updated.name);
+    showDocToast('Cycle saved · ' + updated.name + (linkedPlants ? ' · linked ' + linkedPlants + ' plant(s)' : ''));
   };
 }
 function endFlowerCycle(id){
   const c = (state.flowerCycles || []).find(x=> x.id === id);
   if(!c) return;
-  if(!confirm('End cycle "' + c.name + '" in ' + c.room + '?\nScout history stays linked to this cycle.')) return;
+  const nPlants = countPlantsForCycle(id);
+  if(!confirm('End cycle "' + c.name + '" in ' + c.room + '?\n' + nPlants + ' plant(s) keep this cycle tag for history.\nScout history stays linked.')) return;
   c.status = FLOWER_CYCLE_STATUS_OPTIONS[1];
   if(!c.endDate) c.endDate = todayISO();
   onDataChanged();

@@ -43,6 +43,8 @@ function normalizePlant(rec){
   if(!rec.createdAt) rec.createdAt = '';
   if(!rec.lotId && rec.transferBatchRef && /^CA-L-/i.test(String(rec.transferBatchRef))) rec.lotId = rec.transferBatchRef;
   if(rec.lotId && !rec.transferBatchRef) rec.transferBatchRef = rec.lotId;
+  if(rec.cycleId == null) rec.cycleId = '';
+  if(rec.cycleName == null) rec.cycleName = '';
   // Merge legacy names (Cloning → Clone, Veg room → Veg, …)
   if(typeof canonicalizeGrowRoom === 'function' && rec.room){
     rec.room = canonicalizeGrowRoom(rec.room);
@@ -54,6 +56,90 @@ function plantRoomKey(room){
   return typeof canonicalizeGrowRoom === 'function'
     ? canonicalizeGrowRoom(room).toLowerCase()
     : String(room || '').trim().toLowerCase();
+}
+
+/**
+ * Link plant ↔ IPM flower cycle.
+ * force=true on Move room / potting; heal mode only fills empty cycleId in a flower room.
+ */
+function applyPlantCycleLink(plant, opts){
+  const force = !!(opts && opts.force);
+  const healEmpty = !!(opts && opts.healEmpty);
+  if(!plant) return false;
+  normalizePlant(plant);
+  const room = plant.room;
+  const isFlower = typeof isFlowerGrowRoom === 'function' && isFlowerGrowRoom(room);
+  const active = (isFlower && typeof getActiveCycleForRoom === 'function')
+    ? getActiveCycleForRoom(room)
+    : null;
+
+  if(isFlower && active){
+    if(healEmpty && plant.cycleId) return false;
+    if(plant.cycleId === active.id && plant.cycleName === active.name) return false;
+    plant.cycleId = active.id;
+    plant.cycleName = active.name;
+    return true;
+  }
+  if(isFlower && !active){
+    if(force && plant.cycleId){
+      // Moved into flower room with no active cycle — clear stale link
+      plant.cycleId = '';
+      plant.cycleName = '';
+      return true;
+    }
+    return false;
+  }
+  // Clone / Veg / other — keep cycle on harvested plants (history), clear when force-moving
+  if(force){
+    const harvested = String(plant.status || '').indexOf('Harvested') >= 0;
+    if(harvested || (!plant.cycleId && !plant.cycleName)) return false;
+    plant.cycleId = '';
+    plant.cycleName = '';
+    return true;
+  }
+  return false;
+}
+
+/** One-time heal: plants already in a flower room with no cycle → active IPM cycle */
+function healPlantCycleLinks(){
+  let n = 0;
+  (state.plants || []).forEach(p=>{
+    if(applyPlantCycleLink(p, { healEmpty: true })) n += 1;
+  });
+  if(n){
+    onDataChanged();
+    showDocToast('Linked ' + n + ' plant(s) to active flower cycle(s)');
+  }
+  return n;
+}
+
+function linkSelectedPlantsToActiveCycle(plantIds){
+  const ids = plantIds && plantIds.length ? plantIds : [...plantSelectedIds];
+  if(!ids.length){ alert('Select plants first (or open a flower room and use Link cycle)'); return; }
+  let n = 0;
+  let skipped = 0;
+  ids.forEach(id=>{
+    const p = getPlantById(id);
+    if(!p) return;
+    normalizePlant(p);
+    if(!isFlowerGrowRoom(p.room)){ skipped += 1; return; }
+    const active = getActiveCycleForRoom(p.room);
+    if(!active){ skipped += 1; return; }
+    if(p.cycleId !== active.id || p.cycleName !== active.name){
+      p.cycleId = active.id;
+      p.cycleName = active.name;
+      n += 1;
+    }
+  });
+  if(n){
+    onDataChanged();
+    showDocToast('Linked ' + n + ' plant(s) to active cycle ✓');
+    renderPlantsView();
+  } else {
+    alert(skipped
+      ? 'No plants linked — need an Active cycle in IPM for that flower room.'
+      : 'Already linked to the active cycle.');
+  }
 }
 
 function parsePlantBatchSeq(batchId){
@@ -156,7 +242,7 @@ function getFilteredPlants(){
       if(plantRoomKey(p.room) !== plantRoomKey(plantRoomFilter)) return false;
     }
     if(q){
-      const hay = [p.batchId, p.lotId, p.transferBatchRef, p.strain, p.room, p.status, p.sourceFarm, p.notes, p.createdBy].join(' ').toLowerCase();
+      const hay = [p.batchId, p.lotId, p.transferBatchRef, p.strain, p.room, p.cycleName, p.cycleId, p.status, p.sourceFarm, p.notes, p.createdBy].join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
     }
     return true;
@@ -266,6 +352,8 @@ function renderPlantsView(){
   if(plantRoomFilter && plantRoomFilter !== '__all__' && plantRoomFilter !== '__none__' && typeof canonicalizeGrowRoom === 'function'){
     plantRoomFilter = canonicalizeGrowRoom(plantRoomFilter) || plantRoomFilter;
   }
+  // Backfill: flower-room plants with no cycle → active IPM cycle
+  healPlantCycleLinks();
   const hub = plantRoomHubNeeded();
   const rows = hub ? [] : getFilteredPlants();
   const page = hub ? null : paginatePlantRows(rows);
@@ -274,19 +362,27 @@ function renderPlantsView(){
   const roomLabel = plantRoomFilter === '__all__' ? 'All rooms'
     : (plantRoomFilter === '__none__' ? 'No room set'
     : (plantRoomFilter || 'Pick a room'));
+  const roomCycle = (!hub && plantRoomFilter && plantRoomFilter !== '__all__' && plantRoomFilter !== '__none__'
+    && typeof getActiveCycleForRoom === 'function')
+    ? getActiveCycleForRoom(plantRoomFilter)
+    : null;
+  const cycleHint = roomCycle
+    ? ` · cycle <b>${esc(roomCycle.name)}</b>`
+    : '';
   const main = document.getElementById('mainArea');
   main.innerHTML = `
     <div class="cana-header plant-header">
       <div>
         <h2>🌱 Plant Registry — potting IDs & barcodes</h2>
-        <p class="sub">Browse <b>by room</b> (avoids loading every plant) · scan barcode anytime to jump to one plant<br>
-        <span class="bi">เลือกห้องก่อนดูรายการ · หรือสแกนบาร์โค้ด</span></p>
+        <p class="sub">Browse <b>by room</b> · flower rooms link to IPM <b>cycle</b> (e.g. FR3-C01)<br>
+        <span class="bi">เลือกห้อง · ห้องดอกผูกกับรอบปลูก IPM</span></p>
       </div>
-      <div class="plant-kpi-mini">${(state.plants || []).length} plants · ${activeCount} active${hub ? '' : ` · showing ${page.total} in <b>${esc(roomLabel)}</b>`}</div>
+      <div class="plant-kpi-mini">${(state.plants || []).length} plants · ${activeCount} active${hub ? '' : ` · showing ${page.total} in <b>${esc(roomLabel)}</b>${cycleHint}`}</div>
     </div>
     <div class="row-actions plant-toolbar">
       <button class="primary" id="btnPotBatch">+ Potting batch <span class="bi">/ สร้างรหัส pot</span></button>
       <button id="btnMoveRoom" ${plantSelectedIds.size ? '' : 'disabled'}>Move room <span class="bi">/ ย้ายห้อง</span></button>
+      <button id="btnLinkCycle" ${plantSelectedIds.size ? '' : 'disabled'} title="Link selected plants to the Active IPM cycle for their flower room">Link cycle <span class="bi">/ ผูก cycle</span></button>
       <button id="btnHarvestPlants" ${plantSelectedIds.size ? '' : 'disabled'}>Harvest <span class="bi">/ เก็บเกี่ยว</span></button>
       <button id="btnPrintLabels" ${plantSelectedIds.size ? '' : 'disabled'}>🖨 Print labels <span class="bi">/ พิมพ์</span></button>
       <button class="danger admin-only" id="btnDeletePlants" ${plantSelectedIds.size ? '' : 'disabled'}>Delete selected <span class="bi">/ ลบ</span></button>
@@ -317,6 +413,7 @@ function renderPlantsView(){
   `;
   document.getElementById('btnPotBatch').onclick = ()=> openPottingBatchModal();
   document.getElementById('btnMoveRoom').onclick = ()=> openMoveRoomModal([...plantSelectedIds]);
+  document.getElementById('btnLinkCycle').onclick = ()=> linkSelectedPlantsToActiveCycle([...plantSelectedIds]);
   document.getElementById('btnHarvestPlants').onclick = ()=> openHarvestPlantsModal([...plantSelectedIds]);
   document.getElementById('btnPrintLabels').onclick = ()=> openPrintPlantLabels([...plantSelectedIds]);
   document.getElementById('btnDeletePlants').onclick = ()=> deleteSelectedPlants();
@@ -502,11 +599,11 @@ function renderPlantsCardList(rows){
         <div class="card-head-text">
           <code class="batch-id">${esc(p.batchId)}</code>
           <div class="card-title">${esc(p.strain||'—')}</div>
-          <div class="card-subtitle">${esc(p.room||'—')} · Lot ${esc(p.lotId || p.transferBatchRef || '—')}</div>
+          <div class="card-subtitle">${esc(p.room||'—')}${p.cycleName ? ' · ' + esc(p.cycleName) : ''} · Lot ${esc(p.lotId || p.transferBatchRef || '—')}</div>
         </div>
         <span class="pill plant-status">${esc(plantStatusShort(p.status))}</span>
       </div>
-      <div class="card-meta"><span>Pot ${esc(p.potDate || '—')}</span>${(p.lotId || p.transferBatchRef) ? `<span><button type="button" class="ghost small" data-plant-lot="${esc(p.lotId || p.transferBatchRef)}" style="padding:0;border:0;background:transparent;color:var(--blue-700);font-weight:700;">Lot ${esc(p.lotId || p.transferBatchRef)}</button></span>` : ''}<span>Harvest ${esc(p.harvestDate||'—')}</span></div>
+      <div class="card-meta"><span>Pot ${esc(p.potDate || '—')}</span>${p.cycleName ? `<span><code>${esc(p.cycleName)}</code></span>` : ''}${(p.lotId || p.transferBatchRef) ? `<span><button type="button" class="ghost small" data-plant-lot="${esc(p.lotId || p.transferBatchRef)}" style="padding:0;border:0;background:transparent;color:var(--blue-700);font-weight:700;">Lot ${esc(p.lotId || p.transferBatchRef)}</button></span>` : ''}<span>Harvest ${esc(p.harvestDate||'—')}</span></div>
       <div class="action-group">
         <button type="button" class="small" data-plant-barcode="${esc(p.id)}">Barcode</button>
         <button type="button" class="small" data-plant-trace="${esc(p.batchId)}">Trace</button>
@@ -530,6 +627,7 @@ function renderPlantsTable(rows, pageInfo){
       <td>${esc(p.strain)}</td>
       <td>${esc(p.potDate || '—')}</td>
       <td>${esc(p.room || '—')}</td>
+      <td>${p.cycleName ? `<code class="batch-id">${esc(p.cycleName)}</code>` : '<span class="muted">—</span>'}</td>
       <td><span class="pill plant-status">${esc(plantStatusShort(p.status))}</span></td>
       <td>${esc(p.harvestDate || '—')}</td>
       <td class="plant-actions">
@@ -549,7 +647,7 @@ function renderPlantsTable(rows, pageInfo){
   return `${pager}<div class="table-wrap desktop-table"><table class="compact-table plant-table">
     <thead><tr>
       <th style="width:36px"><input type="checkbox" id="plantSelectAll" title="Select all on this page"></th>
-      <th>Batch ID</th><th>Lot ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Status</th><th>Harvest</th><th></th>
+      <th>Batch ID</th><th>Lot ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Cycle</th><th>Status</th><th>Harvest</th><th></th>
     </tr></thead>
     <tbody>${body}</tbody>
   </table></div>
@@ -637,7 +735,7 @@ function deletePlantLot(lotIdOrRaw){
 }
 
 function updatePlantToolbarState(){
-  ['btnMoveRoom', 'btnHarvestPlants', 'btnPrintLabels', 'btnDeletePlants'].forEach(id=>{
+  ['btnMoveRoom', 'btnLinkCycle', 'btnHarvestPlants', 'btnPrintLabels', 'btnDeletePlants'].forEach(id=>{
     const btn = document.getElementById(id);
     if(btn) btn.disabled = !plantSelectedIds.size;
   });
@@ -752,6 +850,7 @@ function openPottingBatchModal(){
         createdBy: getCurrentUserName(),
         createdAt: new Date().toISOString()
       });
+      applyPlantCycleLink(plant, { force: true });
       state.plants.push(plant);
       newIds.push(plant.id);
     });
@@ -780,6 +879,10 @@ function openPlantEditModal(id){
         <div class="field"><label>Current room</label>${renderPlantRoomFields(rec.room, true)}</div>
         <div class="field"><label>Status</label>
           <select name="status">${PLANT_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${rec.status===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
+        </div>
+        <div class="field"><label>Flower cycle <span class="bi">/ รอบปลูก</span></label>
+          <input value="${esc(rec.cycleName || '— not linked —')}" readonly class="readonly" title="${esc(rec.cycleId || '')}">
+          <p class="sub" style="margin:4px 0 0;font-size:11px;">Auto-set when you Move room into a flower room with an Active IPM cycle.</p>
         </div>
         <div class="field"><label>Pot date</label><input type="date" name="potDate" value="${esc(rec.potDate)}"></div>
         <div class="field"><label>Harvest date</label><input type="date" name="harvestDate" value="${esc(rec.harvestDate)}"></div>
@@ -810,6 +913,7 @@ function openPlantEditModal(id){
     rec.potDate = String(fd.get('potDate') || '').trim();
     rec.harvestDate = String(fd.get('harvestDate') || '').trim();
     rec.notes = String(fd.get('notes') || '').trim();
+    applyPlantCycleLink(rec, { force: true });
     const i = (state.plants || []).findIndex(p=> p.id === rec.id);
     if(i >= 0) state.plants[i] = rec;
     modalDirty = false;
@@ -828,7 +932,8 @@ function openMoveRoomModal(plantIds){
   <div class="overlay" id="overlay">
     <div class="modal" style="max-width:420px">
       <h2>Move room — ${plantIds.length} plant(s)</h2>
-      <p class="sub">Batch IDs stay the same<br><span class="bi">รหัสไม่เปลี่ยน แค่ย้ายห้อง</span></p>
+      <p class="sub">Batch IDs stay the same · Flower rooms auto-link to the <b>Active IPM cycle</b><br>
+      <span class="bi">รหัสไม่เปลี่ยน · ห้องดอกผูก cycle อัตโนมัติ</span></p>
       <form id="moveRoomForm">
         <div class="field"><label>New room</label>${renderPlantRoomFields('', true)}</div>
         <div class="field"><label>Status (optional)</label>
@@ -853,20 +958,26 @@ function openMoveRoomModal(plantIds){
     const fd = new FormData(e.target);
     const room = readPlantRoomFromForm(fd);
     const status = String(fd.get('status') || '').trim();
+    let linked = 0;
     plantIds.forEach(id=>{
       const p = getPlantById(id);
       if(!p) return;
       appendRoomHistory(p, room);
       if(status) p.status = status;
       else if(p.status === PLANT_STATUS_OPTIONS[0] && /flower/i.test(room)) p.status = PLANT_STATUS_OPTIONS[1];
-      else if(p.status === PLANT_STATUS_OPTIONS[1] && /veg/i.test(room)) p.status = PLANT_STATUS_OPTIONS[0];
+      else if(p.status === PLANT_STATUS_OPTIONS[1] && /veg|clone/i.test(room)) p.status = PLANT_STATUS_OPTIONS[0];
+      if(applyPlantCycleLink(p, { force: true }) && p.cycleName) linked += 1;
+      else if(p.cycleName && isFlowerGrowRoom(room)) linked += 1;
     });
     modalDirty = false;
     plantSelectedIds.clear();
     onDataChanged();
     close();
     renderPlantsView();
-    showDocToast('Room updated ✓');
+    const active = typeof getActiveCycleForRoom === 'function' ? getActiveCycleForRoom(room) : null;
+    showDocToast(active
+      ? 'Moved → ' + room + ' · cycle ' + active.name
+      : 'Room updated ✓');
   };
 }
 
@@ -1208,6 +1319,7 @@ function openPlantTraceModal(batchIdOrRaw){
       <div class="trace-timeline">
         <div class="trace-step"><b>Lot</b> ${lotId ? '<code class="batch-id">' + esc(lotId) + '</code> · ' + lotMates.length + ' plant(s) · <button type="button" class="ghost small" id="btnTraceLot">View lot</button>' : '—'}</div>
         <div class="trace-step"><b>Potting</b> ${esc(plant.potDate)} · ${esc(plant.strain)} · ${esc(plant.sourceFarm)}<br>Room: ${esc(plant.roomHistory || plant.room)}</div>
+        <div class="trace-step"><b>Flower cycle</b> ${plant.cycleName ? '<code class="batch-id">' + esc(plant.cycleName) + '</code> · ' + esc(plant.room) : '— not linked (Move into flower room with Active IPM cycle) —'}</div>
         <div class="trace-step"><b>Status</b> ${esc(plant.status)}${plant.harvestDate ? '<br>Harvest: ' + esc(plant.harvestDate) : ''}</div>
         <div class="trace-step"><b>Trim Cana</b> ${trim ? esc(trim.date) + ' · ' + esc(trim.room) + ' · ' + esc(trim.strain) + (trim.finishedFlowerG ? ' · ' + fmtWeight(trim.finishedFlowerG) : '') : '— not linked yet —'}</div>
         <div class="trace-step"><b>Cure</b> ${cureSessions.length ? cureSessions.map(c=> esc(c.room) + ' (' + esc(plantStatusShort(c.status)) + ')').join('<br>') : '—'}</div>
