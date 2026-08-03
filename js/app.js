@@ -5517,11 +5517,12 @@ function showDocToast(msg){
 /* ============ RENDER: TRIMMING ============ */
 function getFilteredTrimmingRecords(){
   const types = trimTypesForSubTab(trimSubTab);
-  const month = trimMonth || currentMonthLabel();
+  const showAll = trimMonth === '__all__';
+  const month = showAll ? '' : (trimMonth || currentMonthLabel());
   const q = trimSearchText.trim().toLowerCase();
   return (state.trimming||[]).filter(rec=>{
     if(!types.includes(rec.type)) return false;
-    if((rec.date ? formatMonth(rec.date) : '') !== month) return false;
+    if(!showAll && (rec.date ? formatMonth(rec.date) : '') !== month) return false;
     if(!q) return true;
     const hay = [rec.batchId, rec.room, rec.sourceFarm, rec.strain, rec.trimmedBy, rec.notes, rec.harvestDate].join(' ').toLowerCase();
     return hay.includes(q);
@@ -5752,7 +5753,7 @@ function renderTrimmingView(){
   if(!requireLogin()) return;
   if(!trimMonth) trimMonth = currentMonthLabel();
   const months = allTrimMonths();
-  if(!months.includes(trimMonth)) months.push(trimMonth);
+  if(trimMonth !== '__all__' && !months.includes(trimMonth)) months.push(trimMonth);
   months.sort((a,b)=>new Date('1 '+a) - new Date('1 '+b));
   const main = document.getElementById('mainArea');
   const records = getFilteredTrimmingRecords();
@@ -5760,6 +5761,7 @@ function renderTrimmingView(){
   const isDaily = trimSubTab === 'record';
   const isCana = trimSubTab === 'cana';
   const sheetTab = isDaily ? 'Trim Record' : 'Trim Cana';
+  const monthLabel = trimMonth === '__all__' ? 'All months' : trimMonth;
   main.innerHTML = `
     <div class="trim-header">
       <div>
@@ -5778,6 +5780,7 @@ function renderTrimmingView(){
       <button class="primary" id="btnNewTrim">${isDaily ? '+ New day' : '+ New session'} <span class="bi">/ เพิ่มรายการ</span></button>
       <label class="month-filter">Month:
         <select id="trimMonthInput">
+          <option value="__all__" ${trimMonth==='__all__'?'selected':''}>All months</option>
           ${months.map(m=>`<option value="${esc(m)}" ${m===trimMonth?'selected':''}>${esc(m)}</option>`).join('')}
         </select>
       </label>
@@ -5788,7 +5791,7 @@ function renderTrimmingView(){
 
     ${renderTrimStaffDailyPanel(records, trimSubTab)}
 
-    <div class="mob-section-label mobile-only">Records this month</div>
+    <div class="mob-section-label mobile-only">Records — ${esc(monthLabel)}</div>
     <div id="trimResultsWrap">${renderTrimmingTable(records)}</div>
   `;
   document.getElementById('btnTrimRecord').onclick = ()=>{ trimSubTab='record'; renderTrimmingView(); };
