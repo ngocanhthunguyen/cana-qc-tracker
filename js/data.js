@@ -194,8 +194,39 @@ const CANA_GROW_ROOMS = [
   'Flower room 3',
   'Flower room 4'
 ];
+/** Old sheet / form names → canonical CANA_GROW_ROOMS (avoids duplicate chips like Clone + Cloning) */
+const GROW_ROOM_ALIASES = {
+  'cloning': 'Clone',
+  'clone room': 'Clone',
+  'clones': 'Clone',
+  'veg room': 'Veg',
+  'vegging': 'Veg',
+  'vegitative': 'Veg',
+  'vegetative': 'Veg',
+  'flower 1': 'Flower room 1',
+  'flower1': 'Flower room 1',
+  'fr1': 'Flower room 1',
+  'flower 2': 'Flower room 2',
+  'flower2': 'Flower room 2',
+  'fr2': 'Flower room 2',
+  'flower 3': 'Flower room 3',
+  'flower3': 'Flower room 3',
+  'fr3': 'Flower room 3',
+  'flower 4': 'Flower room 4',
+  'flower4': 'Flower room 4',
+  'fr4': 'Flower room 4'
+};
+function canonicalizeGrowRoom(room){
+  const raw = String(room || '').trim();
+  if(!raw) return '';
+  const hit = CANA_GROW_ROOMS.find(r=> r.toLowerCase() === raw.toLowerCase());
+  if(hit) return hit;
+  const mapped = GROW_ROOM_ALIASES[raw.toLowerCase()];
+  if(mapped) return mapped;
+  return raw;
+}
 function isFlowerGrowRoom(room){
-  return /^Flower room\s*[1-4]$/i.test(String(room || '').trim());
+  return /^Flower room\s*[1-4]$/i.test(canonicalizeGrowRoom(room));
 }
 const IPM_PEST_OPTIONS = [
   'None / ไม่พบ',

@@ -43,7 +43,17 @@ function normalizePlant(rec){
   if(!rec.createdAt) rec.createdAt = '';
   if(!rec.lotId && rec.transferBatchRef && /^CA-L-/i.test(String(rec.transferBatchRef))) rec.lotId = rec.transferBatchRef;
   if(rec.lotId && !rec.transferBatchRef) rec.transferBatchRef = rec.lotId;
+  // Merge legacy names (Cloning → Clone, Veg room → Veg, …)
+  if(typeof canonicalizeGrowRoom === 'function' && rec.room){
+    rec.room = canonicalizeGrowRoom(rec.room);
+  }
   return rec;
+}
+
+function plantRoomKey(room){
+  return typeof canonicalizeGrowRoom === 'function'
+    ? canonicalizeGrowRoom(room).toLowerCase()
+    : String(room || '').trim().toLowerCase();
 }
 
 function parsePlantBatchSeq(batchId){
@@ -105,7 +115,9 @@ function getPlantById(id){
 }
 
 function appendRoomHistory(plant, newRoom){
-  const r = String(newRoom || '').trim();
+  const r = typeof canonicalizeGrowRoom === 'function'
+    ? canonicalizeGrowRoom(newRoom)
+    : String(newRoom || '').trim();
   if(!r) return;
   const cur = String(plant.room || '').trim();
   if(cur === r) return;
@@ -141,7 +153,7 @@ function getFilteredPlants(){
     if(plantRoomFilter === '__none__'){
       if(String(p.room || '').trim()) return false;
     } else if(plantRoomFilter && plantRoomFilter !== '__all__'){
-      if(String(p.room || '').toLowerCase() !== plantRoomFilter.toLowerCase()) return false;
+      if(plantRoomKey(p.room) !== plantRoomKey(plantRoomFilter)) return false;
     }
     if(q){
       const hay = [p.batchId, p.lotId, p.transferBatchRef, p.strain, p.room, p.status, p.sourceFarm, p.notes, p.createdBy].join(' ').toLowerCase();
@@ -152,16 +164,22 @@ function getFilteredPlants(){
 }
 
 function getPlantRoomOptions(){
-  const rooms = new Set(PLANT_ROOM_PRESETS);
-  (state.plants || []).forEach(p=>{ if(p.room) rooms.add(String(p.room).trim()); });
-  const presets = PLANT_ROOM_PRESETS.filter(r=> rooms.has(r));
-  const extras = [...rooms].filter(r=> !PLANT_ROOM_PRESETS.includes(r)).sort((a, b)=> a.localeCompare(b));
-  return presets.concat(extras);
+  const presetSet = new Set(PLANT_ROOM_PRESETS.map(r=> r.toLowerCase()));
+  const extras = new Set();
+  (state.plants || []).forEach(p=>{
+    const canon = typeof canonicalizeGrowRoom === 'function'
+      ? canonicalizeGrowRoom(p.room)
+      : String(p.room || '').trim();
+    if(!canon) return;
+    if(!presetSet.has(canon.toLowerCase())) extras.add(canon);
+  });
+  // Always show standard rooms; extras = real custom rooms only (not Cloning/Veg room aliases)
+  return PLANT_ROOM_PRESETS.concat([...extras].sort((a, b)=> a.localeCompare(b)));
 }
 function countPlantsInRoom(room){
-  const want = String(room || '').toLowerCase();
+  const want = plantRoomKey(room);
   return (state.plants || []).filter(p=>{
-    if(String(p.room || '').toLowerCase() !== want) return false;
+    if(plantRoomKey(p.room) !== want) return false;
     if(plantStatusFilter && p.status !== plantStatusFilter) return false;
     return true;
   }).length;
@@ -206,8 +224,8 @@ function paginatePlantRows(rows){
 
 function readPlantRoomFromForm(fd){
   const room = String(fd.get('room') || '').trim();
-  if(room === '__custom__') return String(fd.get('roomCustom') || '').trim();
-  return room;
+  const raw = room === '__custom__' ? String(fd.get('roomCustom') || '').trim() : room;
+  return typeof canonicalizeGrowRoom === 'function' ? canonicalizeGrowRoom(raw) : raw;
 }
 
 function bindPlantRoomSelect(root){
@@ -244,6 +262,10 @@ function plantStatusShort(status){
 
 function renderPlantsView(){
   if(!requireLogin()) return;
+  // Old chip names (Cloning) → canonical (Clone)
+  if(plantRoomFilter && plantRoomFilter !== '__all__' && plantRoomFilter !== '__none__' && typeof canonicalizeGrowRoom === 'function'){
+    plantRoomFilter = canonicalizeGrowRoom(plantRoomFilter) || plantRoomFilter;
+  }
   const hub = plantRoomHubNeeded();
   const rows = hub ? [] : getFilteredPlants();
   const page = hub ? null : paginatePlantRows(rows);
