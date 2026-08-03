@@ -568,6 +568,9 @@
   .pkg-label-body-land{display:grid;grid-template-columns:0.9fr 1.3fr;gap:10px;width:100%;flex:1;align-items:stretch;}
   .pkg-label-body-left{display:flex;flex-direction:column;min-width:0;}
   .pkg-label-body-right{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-width:0;}
+  .plant-room-chip{min-width:140px;}
+  .plant-room-all{border-style:dashed;}
+  .plant-pager{gap:10px;}
   .ipm-room-strip{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px;}
   .ipm-room-chip{
     display:flex;flex-direction:column;align-items:flex-start;gap:2px;

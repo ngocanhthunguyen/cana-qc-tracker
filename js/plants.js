@@ -6,6 +6,8 @@ let plantSearchText = '';
 let plantStatusFilter = '';
 let plantRoomFilter = '';
 let plantSelectedIds = new Set();
+let plantListPage = 1;
+const PLANT_PAGE_SIZE = 80;
 
 const PLANT_STATUS_OPTIONS = [
   'Active / กำลังเลี้ยง',
@@ -136,7 +138,11 @@ function getFilteredPlants(){
   const q = searchQuery(plantSearchText);
   return (state.plants || []).map(normalizePlant).filter(p=>{
     if(plantStatusFilter && p.status !== plantStatusFilter) return false;
-    if(plantRoomFilter && String(p.room || '').toLowerCase() !== plantRoomFilter.toLowerCase()) return false;
+    if(plantRoomFilter === '__none__'){
+      if(String(p.room || '').trim()) return false;
+    } else if(plantRoomFilter && plantRoomFilter !== '__all__'){
+      if(String(p.room || '').toLowerCase() !== plantRoomFilter.toLowerCase()) return false;
+    }
     if(q){
       const hay = [p.batchId, p.lotId, p.transferBatchRef, p.strain, p.room, p.status, p.sourceFarm, p.notes, p.createdBy].join(' ').toLowerCase();
       if(!hay.includes(q)) return false;
@@ -151,6 +157,51 @@ function getPlantRoomOptions(){
   const presets = PLANT_ROOM_PRESETS.filter(r=> rooms.has(r));
   const extras = [...rooms].filter(r=> !PLANT_ROOM_PRESETS.includes(r)).sort((a, b)=> a.localeCompare(b));
   return presets.concat(extras);
+}
+function countPlantsInRoom(room){
+  const want = String(room || '').toLowerCase();
+  return (state.plants || []).filter(p=>{
+    if(String(p.room || '').toLowerCase() !== want) return false;
+    if(plantStatusFilter && p.status !== plantStatusFilter) return false;
+    return true;
+  }).length;
+}
+function plantRoomHubNeeded(){
+  // Don't dump every plant at once — pick a room first (unless searching / tracing)
+  return !plantRoomFilter && !searchQuery(plantSearchText);
+}
+function renderPlantRoomHub(){
+  const rooms = getPlantRoomOptions();
+  const unlabeled = (state.plants || []).filter(p=>{
+    if(String(p.room || '').trim()) return false;
+    if(plantStatusFilter && p.status !== plantStatusFilter) return false;
+    return true;
+  }).length;
+  const chips = rooms.map(r=>{
+    const n = countPlantsInRoom(r);
+    return `<button type="button" class="ipm-room-chip plant-room-chip" data-plant-room="${esc(r)}">
+      <b>${esc(r)}</b>
+      <span>${n} plant${n===1?'':'s'}</span>
+    </button>`;
+  }).join('');
+  return `<div class="panel" style="margin-bottom:12px;">
+    <h3 style="margin:0 0 6px;font-size:15px;">Choose a room to browse</h3>
+    <p class="sub" style="margin:0 0 10px;">697+ plants is too heavy in one list — open one room at a time (or scan a barcode / search).<br>
+    <span class="bi">เลือกห้องก่อน · หรือสแกนบาร์โค้ด / ค้นหา</span></p>
+    <div class="ipm-room-strip">${chips}
+      ${unlabeled ? `<button type="button" class="ipm-room-chip plant-room-chip" data-plant-room="__none__"><b>No room set</b><span>${unlabeled} plant${unlabeled===1?'':'s'}</span></button>` : ''}
+      <button type="button" class="ipm-room-chip plant-room-chip plant-room-all" data-plant-room="__all__"><b>Show all rooms</b><span>Slow if many plants</span></button>
+    </div>
+  </div>`;
+}
+function paginatePlantRows(rows){
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / PLANT_PAGE_SIZE));
+  if(plantListPage > pages) plantListPage = pages;
+  if(plantListPage < 1) plantListPage = 1;
+  const start = (plantListPage - 1) * PLANT_PAGE_SIZE;
+  const slice = rows.slice(start, start + PLANT_PAGE_SIZE);
+  return { slice, total, pages, start };
 }
 
 function readPlantRoomFromForm(fd){
@@ -193,17 +244,23 @@ function plantStatusShort(status){
 
 function renderPlantsView(){
   if(!requireLogin()) return;
-  const rows = getFilteredPlants();
+  const hub = plantRoomHubNeeded();
+  const rows = hub ? [] : getFilteredPlants();
+  const page = hub ? null : paginatePlantRows(rows);
   const rooms = getPlantRoomOptions();
   const activeCount = (state.plants || []).filter(p=> p.status === PLANT_STATUS_OPTIONS[0] || p.status === PLANT_STATUS_OPTIONS[1]).length;
+  const roomLabel = plantRoomFilter === '__all__' ? 'All rooms'
+    : (plantRoomFilter === '__none__' ? 'No room set'
+    : (plantRoomFilter || 'Pick a room'));
   const main = document.getElementById('mainArea');
   main.innerHTML = `
     <div class="cana-header plant-header">
       <div>
         <h2>🌱 Plant Registry — potting IDs & barcodes</h2>
-        <p class="sub">One plant ID per sticker · shared lot ID per potting run · scan to trace<br><span class="bi">หนึ่งรหัสต่อหนึ่งต้น · lot เดียวกันเมื่อ pot พร้อมกัน</span></p>
+        <p class="sub">Browse <b>by room</b> (avoids loading every plant) · scan barcode anytime to jump to one plant<br>
+        <span class="bi">เลือกห้องก่อนดูรายการ · หรือสแกนบาร์โค้ด</span></p>
       </div>
-      <div class="plant-kpi-mini">${(state.plants || []).length} plants · ${activeCount} active</div>
+      <div class="plant-kpi-mini">${(state.plants || []).length} plants · ${activeCount} active${hub ? '' : ` · showing ${page.total} in <b>${esc(roomLabel)}</b>`}</div>
     </div>
     <div class="row-actions plant-toolbar">
       <button class="primary" id="btnPotBatch">+ Potting batch <span class="bi">/ สร้างรหัส pot</span></button>
@@ -215,10 +272,6 @@ function renderPlantsView(){
         <option value="">All status</option>
         ${PLANT_STATUS_OPTIONS.map(o=>`<option value="${esc(o)}" ${plantStatusFilter===o?'selected':''}>${esc(plantStatusShort(o))}</option>`).join('')}
       </select>
-      <select id="plantRoomFilter">
-        <option value="">All rooms</option>
-        ${rooms.map(r=>`<option value="${esc(r)}" ${plantRoomFilter===r?'selected':''}>${esc(r)}</option>`).join('')}
-      </select>
     </div>
     <div class="plant-scan-row">
       <label class="plant-scan-label">🔍 Scan barcode <span class="bi">/ สแกน</span></label>
@@ -226,18 +279,51 @@ function renderPlantsView(){
       <button type="button" class="primary" id="btnPlantCamera">📷 Camera <span class="bi">/ กล้อง</span></button>
       <button type="button" class="ghost" id="btnPlantTrace">Trace ID</button>
     </div>
-    <input class="search-box" id="plantSearchBox" placeholder="Search strain, room, batch ID…" value="${esc(plantSearchText)}" style="margin-bottom:12px;width:100%;max-width:420px;">
-    <div class="mob-section-label mobile-only">Plants</div>
-    <div id="plantResultsWrap">${renderPlantsTable(rows)}</div>
+    <input class="search-box" id="plantSearchBox" placeholder="Search across all rooms (strain, batch ID…)" value="${esc(plantSearchText)}" style="margin-bottom:12px;width:100%;max-width:420px;">
+    ${hub ? renderPlantRoomHub() : `
+      <div class="ipm-room-strip" style="margin-bottom:10px;">
+        <button type="button" class="ipm-room-chip" id="btnPlantBackRooms"><b>← Rooms</b><span>Pick another</span></button>
+        ${rooms.map(r=>{
+          const n = countPlantsInRoom(r);
+          return `<button type="button" class="ipm-room-chip ${plantRoomFilter===r?'active':''}" data-plant-room="${esc(r)}"><b>${esc(r)}</b><span>${n}</span></button>`;
+        }).join('')}
+        <button type="button" class="ipm-room-chip ${plantRoomFilter==='__all__'?'active':''}" data-plant-room="__all__"><b>All</b><span>caution</span></button>
+      </div>
+      <div class="mob-section-label mobile-only">Plants — ${esc(roomLabel)}</div>
+      <div id="plantResultsWrap">${renderPlantsTable(page.slice, page)}</div>
+    `}
   `;
   document.getElementById('btnPotBatch').onclick = ()=> openPottingBatchModal();
   document.getElementById('btnMoveRoom').onclick = ()=> openMoveRoomModal([...plantSelectedIds]);
   document.getElementById('btnHarvestPlants').onclick = ()=> openHarvestPlantsModal([...plantSelectedIds]);
   document.getElementById('btnPrintLabels').onclick = ()=> openPrintPlantLabels([...plantSelectedIds]);
   document.getElementById('btnDeletePlants').onclick = ()=> deleteSelectedPlants();
-  document.getElementById('plantStatusFilter').onchange = (e)=>{ plantStatusFilter = e.target.value; renderPlantsView(); };
-  document.getElementById('plantRoomFilter').onchange = (e)=>{ plantRoomFilter = e.target.value; renderPlantsView(); };
-  document.getElementById('plantSearchBox').oninput = (e)=>{ plantSearchText = e.target.value; updatePlantResults(); };
+  document.getElementById('plantStatusFilter').onchange = (e)=>{ plantStatusFilter = e.target.value; plantListPage = 1; renderPlantsView(); };
+  document.getElementById('plantSearchBox').oninput = (e)=>{
+    plantSearchText = e.target.value;
+    plantListPage = 1;
+    if(searchQuery(plantSearchText)){
+      // searching unlocks cross-room list
+      if(!plantRoomFilter) plantRoomFilter = '__all__';
+      renderPlantsView();
+    } else if(plantRoomFilter === '__all__'){
+      plantRoomFilter = '';
+      renderPlantsView();
+    } else {
+      updatePlantResults();
+    }
+  };
+  main.querySelectorAll('[data-plant-room]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const v = btn.dataset.plantRoom;
+      plantRoomFilter = v === '__all__' ? '__all__' : v;
+      plantListPage = 1;
+      plantSelectedIds.clear();
+      renderPlantsView();
+    };
+  });
+  const backBtn = document.getElementById('btnPlantBackRooms');
+  if(backBtn) backBtn.onclick = ()=>{ plantRoomFilter = ''; plantSearchText = ''; plantListPage = 1; plantSelectedIds.clear(); renderPlantsView(); };
   const scanInput = document.getElementById('plantScanInput');
   scanInput.focus();
   scanInput.onkeydown = (e)=>{
@@ -252,6 +338,7 @@ function renderPlantsView(){
   };
   document.getElementById('btnPlantCamera').onclick = ()=> openPlantCameraScanModal();
   bindPlantActions(main);
+  bindPlantPagination(main);
 }
 
 function parsePlantLotScanCode(raw){
@@ -374,8 +461,14 @@ async function openPlantCameraScanModal(){
 function updatePlantResults(){
   const wrap = document.getElementById('plantResultsWrap');
   if(!wrap || currentView !== 'plants') return;
-  wrap.innerHTML = renderPlantsTable(getFilteredPlants());
+  if(plantRoomHubNeeded()){
+    renderPlantsView();
+    return;
+  }
+  const page = paginatePlantRows(getFilteredPlants());
+  wrap.innerHTML = renderPlantsTable(page.slice, page);
   bindPlantActions(document.getElementById('mainArea'));
+  bindPlantPagination(document.getElementById('mainArea'));
 }
 
 function renderPlantsCardList(rows){
@@ -402,9 +495,9 @@ function renderPlantsCardList(rows){
   }).join('');
 }
 
-function renderPlantsTable(rows){
+function renderPlantsTable(rows, pageInfo){
   if(!rows.length){
-    return `<div class="panel empty-state"><b>No plants yet.</b> Use <b>+ Potting batch</b> after rooting to generate IDs and print Zebra labels.<br><span class="bi">ยังไม่มีข้อมูล — กด Potting batch หลัง pot</span></div>`;
+    return `<div class="panel empty-state"><b>No plants in this view.</b> Pick another room, clear filters, or use <b>+ Potting batch</b>.<br><span class="bi">ไม่พบต้นในมุมมองนี้</span></div>`;
   }
   const body = rows.map(p=>{
     const sel = plantSelectedIds.has(p.id);
@@ -425,14 +518,27 @@ function renderPlantsTable(rows){
       </td>
     </tr>`;
   }).join('');
-  return `<div class="table-wrap desktop-table"><table class="compact-table plant-table">
+  const pager = pageInfo && pageInfo.pages > 1 ? `
+    <div class="plant-pager row-actions" style="margin:10px 0;align-items:center;">
+      <button type="button" class="ghost small" id="btnPlantPrevPage" ${plantListPage<=1?'disabled':''}>← Prev</button>
+      <span class="muted" style="font-size:12px;">Page ${plantListPage} / ${pageInfo.pages} · ${pageInfo.start + 1}–${Math.min(pageInfo.start + rows.length, pageInfo.total)} of ${pageInfo.total}</span>
+      <button type="button" class="ghost small" id="btnPlantNextPage" ${plantListPage>=pageInfo.pages?'disabled':''}>Next →</button>
+    </div>` : (pageInfo ? `<p class="sub" style="margin:8px 0;">${pageInfo.total} plant${pageInfo.total===1?'':'s'} in this view</p>` : '');
+  return `${pager}<div class="table-wrap desktop-table"><table class="compact-table plant-table">
     <thead><tr>
-      <th style="width:36px"><input type="checkbox" id="plantSelectAll" title="Select all visible"></th>
+      <th style="width:36px"><input type="checkbox" id="plantSelectAll" title="Select all on this page"></th>
       <th>Batch ID</th><th>Lot ID</th><th>Strain</th><th>Pot date</th><th>Room</th><th>Status</th><th>Harvest</th><th></th>
     </tr></thead>
     <tbody>${body}</tbody>
   </table></div>
-  <div class="card-list">${renderPlantsCardList(rows)}</div>`;
+  <div class="card-list">${renderPlantsCardList(rows)}</div>${pager}`;
+}
+function bindPlantPagination(root){
+  if(!root) return;
+  const prev = root.querySelector('#btnPlantPrevPage');
+  const next = root.querySelector('#btnPlantNextPage');
+  if(prev) prev.onclick = ()=>{ plantListPage -= 1; renderPlantsView(); };
+  if(next) next.onclick = ()=>{ plantListPage += 1; renderPlantsView(); };
 }
 
 function bindPlantActions(root){
