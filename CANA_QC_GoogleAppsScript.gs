@@ -2541,7 +2541,7 @@ function writePlants(ss, plants) {
 /* ---------- IPM — Insect Scout + Flower Cycles ---------- */
 
 var INSECT_SCOUT_SHEET = 'Insect Scout';
-var INSECT_SCOUT_HEADERS = ['_id', 'Date', 'Time', 'Room', 'Cycle ID', 'Cycle Name', 'Pest', 'Severity', 'Count', 'Action', 'Notes', 'Scouted By', 'Created At'];
+var INSECT_SCOUT_HEADERS = ['_id', 'Date', 'Time', 'Room', 'Cycle ID', 'Cycle Name', 'Pest', 'Severity', 'Count', 'Action', 'Notes', 'Scouted By', 'Created At', 'Product'];
 var INSECT_SCOUT_NUM_COLS = INSECT_SCOUT_HEADERS.length;
 
 var FLOWER_CYCLES_SHEET = 'Flower Cycles';
@@ -2570,7 +2570,8 @@ function readInsectScouts(ss) {
       action: String(row[9] || ''),
       notes: String(row[10] || ''),
       scoutedBy: String(row[11] || ''),
-      createdAt: String(row[12] || '')
+      createdAt: String(row[12] || ''),
+      product: String(row[13] || '')
     });
   });
   return list;
@@ -2578,7 +2579,7 @@ function readInsectScouts(ss) {
 
 function writeInsectScouts(ss, scouts) {
   setupCanaFlowerTab(ss, INSECT_SCOUT_SHEET, 'CANA QC TRACKER  ·  INSECT SCOUT / IPM',
-    'Room-by-room insect scouting · Clone · Veg · Flower 1–4 · flower scouts link to Flower Cycles',
+    'Room-by-room insect scouting · Clone · Veg · Flower 1–4 · flower scouts link to Flower Cycles · Product = spray name for reports',
     '#b45309', INSECT_SCOUT_HEADERS);
   var sheet = ss.getSheetByName(INSECT_SCOUT_SHEET);
   var rows = (scouts || []).map(function(r) {
@@ -2595,7 +2596,8 @@ function writeInsectScouts(ss, scouts) {
       r.action || '',
       r.notes || '',
       r.scoutedBy || '',
-      r.createdAt || ''
+      r.createdAt || '',
+      r.product || ''
     ];
   });
   if (sheet.getLastRow() >= CANA_FLOWER_DATA_START) {

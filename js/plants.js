@@ -383,6 +383,7 @@ function renderPlantsView(){
       <button class="primary" id="btnPotBatch">+ Potting batch <span class="bi">/ สร้างรหัส pot</span></button>
       <button id="btnMoveRoom" ${plantSelectedIds.size ? '' : 'disabled'}>Move room <span class="bi">/ ย้ายห้อง</span></button>
       <button id="btnLinkCycle" ${plantSelectedIds.size ? '' : 'disabled'} title="Link selected plants to the Active IPM cycle for their flower room">Link cycle <span class="bi">/ ผูก cycle</span></button>
+      ${roomCycle ? `<button type="button" id="btnPlantIpmReport" title="Print room IPM / spray report for ${esc(roomCycle.name)}">📄 IPM report</button>` : ''}
       <button id="btnHarvestPlants" ${plantSelectedIds.size ? '' : 'disabled'}>Harvest <span class="bi">/ เก็บเกี่ยว</span></button>
       <button id="btnPrintLabels" ${plantSelectedIds.size ? '' : 'disabled'}>🖨 Print labels <span class="bi">/ พิมพ์</span></button>
       <button class="danger admin-only" id="btnDeletePlants" ${plantSelectedIds.size ? '' : 'disabled'}>Delete selected <span class="bi">/ ลบ</span></button>
@@ -414,6 +415,8 @@ function renderPlantsView(){
   document.getElementById('btnPotBatch').onclick = ()=> openPottingBatchModal();
   document.getElementById('btnMoveRoom').onclick = ()=> openMoveRoomModal([...plantSelectedIds]);
   document.getElementById('btnLinkCycle').onclick = ()=> linkSelectedPlantsToActiveCycle([...plantSelectedIds]);
+  const reportBtn = document.getElementById('btnPlantIpmReport');
+  if(reportBtn && roomCycle) reportBtn.onclick = ()=> openIpmGrowReport({ cycleId: roomCycle.id });
   document.getElementById('btnHarvestPlants').onclick = ()=> openHarvestPlantsModal([...plantSelectedIds]);
   document.getElementById('btnPrintLabels').onclick = ()=> openPrintPlantLabels([...plantSelectedIds]);
   document.getElementById('btnDeletePlants').onclick = ()=> deleteSelectedPlants();
